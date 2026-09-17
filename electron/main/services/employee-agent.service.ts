@@ -12,6 +12,7 @@ import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
+import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
 import { parseEmployeeDelegation } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
@@ -40,6 +41,7 @@ interface EmployeeChatStreamParams {
       name: string
       args: any
       result?: any
+      images?: string[]
       isComplete?: boolean
     }>
     toolCallId?: string
@@ -63,7 +65,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -233,6 +235,7 @@ class EmployeeAgentService {
       apiKey: config.api_key,
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
+      supportsImageInput: resolveImageSupport(config.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,
       // 采样 / 传输设置：单次调用覆盖 > 模型配置 > 供应商配置
@@ -790,6 +793,7 @@ class EmployeeAgentService {
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            images: tc.images,
           })
         }
       } else {

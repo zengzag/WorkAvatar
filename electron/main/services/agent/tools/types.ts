@@ -58,4 +58,6 @@ export interface ToolCallResult {
   rawOutput?: any
   latencyMs?: number
   generatedFiles?: GeneratedFileInfo[]
+  /** 工具产出的图片（data URL），仅用于视觉注入与 UI 展示，不作为文本进 LLM 上下文 */
+  images?: string[]
 }

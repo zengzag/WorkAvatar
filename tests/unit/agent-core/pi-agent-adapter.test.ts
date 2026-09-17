@@ -647,12 +647,30 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(out).toEqual(msgs)
   })
 
-  it('convertToLlm 为透传，shouldStopAfterTurn 按 maxIterations 计数', async () => {
+  it('convertToLlm 对无图片的消息与其入参相等（视觉注入新建数组），shouldStopAfterTurn 按 maxIterations 计数', async () => {
     const harness = makeHarness({ maxIterations: 2 })
     await runPiAgentLoop(harness.params)
     const config = h.agentLoopCalls[0][2]
     const msgs = [{ role: 'user', content: 'x' }]
-    expect(config.convertToLlm(msgs)).toBe(msgs)
+    expect(config.convertToLlm(msgs)).toEqual(msgs)
+    // 含图片的 toolResult 被抽出包裹为 user 消息注入（默认不支持视觉 → 丢弃并提示）
+    const withImages: any[] = [
+      { role: 'user', content: 'q' },
+      {
+        role: 'toolResult',
+        toolCallId: 'tc1',
+        toolName: 'read_image',
+        content: [
+          { type: 'text', text: '已读取图片' },
+          { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        ],
+        isError: false,
+        timestamp: 1,
+      },
+    ]
+    const out = config.convertToLlm(withImages)
+    expect(out).toHaveLength(2)
+    expect(out[1].content).toEqual([{ type: 'text', text: '已读取图片' }, { type: 'text', text: expect.stringContaining('当前模型不支持图片输入') }])
     expect(config.toolExecution).toBe('sequential')
     expect(config.shouldStopAfterTurn()).toBe(false)
     expect(config.shouldStopAfterTurn()).toBe(true)

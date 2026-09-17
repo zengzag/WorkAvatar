@@ -4,6 +4,7 @@ import type { GenericAgentConfig } from './agent/business/generic-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import type { Message } from './agent/core/types'
 import type { ToolDefinition } from './agent/tools/types'
+import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
@@ -50,7 +51,7 @@ export interface GenericChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -148,6 +149,7 @@ class GenericChatService {
       apiKey: providerConfig.api_key,
       baseUrl: providerConfig.base_url || this.llmClient.getBaseURL(providerConfig),
       providerType: providerConfig.provider_type,
+      supportsImageInput: resolveImageSupport(providerConfig.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: config.enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: config.conversationId,
       allowedSkillPaths: config.allowedSkillPaths,
@@ -199,7 +201,7 @@ class GenericChatService {
       content: string
       images?: string[]
       reasoning_content?: string
-      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; isComplete?: boolean }>
+      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; images?: string[]; isComplete?: boolean }>
       toolCallId?: string
     }>
   ): Message[] {
@@ -233,6 +235,7 @@ class GenericChatService {
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            images: tc.images,
           })
         }
       } else {
@@ -255,7 +258,7 @@ class GenericChatService {
       content: string
       images?: string[]
       reasoning_content?: string
-      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; isComplete?: boolean }>
+      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; images?: string[]; isComplete?: boolean }>
       toolCallId?: string
     }>,
     callbacks: GenericChatCallbacks,

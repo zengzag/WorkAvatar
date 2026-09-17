@@ -38,14 +38,16 @@ export interface ProviderCompatConfig {
   extraRequestHeaders?: Record<string, string>
   /** ZAI/GLM 的工具调用流式增量格式（对应 pi-ai compat.zaiToolStream） */
   zaiToolStream?: boolean
-  /**
-   * 逐模型覆盖 provider 级 compat。
+  /** 逐模型覆盖 provider 级 compat。
    * pi-ai 目录是「逐模型」的，同一 provider 下不同模型常需不同 compat
    * （如 deepseek-chat 与 deepseek 推理模型、Kimi K2.x 与 K3），
    * 用模型 ID 正则做最小覆盖，避免 provider 级一刀切误伤非推理模型。
    * patch 中显式写 `undefined` 可清除 provider 级取值（如把 thinkingFormat 清空）。
    */
   modelOverrides?: ModelCompatOverride[]
+  /** 该 provider（或其某类模型）是否默认支持图片输入。未设置视为 false（保守降级 OCR），
+   *  用户可在模型设置的「支持图片输入」中显式覆盖（on/off） */
+  visionDefault?: boolean
 }
 
 /** 按模型 ID 正则覆盖 provider 级 compat（数组内首个命中生效） */
@@ -67,9 +69,11 @@ const DEFAULT: ProviderCompatConfig = {
 }
 
 const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
-  // OpenAI 原生：pi-ai 自动检测，仅需启用 session affinity
+  // OpenAI 原生：pi-ai 自动检测，仅需启用 session affinity；
+  // gpt-4o/gpt-4.x/o/gpt-5 系列支持图片输入（o1-mini 等例外由用户设置 off 覆盖）
   openai: {
     ...DEFAULT,
+    visionDefault: true,
     sendSessionAffinityHeaders: true,
     sessionAffinityFormat: 'openai',
   },
@@ -114,6 +118,7 @@ const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
   },
 
   // 通义千问（DashScope OpenAI 兼容模式）
+  // 仅 qwen-vl 系支持图片输入，其余模型不设 visionDefault（保守 false）
   qwen: {
     ...DEFAULT,
     thinkingFormat: 'qwen',
@@ -122,6 +127,9 @@ const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
     maxTokensField: 'max_tokens',
     supportsStore: false,
     supportsStrictMode: false,
+    modelOverrides: [
+      { match: /^qwen-vl/i, patch: { visionDefault: true } },
+    ],
   },
 
   // 智谱 AI（GLM）：pi-ai 对 open.bigmodel.cn 的 zai provider 用 thinkingFormat='zai'
@@ -301,6 +309,22 @@ export function resolveReasoningEffort(
   if (enableThinking) return enableThinking
   const compat = getProviderCompat(providerType, modelId)
   return compat.alwaysReasoning ? (compat.defaultReasoningEffort ?? 'low') : false
+}
+
+/**
+ * 解析模型是否支持图片（视觉）输入。
+ * 优先级：模型设置显式 on/off > provider visionDefault（可经 modelOverrides 按模型 ID 正则预设）> false。
+ * 聚合网关（如 opencode-go）下异构模型风格各异，未预设的一律按 false 保守处理，
+ * 用户可在模型设置中显式开启。
+ */
+export function resolveImageSupport(
+  providerType: string | undefined,
+  modelId?: string,
+  modelSetting?: 'on' | 'off',
+): boolean {
+  if (modelSetting === 'on') return true
+  if (modelSetting === 'off') return false
+  return getProviderCompat(providerType, modelId).visionDefault === true
 }
 
 /**

@@ -55,6 +55,8 @@ export interface AgentConfig {
   apiKey?: string
   baseUrl?: string
   providerType?: string
+  /** 模型是否支持图片（视觉）输入；由 provider 预设 + 模型设置 supports_image_input 解析 */
+  supportsImageInput?: boolean
   enableThinking?: ThinkingLevel
   maxIterations?: number
   debug?: boolean
@@ -125,7 +127,7 @@ export interface AgentRunStreamCallbacks {
   onThought?: (thought: string) => void
   onToolCall?: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: GeneratedFileInfo[]; success?: boolean }) => void
+  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: GeneratedFileInfo[]; images?: string[]; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone?: (metadata?: AgentResponseMetadata) => void
   onError?: (error: string) => void

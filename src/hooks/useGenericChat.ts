@@ -14,7 +14,7 @@ export type GenericChatEvent =
   | { type: 'thought'; sessionId: string; thought: string }
   | { type: 'tool-call'; sessionId: string; toolCall: { id: string; name: string; args: any } }
   | { type: 'tool-call-delta'; sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }
-  | { type: 'tool-result'; sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }
+  | { type: 'tool-result'; sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }
   | { type: 'tool-progress'; sessionId: string; toolCallId: string; name: string; progress: any }
   | { type: 'done'; sessionId: string; metadata?: any }
   | { type: 'error'; sessionId: string; error: string }
@@ -161,6 +161,7 @@ export const useGenericChat = ({ send, subscribe, persist, conversationId: exter
               segs[actualIndex] = {
                 ...segs[actualIndex],
                 toolResult: event.result,
+                toolResultImages: event.images && event.images.length > 0 ? event.images : undefined,
                 isToolComplete: true,
                 toolError: event.success === false ? (typeof event.result === 'string' ? event.result : undefined) : undefined,
                 collapsed: true,

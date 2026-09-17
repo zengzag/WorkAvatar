@@ -298,8 +298,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => {
-      const { sessionId, name, result, rawResult, generatedFiles, success } = data
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => {
+      const { sessionId, name, result, rawResult, generatedFiles, images, success } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -401,6 +401,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           segs[actualIndex] = {
             ...segs[actualIndex],
             toolResult: result,
+            toolResultImages: images && images.length > 0 ? images : undefined,
             isToolComplete: true,
             toolError: toolSuccess ? undefined : (typeof result === 'string' ? result : (rawResult?.error || undefined)),
             completedAt: Date.now(),
@@ -600,6 +601,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           segs[actualIndex] = {
             ...segs[actualIndex],
             toolResult: result,
+            toolResultImages: data?.images && data.images.length > 0 ? data.images : undefined,
             isToolComplete: true,
             toolError: undefined,
             completedAt: Date.now(),

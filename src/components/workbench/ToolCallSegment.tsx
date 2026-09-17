@@ -1,4 +1,4 @@
-import { Typography, Tooltip, App, theme } from 'antd'
+import { Typography, Tooltip, App, Image, theme } from 'antd'
 import {
   DownOutlined,
   RightOutlined,
@@ -407,6 +407,22 @@ const ToolCallSegmentInner: React.FC<{
             )}
             {seg.toolResult !== undefined && (
               <div>
+                {seg.toolResultImages && seg.toolResultImages.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Image.PreviewGroup>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {seg.toolResultImages.map((url, i) => (
+                          <Image
+                            key={i}
+                            src={url}
+                            height={90}
+                            style={{ borderRadius: 6, border: `1px solid ${token.colorBorderSecondary}` }}
+                          />
+                        ))}
+                      </div>
+                    </Image.PreviewGroup>
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Text type="secondary" style={{ fontSize: 11 }}>{t('workbench.outputResult')}</Text>
                   <Tooltip title={t('common.copy')}>

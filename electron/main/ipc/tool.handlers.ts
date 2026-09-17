@@ -49,6 +49,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'file_delete',
       'report_generated_files',
       'ocr_image',
+      'read_image',
     ],
   },
   {

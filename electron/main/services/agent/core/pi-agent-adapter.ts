@@ -58,7 +58,8 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
     provider: providerType || 'openai',
     baseUrl: config.baseUrl || 'https://api.openai.com/v1',
     reasoning,
-    input: ['text', 'image'],
+    // 视觉能力：用于 pi-ai 序列化校验与上下文注入判断（不支持图片时不注入工具返回的图片）
+    input: config.supportsImageInput ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
     maxTokens: 8192,
@@ -461,11 +462,18 @@ function toPiMessages(
 
     if (m.role === 'tool') {
       const text = m.content || ''
+      // 工具结果图片回放：与实时链路一致放入 toolResult content，
+      // 最终由 convertToLlm 在请求前改写为 user 消息注入
+      const imageParts: (TextContent | ImageContent)[] = []
+      for (const url of m.images || []) {
+        const parsed = parseImageDataUrl(url)
+        if ('data' in parsed) imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+      }
       piMessages.push({
         role: 'toolResult',
         toolCallId: m.toolCallId || '',
         toolName: '',
-        content: text ? [{ type: 'text', text }] : [],
+        content: text ? [{ type: 'text', text }, ...imageParts] : imageParts,
         isError: false,
         timestamp: ts,
       })
@@ -534,13 +542,21 @@ function toAgentTool(
       }
 
       const text = formatToolMessageContent(result)
+      // 图片以 ImageContent 形式放入 toolResult 消息（pi 层存储），
+      // 由 convertToLlm 在每次 LLM 请求前改写为紧随 tool result 的 user 消息注入
+      const imageParts: (TextContent | ImageContent)[] = []
+      for (const url of result.images || []) {
+        const parsed = parseImageDataUrl(url)
+        if ('data' in parsed) imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+      }
       return {
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text }, ...imageParts],
         details: {
           output: result.output,
           error: result.error,
           rawOutput: result.rawOutput,
           generatedFiles: result.generatedFiles,
+          images: result.images,
           success: result.success,
           latencyMs: result.latencyMs ?? (Date.now() - startMs),
         },
@@ -617,6 +633,8 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
     const msg = result[idx] as ToolResultMessage
     const newContent: (TextContent | ImageContent)[] = []
     for (const c of msg.content) {
+      // 已截断的旧图片块直接丢弃，避免被截断历史持续占用视觉上下文
+      if (c.type === 'image') continue
       if (c.type === 'text' && c.text.length > 500 && !c.text.startsWith(SUMMARY_PREFIX)) {
         newContent.push({
           type: 'text',
@@ -630,6 +648,64 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
   }
 
   return result
+}
+
+/**
+ * AgentMessage[] → LLM 可见的 PiMessage[]（每次 LLM 请求前的临时转换，不回写上下文）。
+ * OpenAI 兼容协议的 tool 消息不允许携带图片内容：
+ * 先把 toolResult 中的 ImageContent 抽出，包裹进紧随整个 tool result 批次之后的
+ * synthetic user 消息注入，模型即可在同轮看到图片。
+ * 单次请求最多注入 MAX_INJECTED_IMAGES 张，更早的图片块直接丢弃以控制上下文。
+ */
+const MAX_INJECTED_IMAGES = 4
+
+/** 模型不支持图片输入时的降级提示（附在被抽掉图片的 toolResult 文本之后） */
+const IMAGE_UNSUPPORTED_NOTE = '\n\n[注意] 当前模型不支持图片输入，图片未随请求发送；如需读取图中文字，请改用 ocr_image 工具。'
+
+function convertMessagesForLlm(messages: AgentMessage[], imageSupport: boolean): PiMessage[] {
+  const out: PiMessage[] = []
+  let pendingImages: ImageContent[] = []
+  const flushImages = () => {
+    if (pendingImages.length === 0) return
+    // 超出上限时保留最新的图片，较早的丢弃
+    const injected = pendingImages.length > MAX_INJECTED_IMAGES
+      ? pendingImages.slice(-MAX_INJECTED_IMAGES)
+      : pendingImages
+    pendingImages = []
+    out.push({
+      role: 'user',
+      timestamp: Date.now(),
+      content: [
+        { type: 'text', text: '[附图] 上述工具返回了以下图片，请结合图片内容继续分析：' },
+        ...injected,
+      ],
+    })
+  }
+
+  for (const m of messages) {
+    const pm = m as PiMessage
+    if (pm.role === 'toolResult') {
+      const rest: TextContent[] = []
+      for (const c of pm.content) {
+        if (c.type === 'image') {
+          // 支持视觉：暂存待注入；不支持：丢弃并补降级提示
+          if (imageSupport) pendingImages.push(c)
+        } else {
+          rest.push(c as TextContent)
+        }
+      }
+      if (!imageSupport && pm.content.some(c => c.type === 'image')) {
+        rest.push({ type: 'text', text: IMAGE_UNSUPPORTED_NOTE })
+      }
+      if (rest.length === 0) rest.push({ type: 'text', text: '（无文本输出）' })
+      out.push({ ...pm, content: rest })
+      continue
+    }
+    flushImages()
+    out.push(pm as PiMessage)
+  }
+  flushImages()
+  return out
 }
 
 export interface RunPiAgentLoopParams {
@@ -723,7 +799,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
 
   const loopConfig: AgentLoopConfig = {
     model: createPiModel(config),
-    convertToLlm: (msgs: AgentMessage[]) => msgs as PiMessage[],
+    convertToLlm: (msgs: AgentMessage[]) => convertMessagesForLlm(msgs, config.supportsImageInput === true),
     transformContext: async (msgs: AgentMessage[]) => trimPiToolResults(msgs),
     shouldStopAfterTurn: () => {
       turnCount++
@@ -918,6 +994,7 @@ async function handleAgentEvent(
         toolName: event.toolName,
         rawOutput: details?.rawOutput,
         generatedFiles: details?.generatedFiles as GeneratedFileInfo[] | undefined,
+        images: details?.images as string[] | undefined,
         latencyMs: details?.latencyMs ?? (startMs ? Date.now() - startMs : undefined),
       }
       // 清理 startTime 缓存（args 在 onToolCallExecuted 后清理）
@@ -930,6 +1007,7 @@ async function handleAgentEvent(
         result: success ? result.output : result.error,
         rawResult: result.rawOutput,
         generatedFiles: result.generatedFiles,
+        images: result.images,
         // success 字段表示"工具调用是否成功"（基于 isError），非业务层成功
         success,
       })

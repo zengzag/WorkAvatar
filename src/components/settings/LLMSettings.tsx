@@ -274,6 +274,7 @@ const LLMSettings: React.FC = () => {
       max_retry: model.max_retry ?? 100,
       context_window: model.context_window,
       thinking_budget: model.thinking_budget,
+      supports_image_input: model.supports_image_input,
     })
     setModelModalVisible(true)
   }, [modelForm])
@@ -296,6 +297,9 @@ const LLMSettings: React.FC = () => {
           max_retry: values.max_retry,
           context_window: values.context_window,
           thinking_budget: values.thinking_budget,
+          supports_image_input: values.supports_image_input === 'on' || values.supports_image_input === 'off'
+            ? values.supports_image_input
+            : undefined,
         } : {}),
       }
 
@@ -608,6 +612,14 @@ const LLMSettings: React.FC = () => {
                   <span>{t('settings.thinkingBudget')} <Tooltip title={t('settings.thinkingBudgetTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
                   <InputNumber min={0} max={128000} step={1024} style={{ width: '100%' }} placeholder={t('settings.thinkingBudgetPlaceholder')} />
+                </Form.Item>
+                <Form.Item name="supports_image_input" label={
+                  <span>{t('settings.imageInput')} <Tooltip title={t('settings.imageInputTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <Select allowClear placeholder={t('settings.imageInputAuto')}>
+                    <Select.Option value="on">{t('settings.imageInputOn')}</Select.Option>
+                    <Select.Option value="off">{t('settings.imageInputOff')}</Select.Option>
+                  </Select>
                 </Form.Item>
               </div>
             </>

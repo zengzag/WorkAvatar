@@ -64,7 +64,7 @@ export function recoverSubSegmentsFromLog(
       const back = [...segs].reverse().find(s => s.type === 'tool_call' && s.toolName === name && !s.isToolComplete)
       if (back) {
         const idx = segs.indexOf(back)
-        segs[idx] = { ...back, toolResult: data?.result, isToolComplete: true, collapsed: true, completedAt: Date.now() }
+        segs[idx] = { ...back, toolResult: data?.result, toolResultImages: data?.images && data.images.length > 0 ? data.images : undefined, isToolComplete: true, collapsed: true, completedAt: Date.now() }
       }
     } else if (eventType === 'done') {
       for (const s of segs) {

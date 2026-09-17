@@ -19,6 +19,8 @@ export interface MessageSegment {
   toolName?: string
   toolArgs?: any
   toolResult?: any
+  /** 工具结果包含的图片（data URL，如 read_image），UI 展示缩略图 */
+  toolResultImages?: string[]
   isToolComplete?: boolean
   toolCallId?: string
   /** LLM 正在流式生成工具参数（arguments JSON 尚未完成） */

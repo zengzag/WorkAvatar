@@ -124,6 +124,8 @@ export interface LLMModelConfig {
   thinking_budget?: number
   max_retry?: number
   context_window?: number
+  /** 图片（视觉）输入能力：未设置=自动（按供应商预设）；'on'/'off' 显式覆盖 */
+  supports_image_input?: 'on' | 'off'
   is_default?: boolean
 }
 

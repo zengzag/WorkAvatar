@@ -60,6 +60,7 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
   name: string
   args: any
   result?: any
+  images?: string[]
   isComplete?: boolean
 }> | undefined => {
   if (m.role !== 'assistant' || !m.segments) return undefined
@@ -80,6 +81,7 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
       name: s.toolName!,
       args: s.toolArgs,
       result: s.toolResult,
+      images: s.toolResultImages,
       isComplete: s.isToolComplete,
     }
   })
@@ -95,6 +97,7 @@ export interface EnrichedHistoryMessage {
     name: string
     args: any
     result?: any
+    images?: string[]
     isComplete?: boolean
   }>
   toolCallId?: string
@@ -185,6 +188,7 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
           name: seg.toolName,
           args: seg.toolArgs,
           result: seg.toolResult,
+          images: seg.toolResultImages,
           isComplete: seg.isToolComplete,
         })
         hasToolCalls = true
