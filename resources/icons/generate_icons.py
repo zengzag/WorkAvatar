@@ -62,18 +62,15 @@ def draw_icon(size, small=False, tiny=None):
 def main():
     draw_icon(1024).resize((512, 512), Image.LANCZOS).save(os.path.join(BASE, "icon.png"))
 
-    # ico：16-48 用小变体保证任务栏 16-24px 清晰
+    # ico：16-48 用小变体保证任务栏/托盘清晰
     ico_sizes = [(16, 16), (20, 20), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    big = draw_icon(2048).resize((256, 256), Image.LANCZOS)
-    big.save(
-        os.path.join(BASE, "icon.ico"),
-        sizes=ico_sizes,
-        append_images=[
-            draw_icon(sz * 8, small=True, tiny=sz <= 24).resize((sz, sz), Image.LANCZOS)
-            for sz in [16, 20, 24, 32]
-        ] + [draw_icon(64 * 8).resize((64, 64), Image.LANCZOS),
-             draw_icon(128 * 4).resize((128, 128), Image.LANCZOS)],
-    )
+    frames = []
+    for sz, _ in ico_sizes:
+        if sz <= 48:
+            frames.append(draw_icon(sz * 8, small=True, tiny=sz <= 24).resize((sz, sz), Image.LANCZOS))
+        else:
+            frames.append(draw_icon(sz * 4).resize((sz, sz), Image.LANCZOS))
+    frames[-1].save(os.path.join(BASE, "icon.ico"), sizes=ico_sizes, append_images=frames[:-1])
 
     draw_icon(1024).save(os.path.join(BASE, "icon.icns"))
 
