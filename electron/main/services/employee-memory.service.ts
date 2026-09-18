@@ -61,19 +61,22 @@ class EmployeeMemoryService {
     return EmployeeMemoryService.instance
   }
 
-  /** 统一 LLM 调用入口（提取/整合/摘要共用） */
+  /** 统一 LLM 调用入口（提取/整合/摘要共用）
+   *  sessionId 用于上游会话路由：记忆任务使用独立命名空间，不占用用户对话会话，
+   *  避免服务端会话记录错乱与 KV cache 互相失效。
+   */
   private async llmChat(
     providerId: string,
     modelId: string | undefined,
     prompt: string,
-    options: { maxTokens: number; logSource: string },
+    options: { maxTokens: number; logSource: string; sessionId?: string },
   ): Promise<string> {
     const provider = await createPiProvider(providerId, modelId)
     if (!provider) throw new Error('LLM Provider not found')
     const response = await provider.chat(
       [{ role: 'user', content: prompt }],
       [],
-      { temperature: 0.7, maxTokens: options.maxTokens, logSource: options.logSource },
+      { temperature: 0.7, maxTokens: options.maxTokens, logSource: options.logSource, sessionId: options.sessionId },
     )
     return response.content
   }
@@ -306,7 +309,11 @@ class EmployeeMemoryService {
     const prompt = buildExtractionPrompt(contextParts)
 
     try {
-      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 800, logSource: 'memory_extract' })
+      const response = await this.llmChat(providerId, modelId, prompt, {
+        maxTokens: 800,
+        logSource: 'memory_extract',
+        sessionId: `memory-extract:${employeeId}`,
+      })
 
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) return []
@@ -419,7 +426,11 @@ class EmployeeMemoryService {
     const prompt = buildConsolidationPrompt(memoriesText)
 
     try {
-      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 1200, logSource: 'memory_consolidate' })
+      const response = await this.llmChat(providerId, modelId, prompt, {
+        maxTokens: 1200,
+        logSource: 'memory_consolidate',
+        sessionId: `memory-consolidate:${employeeId}`,
+      })
 
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) return { deleted: 0, merged: 0, simplified: 0 }

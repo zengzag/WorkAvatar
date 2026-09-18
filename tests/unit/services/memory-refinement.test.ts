@@ -27,6 +27,13 @@ const mockState = vi.hoisted(() => {
       if (s === 'SELECT memory_enabled FROM employees WHERE id = ?') {
         return { get: (id: string) => employees.get(id) }
       }
+      if (s === 'SELECT id FROM employees WHERE memory_enabled = 1') {
+        return {
+          all: () => Array.from(employees.entries())
+            .filter(([, e]) => e?.memory_enabled === 1)
+            .map(([id]) => ({ id })),
+        }
+      }
       if (s === 'SELECT value FROM settings WHERE key = ?') {
         return { get: (key: string) => (settings.has(key) ? { value: settings.get(key) } : undefined) }
       }
@@ -77,6 +84,11 @@ vi.mock('../../../electron/main/services/employee-memory.service', () => ({
 
 vi.mock('../../../electron/main/services/llm-client.service', () => ({
   default: { getInstance: () => mockState.llm },
+}))
+
+// employee-registry.service 依赖 electron（注册员工的记忆开关判定经它读取）
+vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: () => [] },
 }))
 
 import MemoryRefinementService from '../../../electron/main/services/memory-refinement.service'
@@ -243,6 +255,20 @@ describe('memory-refinement / extractManually', () => {
     await expect(service.extractManually('c1')).resolves.toEqual({ success: false, error: 'llm timeout' })
     expect(mockState.updates).toEqual([])
   })
+
+  it('注册员工：记忆开关以注册表 KV 为准（DB 影子记录 memory_enabled 恒为 0）', async () => {
+    mockState.conversations.set('c1', { id: 'c1', employee_id: 'builtin:knowledge-base', messages_json: '[{"role":"user","content":"x"}]', message_count: 1 })
+    mockState.providers.push({ id: 'p1' })
+    mockState.providerConfigs.set('p1', provider())
+
+    // KV 未开启 → 拒绝手动提取
+    mockState.settings.set('registered_employees.config', JSON.stringify({ disabled: [], memoryEnabled: [] }))
+    await expect(service.extractManually('c1')).resolves.toEqual({ success: false, error: 'MEMORY_NOT_ENABLED' })
+
+    // KV 开启 → 允许（无需 employees 表记录）
+    mockState.settings.set('registered_employees.config', JSON.stringify({ disabled: [], memoryEnabled: ['builtin:knowledge-base'] }))
+    await expect(service.extractManually('c1')).resolves.toEqual({ success: true })
+  })
 })
 
 describe('memory-refinement / runCheck', () => {
@@ -255,6 +281,7 @@ describe('memory-refinement / runCheck', () => {
   it('候选对话：增量提取（带 memory_extracted_message_count）并推进指针', async () => {
     mockState.providers.push({ id: 'p1' })
     mockState.providerConfigs.set('p1', provider())
+    mockState.employees.set('e1', { memory_enabled: 1 })
     const messages = [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }]
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: 'T', messages_json: JSON.stringify(messages),
@@ -272,6 +299,7 @@ describe('memory-refinement / runCheck', () => {
   it('memory_extracted_message_count 为 null 时按 0 传入', async () => {
     mockState.providers.push({ id: 'p1' })
     mockState.providerConfigs.set('p1', provider())
+    mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: '', messages_json: '[{"role":"user","content":"a"}]',
       message_count: 1, memory_extracted_message_count: null, employee_name: '员工',
@@ -281,6 +309,7 @@ describe('memory-refinement / runCheck', () => {
   })
 
   it('消息为空时直接把指针置 0（不调用 LLM）', async () => {
+    mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: '', messages_json: '[]',
       message_count: 0, memory_extracted_message_count: 0, employee_name: '员工',
@@ -291,6 +320,7 @@ describe('memory-refinement / runCheck', () => {
   })
 
   it('无可用 LLM 时跳过并推进指针避免反复重试', async () => {
+    mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: '', messages_json: '[{"role":"user","content":"a"}]',
       message_count: 1, memory_extracted_message_count: 0, employee_name: '员工',
@@ -303,6 +333,8 @@ describe('memory-refinement / runCheck', () => {
   it('单个对话提取抛错时推进指针，并继续处理后续候选', async () => {
     mockState.providers.push({ id: 'p1' })
     mockState.providerConfigs.set('p1', provider())
+    mockState.employees.set('e1', { memory_enabled: 1 })
+    mockState.employees.set('e2', { memory_enabled: 1 })
     mockState.candidateRows.push(
       { id: 'c-bad', employee_id: 'e1', title: 'B', messages_json: '[{"role":"user","content":"a"}]', message_count: 1, memory_extracted_message_count: 0, employee_name: 'E' },
       { id: 'c-good', employee_id: 'e2', title: 'G', messages_json: '[{"role":"user","content":"b"}]', message_count: 1, memory_extracted_message_count: 0, employee_name: 'E' },
@@ -318,6 +350,22 @@ describe('memory-refinement / runCheck', () => {
       { sql: 'advance', args: [1, 'c-bad'] },
       { sql: 'advance', args: [1, 'c-good'] },
     ])
+  })
+
+  it('注册员工：记忆开关取自注册表 KV（DB 列恒为 0）也会被选为候选', async () => {
+    mockState.providers.push({ id: 'p1' })
+    mockState.providerConfigs.set('p1', provider())
+    mockState.settings.set('registered_employees.config', JSON.stringify({ disabled: [], memoryEnabled: ['builtin:knowledge-base'] }))
+    mockState.candidateRows.push({
+      id: 'c1', employee_id: 'builtin:knowledge-base', title: 'T', messages_json: '[{"role":"user","content":"a"}]',
+      message_count: 1, memory_extracted_message_count: 0, employee_name: '资料搜索助手',
+    })
+
+    await priv.runCheck()
+
+    expect(mockState.memoryService.extractMemoriesFromConversation).toHaveBeenCalledWith(
+      'builtin:knowledge-base', [{ role: 'user', content: 'a' }], 'p1', 'gpt-real', 'c1', 0,
+    )
   })
 
   it('runCheck 未被 start 时不会自动执行', async () => {

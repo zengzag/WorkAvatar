@@ -1,5 +1,6 @@
 import DatabaseService from './database.service'
 import EmployeeMemoryService from './employee-memory.service'
+import EmployeeRegistryService from './employee-registry.service'
 import LLMClientService from './llm-client.service'
 import { ScheduledTaskBase } from './scheduled-task-base'
 import { createLogger } from './logger'
@@ -34,9 +35,13 @@ class MemoryRefinementService extends ScheduledTaskBase {
   }
 
   protected async runCheck(): Promise<void> {
+    const enabledEmployeeIds = this.getMemoryEnabledEmployeeIds()
+    if (enabledEmployeeIds.length === 0) return
+
     const now = Math.floor(Date.now() / 1000)
     const idleCutoff = now - IDLE_THRESHOLD_SECONDS
     const recentCutoff = now - RECENT_WINDOW_SECONDS
+    const placeholders = enabledEmployeeIds.map(() => '?').join(',')
 
     const candidates = this.db.getDb().prepare(`
       SELECT c.id, c.employee_id, c.title, c.messages_json, c.message_count,
@@ -44,14 +49,14 @@ class MemoryRefinementService extends ScheduledTaskBase {
              e.name as employee_name
       FROM conversations c
       JOIN employees e ON c.employee_id = e.id
-      WHERE e.memory_enabled = 1
+      WHERE c.employee_id IN (${placeholders})
         AND c.last_message_at IS NOT NULL
         AND c.last_message_at < ?
         AND c.last_message_at > ?
         AND c.message_count > COALESCE(c.memory_extracted_message_count, 0)
       ORDER BY c.last_message_at DESC
       LIMIT ?
-    `).all(idleCutoff, recentCutoff, MAX_BATCH_SIZE) as any[]
+    `).all(...enabledEmployeeIds, idleCutoff, recentCutoff, MAX_BATCH_SIZE) as any[]
 
     if (candidates.length === 0) return
 
@@ -116,8 +121,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
     ).get(conversationId) as any
     if (!conv) return { success: false, error: 'CONVERSATION_NOT_FOUND' }
 
-    const emp = this.db.getDb().prepare('SELECT memory_enabled FROM employees WHERE id = ?').get(conv.employee_id) as any
-    if (!emp?.memory_enabled) return { success: false, error: 'MEMORY_NOT_ENABLED' }
+    if (!this.isEmployeeMemoryEnabled(conv.employee_id)) return { success: false, error: 'MEMORY_NOT_ENABLED' }
 
     const messages = (() => {
       try { return JSON.parse(conv.messages_json || '[]') } catch { return [] }
@@ -139,6 +143,29 @@ class MemoryRefinementService extends ScheduledTaskBase {
     } catch (err: any) {
       return { success: false, error: err?.message || 'Unknown error' }
     }
+  }
+
+  /** 开启跨任务记忆的员工 id 集合。
+   *  user 员工开关存 employees.memory_enabled；注册员工（内置/插件）的开关存注册表 KV，
+   *  其 DB 影子记录该列恒为 0，需按注册表补齐。
+   */
+  private getMemoryEnabledEmployeeIds(): string[] {
+    const ids = new Set<string>(
+      (this.db.getDb().prepare('SELECT id FROM employees WHERE memory_enabled = 1').all() as Array<{ id: string }>)
+        .map(row => row.id)
+    )
+    for (const emp of EmployeeRegistryService.getInstance().listRegistered()) {
+      if (emp.memory_enabled) ids.add(emp.id)
+    }
+    return Array.from(ids)
+  }
+
+  /** 员工是否开启记忆（注册员工以注册表 KV 为准，DB 影子记录不可信） */
+  private isEmployeeMemoryEnabled(employeeId: string): boolean {
+    const registered = EmployeeRegistryService.getInstance().getRegistered(employeeId)
+    if (registered) return registered.memory_enabled
+    const row = this.db.getDb().prepare('SELECT memory_enabled FROM employees WHERE id = ?').get(employeeId) as { memory_enabled: number } | undefined
+    return row?.memory_enabled === 1
   }
 
   /** 解析记忆提取使用的 LLM provider + model。
