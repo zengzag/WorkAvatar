@@ -49,10 +49,11 @@ describe('buildPiStreamOptions 分支边界', () => {
     expect(buildPiStreamOptions({ providerType: 'openai', extraHeaders: { 'x-a': '1' } }).headers).toEqual({ 'x-a': '1' })
   })
 
-  it('sessionId 为空串时不透传 sessionId，也不注入 @sessionId 路由头', () => {
+  it('sessionId 为空串时不透传 sessionId；强制路由头 provider 注入随机兜底会话头', () => {
     const opts = buildPiStreamOptions({ providerType: 'opencode-go', sessionId: '' })
     expect('sessionId' in opts).toBe(false)
-    expect(opts.headers).toEqual({ 'x-opencode-client': 'workavatar' })
+    expect(opts.headers['x-opencode-client']).toBe('workavatar')
+    expect(opts.headers['x-opencode-session']).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it('未知 provider 且未显式开启思考时不注入 reasoningEffort', () => {
@@ -138,9 +139,11 @@ describe('provider-compat 分支边界', () => {
     expect(resolveReasoningEffort(undefined, undefined, false)).toBe(false)
   })
 
-  it('getProviderExtraRequestHeaders：无模板返回 undefined；空 sessionId 跳过占位头', () => {
+  it('getProviderExtraRequestHeaders：无模板返回 undefined；无 sessionId 时强制路由头用随机值兜底', () => {
     expect(getProviderExtraRequestHeaders('unknown', undefined, 's')).toBeUndefined()
-    expect(getProviderExtraRequestHeaders('opencode-go', undefined, '')).toEqual({ 'x-opencode-client': 'workavatar' })
+    const headers = getProviderExtraRequestHeaders('opencode-go', undefined, '')!
+    expect(headers['x-opencode-client']).toBe('workavatar')
+    expect(headers['x-opencode-session']).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it('getProviderExtraRequestHeaders 每次返回新对象，调用方修改不污染模板', () => {

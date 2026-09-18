@@ -260,6 +260,12 @@ export class PiAIProvider implements ILLMProvider {
       const eventStream = openaiCompletionsStream(piModel, context, streamOptions)
       const finalMessage = await eventStream.result()
 
+      // pi-ai 非流式聚合在上游失败时以 stopReason='error' 的空消息返回而非抛错，
+      // 不显式抛出会让调用方把空 content 当成功结果（记忆提取等会静默产出空结果）
+      if (finalMessage.stopReason === 'error') {
+        throw new Error(finalMessage.errorMessage || '上游返回错误')
+      }
+
       const latencyMs = Date.now() - startTime
       const response = assistantToResponse(finalMessage, latencyMs)
 
