@@ -107,6 +107,20 @@ export interface PluginManifestEmployee {
   avatarType?: string
 }
 
+/**
+ * vendor 目录声明（构建期指令，宿主运行时不读取）。
+ * 用于把自带 code-split chunk / Web Worker / 二进制资源、无法单文件 bundle 的
+ * 第三方产物原样拷入插件目录（如 `vendor/xxx`），构建脚本 `--zip` 时一并打包。
+ */
+export interface PluginVendorEntry {
+  /** 源目录（相对插件根目录，通常指向 node_modules 内的包产物） */
+  from: string
+  /** 目标目录（相对插件根目录） */
+  to: string
+  /** 可选后处理脚本（相对插件根目录），默认导出 (destDir: string) => void，用于改写产物 */
+  patch?: string
+}
+
 export interface PluginManifest {
   /** 唯一 id：/^[a-z][a-z0-9-]{1,63}$/，不可用保留字 settings/tasks/employees */
   id: string
@@ -134,5 +148,11 @@ export interface PluginManifest {
   dependencies?: Record<string, string>
   /** 内置数字员工声明（激活成功后注册进员工库「插件」分组，用户可另存副本） */
   employees?: PluginManifestEmployee[]
+  /**
+   * vendor 目录声明（**构建期**指令，宿主运行时不读取）：
+   * 把无法单文件 bundle 的第三方产物（code-split chunk / Web Worker / 二进制资源）
+   * 原样拷入插件目录，随 `.wap` 一并分发。
+   */
+  vendor?: PluginVendorEntry[]
   nav?: PluginNavContribution
 }

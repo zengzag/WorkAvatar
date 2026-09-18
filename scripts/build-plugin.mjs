@@ -20,9 +20,11 @@
 //   - zip 默认含源码（src/** + package.json + tsconfig.json），便于在已安装插件基础上二次开发重建；
 //     --no-source 排除源码，仅保留运行时必需文件 manifest.json + dist/** + locale/** + resources/**
 import esbuild from 'esbuild'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 
 const require = createRequire(import.meta.url)
 
@@ -234,6 +236,7 @@ function packPluginZip(pluginDir, manifest, outDir, AdmZip, includeSource) {
   }
   addPath('manifest.json')
   addPath('dist')
+  addPath('vendor')
   addPath('locale')
   addPath('resources')
   addPath('skills')
@@ -246,6 +249,78 @@ function packPluginZip(pluginDir, manifest, outDir, AdmZip, includeSource) {
   const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.wap`)
   zip.writeZip(outPath)
   return outPath
+}
+
+/**
+ * 处理 manifest.vendor：把第三方依赖目录**原样拷入**插件（不经过 esbuild），
+ * 适用于自带 code-split chunk / Web Worker / 二进制资源、无法被单文件 bundle 的库。
+ * 可选 `patch` 指定后处理脚本（默认导出 (destDir) => void），做产物改写。
+ *
+ * manifest 声明：
+ *   "vendor": [{ "from": "node_modules/xxx/dist-lib", "to": "vendor/xxx", "patch": "scripts/patch-xxx.mjs" }]
+ */
+async function processVendor(pluginDir, manifest) {
+  const list = manifest.vendor
+  if (!Array.isArray(list) || list.length === 0) return
+  for (const item of list) {
+    const from = path.resolve(pluginDir, item.from)
+    const to = path.resolve(pluginDir, item.to)
+    if (!fs.existsSync(from)) {
+      throw new Error(`vendor 源不存在: ${item.from}（请先在插件目录执行 npm install）`)
+    }
+    // 源包版本未变则跳过拷贝，避免 dev 反复构建时的无谓开销；
+    // stamp 同时纳入 patch 脚本哈希——改写规则变更后必须重跑，否则旧产物会被误判为最新
+    const version = readPackageVersion(from) ?? ''
+    const patchPath = item.patch ? path.resolve(pluginDir, item.patch) : ''
+    const patchHash = patchPath && fs.existsSync(patchPath)
+      ? crypto.createHash('sha1').update(fs.readFileSync(patchPath)).digest('hex').slice(0, 12)
+      : ''
+    const stampValue = patchHash ? `${version}+${patchHash}` : version
+    const stamp = path.join(to, '.vendor-stamp')
+    if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf-8').trim() === stampValue) {
+      console.log(`[build-plugin]   ↷ vendor ${item.to} 已是最新 (v${version})`)
+      continue
+    }
+    fs.rmSync(to, { recursive: true, force: true })
+    fs.mkdirSync(path.dirname(to), { recursive: true })
+    fs.cpSync(from, to, { recursive: true })
+    let detail = ''
+    if (item.patch) {
+      const mod = await import(pathToFileURL(patchPath).href)
+      const apply = mod.default ?? mod
+      const res = apply(to, manifest) ?? {}
+      if (res.patched !== undefined) detail = `，改写 ${res.patched} 处`
+    }
+    fs.writeFileSync(stamp, stampValue, 'utf-8')
+    console.log(`[build-plugin]   ✓ vendor ${item.to} (${formatSize(dirSize(to))})${detail}`)
+  }
+}
+
+/** 由给定目录向上查找最近的 package.json 版本号 */
+function readPackageVersion(dir) {
+  let d = path.resolve(dir)
+  while (true) {
+    const pkg = path.join(d, 'package.json')
+    if (fs.existsSync(pkg)) {
+      try { return JSON.parse(fs.readFileSync(pkg, 'utf-8')).version ?? null } catch { return null }
+    }
+    const parent = path.dirname(d)
+    if (parent === d) return null
+    d = parent
+  }
+}
+
+function dirSize(dir) {
+  let total = 0
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) walk(p)
+      else total += fs.statSync(p).size
+    }
+  }
+  walk(dir)
+  return total
 }
 
 async function main() {
@@ -289,6 +364,13 @@ async function main() {
   const nativeDeps = readNativeDeps(pluginDir)
   if (nativeDeps.length) {
     console.log(`[build-plugin] 宿主原生依赖（不打包）: ${nativeDeps.join(', ')}`)
+  }
+
+  // vendor 目录：第三方自包含产物（code-split chunk / Worker / 二进制），原样拷入不走 esbuild
+  try {
+    await processVendor(pluginDir, manifest)
+  } catch (err) {
+    errors.push(`vendor 处理失败: ${formatError(err)}`)
   }
 
   try {
