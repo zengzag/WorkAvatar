@@ -8,7 +8,7 @@ import { useEffect, useRef, useCallback } from 'react'
  * - 监听 messages 变化，通过 requestAnimationFrame 节流滚动到底部，
  *   合并多个 token chunk 为单次滚动，避免流式输出触发大量同步 reflow
  * - handleScroll：用户滚动时根据阈值更新 isUserAtBottomRef
- * - forceScrollToBottom：强制平滑滚动到底部
+ * - forceScrollToBottom：强制滚动到底部（默认平滑，发送新消息等需要立即定位时传 'auto'）
  */
 export function useChatScroll<T>(messages: T[]) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -43,9 +43,9 @@ export function useChatScroll<T>(messages: T[]) {
     isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
   }, [])
 
-  const forceScrollToBottom = () => {
+  const forceScrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     isUserAtBottomRef.current = true
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    messagesEndRef.current?.scrollIntoView({ behavior })
   }
 
   return {

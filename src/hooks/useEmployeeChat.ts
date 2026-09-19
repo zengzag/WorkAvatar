@@ -1164,6 +1164,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     if (hasActiveStream || isStreamingRef.current) return
 
     isStreamingRef.current = true
+    // 发送新消息时强制回到底部：即使用户正在上滚浏览历史，也要展示新消息与后续回复
+    // 用 'auto' 立即定位，避免平滑动画被流式新增内容打断而停在半途
+    forceScrollToBottom('auto')
     await sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
     // sendMessage 发起失败（未进入流）的路径在其 catch 中复位；此处同步兜底
     // （按当前对话过滤：其他员工后台续跑流不应阻止本对话复位）
