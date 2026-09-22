@@ -10,6 +10,7 @@ const Employees = lazy(() => import('../pages/Employees'))
 const CreationWizard = lazy(() => import('../pages/CreationWizard'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
+const Onboarding = lazy(() => import('../pages/Onboarding'))
 
 const lazyElement = (node: ReactNode) => (
   <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }} />}>
@@ -58,6 +59,10 @@ export function buildRouter() {
         {
           path: 'kms',
           element: lazyElement(<KMSPage />),
+        },
+        {
+          path: 'onboarding',
+          element: lazyElement(<Onboarding />),
         },
         ...pluginHostRoutes(),
       ],

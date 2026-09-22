@@ -74,6 +74,8 @@ const App: React.FC = () => {
 
   // 若主窗口当前路由对应的 tab 被分离了，自动跳转到第一个未分离的 tab（避免主窗口与独立窗口同时渲染同一 tab）
   useEffect(() => {
+    // 新用户引导页不参与 tab 分离回退，避免把用户从引导页踢走
+    if (location.pathname === '/onboarding') return
     const currentKey = getSelectedKey()
     if (!detachedTabs.includes(currentKey)) return
     // 按默认顺序找第一个未分离、可见的 tab（排除 settings，它不适合作为回退目标）
@@ -161,8 +163,10 @@ const App: React.FC = () => {
   const MENU_ITEM_HEIGHT = 48
 
   // 测量主菜单可用高度，超出时把多余插件收进"更多"子菜单
+  // 引导页隐藏 Sider 时不渲染菜单，需在 Sider 重新出现后重新测量
   const mainMenuRef = useRef<HTMLDivElement>(null)
   const [mainMenuHeight, setMainMenuHeight] = useState(0)
+  const siderVisible = location.pathname !== '/onboarding'
   useLayoutEffect(() => {
     const el = mainMenuRef.current
     if (!el) return
@@ -171,7 +175,7 @@ const App: React.FC = () => {
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [siderVisible])
 
   // 所有导航项的定义（icon + label + onClick）；已分离的 tab 图标视觉降级
   // icon 外层包 data-nav-key，供侧边栏右键菜单识别目标 tab
@@ -347,7 +351,9 @@ const App: React.FC = () => {
     <Layout style={{ height: '100vh', flexDirection: 'column' }}>
       <TitleBar />
       <Layout style={{ flex: 1, minHeight: 0 }}>
-        <Sider
+        {/* 新用户引导页隐藏侧边栏，提供沉浸式全屏体验 */}
+        {siderVisible && (
+          <Sider
           theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
           width={52}
           collapsedWidth={52}
@@ -396,6 +402,7 @@ const App: React.FC = () => {
             <PluginViewSlot view="sidebar.footer" />
           </div>
         </Sider>
+        )}
         <Layout>
           <Content
             style={{

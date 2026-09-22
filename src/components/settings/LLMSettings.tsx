@@ -34,7 +34,7 @@ import { computeModelRenames, syncModelRenamesInStorage } from '../../utils/llm'
 
 const { Text, Title } = Typography
 
-const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string; group: string; icon?: string }[] = [
+export const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string; group: string; icon?: string }[] = [
   { value: 'openai', label: 'OpenAI', group: 'international' },
   { value: 'groq', label: 'Groq', group: 'international' },
   { value: 'mistral', label: 'Mistral AI', group: 'international' },
@@ -54,7 +54,7 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string
   { value: 'lmstudio', label: 'LM Studio', group: 'local' },
 ]
 
-const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
+export const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   openai: { baseURL: 'https://api.openai.com/v1' },
   'openai-compatible': { baseURL: '' },
   lmstudio: { baseURL: 'http://localhost:1234/v1' },
