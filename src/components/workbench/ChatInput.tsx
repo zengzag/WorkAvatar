@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
@@ -56,6 +56,15 @@ const buildAttachedImage = async (dataUrl: string, name: string): Promise<Attach
     name,
   }
 }
+
+/** Blob → data URL（右键粘贴图片时复用图片落盘流程） */
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
 
 /** XML 转义，避免路径本身含 &、<、> 时破坏 <path> 标签闭合 */
 const xmlEscape = (s: string) =>
@@ -659,6 +668,132 @@ const ChatInput: React.FC<{
       insertPlainTextAtCursor(text)
     }
   }, [onImagesChange, insertFileTokenAtCursor, insertPlainTextAtCursor])
+
+  /** 编辑器右键菜单：记录弹出位置、当前选区（供剪切/复制恢复）与选区是否存在 */
+  const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null)
+  const editorMenuRef = useRef<HTMLDivElement>(null)
+  const editorMenuRangeRef = useRef<Range | null>(null)
+
+  const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
+    const editor = editorRef.current
+    if (!editor || isCompacting) return
+    e.preventDefault()
+    const sel = window.getSelection()
+    let range: Range | null = null
+    let hasSelection = false
+    if (sel && sel.rangeCount > 0) {
+      const current = sel.getRangeAt(0)
+      if (editor.contains(current.commonAncestorContainer)) {
+        hasSelection = !current.collapsed
+        range = current.cloneRange()
+      }
+    }
+    editorMenuRangeRef.current = range
+    setEditorContextMenu({ x: e.clientX, y: e.clientY, hasSelection })
+  }, [isCompacting])
+
+  /** 恢复右键时的选区：点击菜单项会使编辑器失焦并丢失选区，剪切/复制前需还原 */
+  const restoreEditorSelection = useCallback((): boolean => {
+    const editor = editorRef.current
+    const range = editorMenuRangeRef.current
+    if (!editor || !range) return false
+    editor.focus()
+    const sel = window.getSelection()
+    if (!sel) return false
+    sel.removeAllRanges()
+    sel.addRange(range)
+    return true
+  }, [])
+
+  // 菜单打开时，点击菜单外 / 滚动 / 再次右键 / ESC 均关闭
+  useEffect(() => {
+    if (!editorContextMenu) return
+    const closeOnOutside = (e: Event) => {
+      if (editorMenuRef.current?.contains(e.target as Node)) return
+      setEditorContextMenu(null)
+    }
+    const closeOnEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setEditorContextMenu(null) }
+    const opts = { capture: true } as AddEventListenerOptions
+    document.addEventListener('mousedown', closeOnOutside, opts)
+    document.addEventListener('wheel', closeOnOutside, opts)
+    document.addEventListener('contextmenu', closeOnOutside, opts)
+    document.addEventListener('keydown', closeOnEscape, opts)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutside, opts)
+      document.removeEventListener('wheel', closeOnOutside, opts)
+      document.removeEventListener('contextmenu', closeOnOutside, opts)
+      document.removeEventListener('keydown', closeOnEscape, opts)
+    }
+  }, [editorContextMenu])
+
+  const handleMenuCut = useCallback(() => {
+    setEditorContextMenu(null)
+    if (!restoreEditorSelection()) return
+    document.execCommand('cut')
+    emitDraftChange()
+  }, [restoreEditorSelection, emitDraftChange])
+
+  const handleMenuCopy = useCallback(() => {
+    setEditorContextMenu(null)
+    if (!restoreEditorSelection()) return
+    document.execCommand('copy')
+  }, [restoreEditorSelection])
+
+  const handleMenuSelectAll = useCallback(() => {
+    setEditorContextMenu(null)
+    const editor = editorRef.current
+    if (!editor) return
+    editor.focus()
+    const sel = window.getSelection()
+    if (!sel) return
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }, [])
+
+  /** 右键粘贴：优先读取剪贴板富内容（图片走附件落盘、文本插入光标处），失败降级为纯文本 */
+  const handleMenuPaste = useCallback(async () => {
+    setEditorContextMenu(null)
+    const editor = editorRef.current
+    if (!editor) return
+    const images: AttachedImage[] = []
+    const texts: string[] = []
+    try {
+      const items = await navigator.clipboard.read()
+      for (const item of items) {
+        const imageType = item.types.find(type => type.startsWith('image/'))
+        if (imageType) {
+          const blob = await item.getType(imageType)
+          images.push(await buildAttachedImage(await blobToDataUrl(blob), 'pasted-image.png'))
+        } else if (item.types.includes('text/plain')) {
+          texts.push(await (await item.getType('text/plain')).text())
+        }
+      }
+    } catch {
+      // 富内容读取不可用，降级为纯文本
+      try {
+        const text = await navigator.clipboard.readText()
+        if (text) texts.push(text)
+      } catch { /* 忽略剪贴板读取失败 */ }
+    }
+    if (images.length > 0) onImagesChange([...attachedImagesRef.current, ...images])
+    if (texts.length > 0) {
+      // 有选区时按选区替换插入，否则回到编辑器光标处追加
+      if (!restoreEditorSelection()) editor.focus()
+      insertPlainTextAtCursor(texts.join('\n'))
+    }
+  }, [onImagesChange, insertPlainTextAtCursor, restoreEditorSelection])
+
+  const editorContextMenuItems = useMemo(() => {
+    const noSelection = !editorContextMenu?.hasSelection
+    return [
+      { key: 'cut', icon: <ScissorOutlined />, label: t('common.cut'), disabled: noSelection, onClick: handleMenuCut },
+      { key: 'copy', icon: <CopyOutlined />, label: t('common.copy'), disabled: noSelection, onClick: handleMenuCopy },
+      { key: 'paste', icon: <SnippetsOutlined />, label: t('common.paste'), disabled: false, onClick: handleMenuPaste },
+      { key: 'selectAll', icon: <SelectOutlined />, label: t('common.selectAll'), disabled: false, onClick: handleMenuSelectAll },
+    ]
+  }, [editorContextMenu?.hasSelection, t, handleMenuCut, handleMenuCopy, handleMenuPaste, handleMenuSelectAll])
 
   /** 统一的文件选择（PaperClip 按钮）：同时支持图片与普通文件，按类型自动分流
    * - image/*：走原图片逻辑（FileReader→dataUrl→顶部缩略图→images 数组发消息）
@@ -1334,6 +1469,7 @@ const ChatInput: React.FC<{
             suppressContentEditableWarning
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onContextMenu={handleEditorContextMenu}
             onInput={emitDraftChange}
             spellCheck={false}
             className="workbench-input"
@@ -1553,6 +1689,46 @@ const ChatInput: React.FC<{
             size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>
+      {editorContextMenu && (
+        <div
+          ref={editorMenuRef}
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'fixed',
+            left: editorContextMenu.x,
+            top: editorContextMenu.y,
+            zIndex: 1060,
+            minWidth: 136,
+            padding: 4,
+            background: token.colorBgElevated,
+            border: `1px solid ${token.colorBorderSecondary}`,
+            borderRadius: 8,
+            boxShadow: token.boxShadowSecondary,
+          }}
+        >
+          {editorContextMenuItems.map(item => (
+            <div
+              key={item.key}
+              onClick={() => { if (!item.disabled) item.onClick() }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 10px',
+                borderRadius: 6,
+                fontSize: 13,
+                cursor: item.disabled ? 'not-allowed' : 'pointer',
+                color: item.disabled ? token.colorTextQuaternary : token.colorText,
+              }}
+              onMouseEnter={(e) => { if (!item.disabled) e.currentTarget.style.background = token.colorBgTextHover }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              <span style={{ fontSize: 12, color: item.disabled ? token.colorTextQuaternary : token.colorTextSecondary }}>{item.icon}</span>
+              <span>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

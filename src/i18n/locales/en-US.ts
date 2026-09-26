@@ -62,6 +62,8 @@ export default {
     confirmDelete: 'Confirm delete?',
     copied: 'Copied',
     copy: 'Copy',
+    cut: 'Cut',
+    paste: 'Paste',
     copyFailed: 'Copy failed',
     deleted: 'Deleted',
     documents: '{{count}} docs',

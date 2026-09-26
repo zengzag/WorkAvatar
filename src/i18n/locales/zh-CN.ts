@@ -62,6 +62,8 @@ export default {
     confirmDelete: '确定删除?',
     copied: '已复制',
     copy: '复制',
+    cut: '剪切',
+    paste: '粘贴',
     copyFailed: '复制失败',
     deleted: '已删除',
     documents: '{{count}} 文档',
