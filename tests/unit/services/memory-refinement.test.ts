@@ -2,7 +2,7 @@
  * 记忆精炼调度服务单测（DB/记忆服务/LLM 客户端打桩）：
  * - resolveEmployeeLLM 的模型解析优先级（settings → 兜底 provider）与各类解析失败回落
  * - extractManually 的错误码分支与成功路径参数（manually 全量提取）
- * - runCheck 的候选筛选、失败推进提取指针、空消息处理
+ * - runCheck 的候选筛选、失败有限重试（达到上限才推进指针）、空消息处理
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -11,7 +11,7 @@ const mockState = vi.hoisted(() => {
   const conversations = new Map<string, any>()
   const employees = new Map<string, any>()
   const providers: any[] = []
-  const updates: Array<{ sql: string; args: any[] }> = []
+  const updates: Array<{ sql: string; args: any[]; text: string }> = []
   const candidateRows: any[] = []
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
 
@@ -40,18 +40,20 @@ const mockState = vi.hoisted(() => {
       if (s === 'SELECT id FROM llm_providers ORDER BY is_default DESC LIMIT 1') {
         return { get: () => providers[0] }
       }
+      // 成功/放弃：推进指针并清零失败计数
       if (s.startsWith('UPDATE conversations SET memory_extracted_at = unixepoch(), memory_extracted_message_count = ?')) {
         return {
           run: (...args: any[]) => {
-            updates.push({ sql: 'advance', args })
+            updates.push({ sql: 'advance', args, text: s })
             return { changes: 1 }
           },
         }
       }
-      if (s === 'UPDATE conversations SET memory_extracted_at = unixepoch() WHERE id = ?') {
+      // 失败一次：仅累计失败计数，保留指针
+      if (s === 'UPDATE conversations SET memory_extract_attempts = ? WHERE id = ?') {
         return {
           run: (...args: any[]) => {
-            updates.push({ sql: 'touch', args })
+            updates.push({ sql: 'attempts', args, text: s })
             return { changes: 1 }
           },
         }
@@ -240,9 +242,11 @@ describe('memory-refinement / extractManually', () => {
     expect(mockState.memoryService.extractMemoriesFromConversation).toHaveBeenCalledWith(
       'e1', messages, 'p1', 'gpt-real', 'c1', 0, true,
     )
-    expect(mockState.memoryService.removeStaleMemories).toHaveBeenCalledWith('e1')
+    expect(mockState.memoryService.removeStaleMemories).toHaveBeenCalledWith({ scope: 'employee', employeeId: 'e1' })
     expect(mockState.memoryService.autoConsolidateIfNeeded).toHaveBeenCalledWith('e1', 'p1', 'gpt-real')
-    expect(mockState.updates).toEqual([{ sql: 'advance', args: [2, 'c1'] }])
+    expect(mockState.updates).toHaveLength(1)
+    expect(mockState.updates[0]).toMatchObject({ sql: 'advance', args: [2, 'c1'] })
+    expect(mockState.updates[0].text).toContain('memory_extract_attempts = 0')
   })
 
   it('提取过程抛错时返回错误信息，不推进指针', async () => {
@@ -285,7 +289,7 @@ describe('memory-refinement / runCheck', () => {
     const messages = [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }]
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: 'T', messages_json: JSON.stringify(messages),
-      message_count: 3, memory_extracted_message_count: 1, employee_name: '员工',
+      message_count: 3, memory_extracted_message_count: 1, memory_extract_attempts: 0, employee_name: '员工',
     })
 
     await priv.runCheck()
@@ -293,7 +297,8 @@ describe('memory-refinement / runCheck', () => {
     expect(mockState.memoryService.extractMemoriesFromConversation).toHaveBeenCalledWith(
       'e1', messages, 'p1', 'gpt-real', 'c1', 1,
     )
-    expect(mockState.updates).toEqual([{ sql: 'advance', args: [3, 'c1'] }])
+    expect(mockState.updates).toHaveLength(1)
+    expect(mockState.updates[0]).toMatchObject({ sql: 'advance', args: [3, 'c1'] })
   })
 
   it('memory_extracted_message_count 为 null 时按 0 传入', async () => {
@@ -302,7 +307,7 @@ describe('memory-refinement / runCheck', () => {
     mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: '', messages_json: '[{"role":"user","content":"a"}]',
-      message_count: 1, memory_extracted_message_count: null, employee_name: '员工',
+      message_count: 1, memory_extracted_message_count: null, memory_extract_attempts: 0, employee_name: '员工',
     })
     await priv.runCheck()
     expect(mockState.memoryService.extractMemoriesFromConversation.mock.calls[0][5]).toBe(0)
@@ -312,32 +317,50 @@ describe('memory-refinement / runCheck', () => {
     mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: '', messages_json: '[]',
-      message_count: 0, memory_extracted_message_count: 0, employee_name: '员工',
+      message_count: 0, memory_extracted_message_count: 0, memory_extract_attempts: 0, employee_name: '员工',
     })
     await priv.runCheck()
     expect(mockState.memoryService.extractMemoriesFromConversation).not.toHaveBeenCalled()
-    expect(mockState.updates).toEqual([{ sql: 'advance', args: [0, 'c1'] }])
+    expect(mockState.updates[0]).toMatchObject({ sql: 'advance', args: [0, 'c1'] })
   })
 
-  it('无可用 LLM 时跳过并推进指针避免反复重试', async () => {
+  it('无可用 LLM 时记一次失败并保留指针（不丢记忆）', async () => {
     mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'e1', title: '', messages_json: '[{"role":"user","content":"a"}]',
-      message_count: 1, memory_extracted_message_count: 0, employee_name: '员工',
+      message_count: 1, memory_extracted_message_count: 0, memory_extract_attempts: 0, employee_name: '员工',
     })
     await priv.runCheck()
     expect(mockState.memoryService.extractMemoriesFromConversation).not.toHaveBeenCalled()
-    expect(mockState.updates).toEqual([{ sql: 'advance', args: [1, 'c1'] }])
+    expect(mockState.updates).toEqual([
+      { sql: 'attempts', args: [1, 'c1'], text: 'UPDATE conversations SET memory_extract_attempts = ? WHERE id = ?' },
+    ])
   })
 
-  it('单个对话提取抛错时推进指针，并继续处理后续候选', async () => {
+  it('失败达到重试上限后放弃并推进指针', async () => {
+    mockState.providers.push({ id: 'p1' })
+    mockState.providerConfigs.set('p1', provider())
+    mockState.employees.set('e1', { memory_enabled: 1 })
+    mockState.candidateRows.push({
+      id: 'c1', employee_id: 'e1', title: 'T', messages_json: '[{"role":"user","content":"a"}]',
+      message_count: 1, memory_extracted_message_count: 0, memory_extract_attempts: 2, employee_name: '员工',
+    })
+    mockState.memoryService.extractMemoriesFromConversation.mockRejectedValue(new Error('boom'))
+
+    await priv.runCheck()
+
+    expect(mockState.updates).toHaveLength(1)
+    expect(mockState.updates[0]).toMatchObject({ sql: 'advance', args: [1, 'c1'] })
+  })
+
+  it('单个对话失败时保留其指针，并继续处理后续候选', async () => {
     mockState.providers.push({ id: 'p1' })
     mockState.providerConfigs.set('p1', provider())
     mockState.employees.set('e1', { memory_enabled: 1 })
     mockState.employees.set('e2', { memory_enabled: 1 })
     mockState.candidateRows.push(
-      { id: 'c-bad', employee_id: 'e1', title: 'B', messages_json: '[{"role":"user","content":"a"}]', message_count: 1, memory_extracted_message_count: 0, employee_name: 'E' },
-      { id: 'c-good', employee_id: 'e2', title: 'G', messages_json: '[{"role":"user","content":"b"}]', message_count: 1, memory_extracted_message_count: 0, employee_name: 'E' },
+      { id: 'c-bad', employee_id: 'e1', title: 'B', messages_json: '[{"role":"user","content":"a"}]', message_count: 1, memory_extracted_message_count: 0, memory_extract_attempts: 0, employee_name: 'E' },
+      { id: 'c-good', employee_id: 'e2', title: 'G', messages_json: '[{"role":"user","content":"b"}]', message_count: 1, memory_extracted_message_count: 0, memory_extract_attempts: 0, employee_name: 'E' },
     )
     mockState.memoryService.extractMemoriesFromConversation
       .mockRejectedValueOnce(new Error('boom'))
@@ -347,8 +370,8 @@ describe('memory-refinement / runCheck', () => {
 
     expect(mockState.memoryService.extractMemoriesFromConversation).toHaveBeenCalledTimes(2)
     expect(mockState.updates).toEqual([
-      { sql: 'advance', args: [1, 'c-bad'] },
-      { sql: 'advance', args: [1, 'c-good'] },
+      { sql: 'attempts', args: [1, 'c-bad'], text: 'UPDATE conversations SET memory_extract_attempts = ? WHERE id = ?' },
+      { sql: 'advance', args: [1, 'c-good'], text: expect.stringContaining('memory_extracted_message_count = ?') },
     ])
   })
 
@@ -358,7 +381,7 @@ describe('memory-refinement / runCheck', () => {
     mockState.settings.set('registered_employees.config', JSON.stringify({ disabled: [], memoryEnabled: ['builtin:knowledge-base'] }))
     mockState.candidateRows.push({
       id: 'c1', employee_id: 'builtin:knowledge-base', title: 'T', messages_json: '[{"role":"user","content":"a"}]',
-      message_count: 1, memory_extracted_message_count: 0, employee_name: '资料搜索助手',
+      message_count: 1, memory_extracted_message_count: 0, memory_extract_attempts: 0, employee_name: '资料搜索助手',
     })
 
     await priv.runCheck()

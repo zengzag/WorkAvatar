@@ -1,31 +1,31 @@
 /**
  * 记忆辅助函数未覆盖分支补充（与 tests/unit/memory-helpers 互补）：
- * - buildFtsQuery 的空白/特殊符号/Unicode 边界
  * - formatMemoriesForPrompt 的 pinned 越限、长度记账与排序稳定性
  * - getExtractionRelevantMemories 的关键词大小写、上限与空文本
  * - getConsolidationCandidates 的 pinned 超过上限、critical 归入 recent
- * - generateFallbackSummary 的话题数与截断
  */
 import { describe, it, expect } from 'vitest'
 import {
-  buildFtsQuery,
   formatContentOnlyMessages,
   formatMemoriesForPrompt,
   getExtractionRelevantMemories,
   getConsolidationCandidates,
-  generateFallbackSummary,
+  selectAlwaysOnMemories,
+  buildMemoryPromptBlock,
 } from '../../../electron/main/services/employee-memory-helpers'
 import type { EmployeeMemory } from '../../../electron/main/services/employee-memory-types'
 import {
   MEMORY_MAX_CHARS,
   EXTRACTION_MAX_EXISTING_MEMORIES,
   CONSOLIDATION_CANDIDATE_MAX,
+  MEMORY_ALWAYS_ON_MAX_COUNT,
 } from '../../../electron/main/services/employee-memory-types'
 
 function makeMemory(partial: Partial<EmployeeMemory> = {}): EmployeeMemory {
   return {
     id: 'm1',
     employee_id: 'e1',
+    scope: 'employee',
     key: 'k',
     topic: 't',
     content: 'c',
@@ -40,37 +40,35 @@ function makeMemory(partial: Partial<EmployeeMemory> = {}): EmployeeMemory {
   }
 }
 
-describe('memory-helpers 补充 / buildFtsQuery', () => {
-  it('单个非空白字符视为过短', () => {
-    expect(buildFtsQuery('a')).toBe('')
-    expect(buildFtsQuery('中')).toBe('')
+describe('memory-helpers 补充 / selectAlwaysOnMemories 边界', () => {
+  it('默认条数上限为常量值', () => {
+    const list = Array.from({ length: MEMORY_ALWAYS_ON_MAX_COUNT + 5 }, (_, i) =>
+      makeMemory({ id: `p${i}`, is_pinned: 1 }),
+    )
+    expect(selectAlwaysOnMemories(list)).toHaveLength(MEMORY_ALWAYS_ON_MAX_COUNT)
   })
 
-  it('两个字符即视为有效查询', () => {
-    expect(buildFtsQuery('ab')).toBe('"ab"')
-    expect(buildFtsQuery('文档')).toBe('"文档"')
+  it('同 pinned 时 critical 排在 normal/low 之前', () => {
+    const picked = selectAlwaysOnMemories([
+      makeMemory({ id: 'low', is_pinned: 1, importance: 'low' }),
+      makeMemory({ id: 'crit', is_pinned: 1, importance: 'critical' }),
+      makeMemory({ id: 'norm', is_pinned: 1, importance: 'normal' }),
+    ])
+    expect(picked.map(m => m.id)).toEqual(['crit', 'norm', 'low'])
+  })
+})
+
+describe('memory-helpers 补充 / buildMemoryPromptBlock 边界', () => {
+  it('pinned 项超过字符上限仍保留（与 formatMemoriesForPrompt 语义一致）', () => {
+    const block = buildMemoryPromptBlock(
+      [makeMemory({ content: 'y'.repeat(3000), is_pinned: 1 })],
+      1,
+    )
+    expect(block).toContain('y'.repeat(3000))
   })
 
-  it('去除 FTS 语法字符后不足 2 字符返回空', () => {
-    expect(buildFtsQuery('a*b')).toBe('"ab"')
-    expect(buildFtsQuery('a-')).toBe('')
-    expect(buildFtsQuery('"')).toBe('')
-  })
-
-  it('双引号转义为两个双引号（短语查询语义保留）', () => {
-    expect(buildFtsQuery('say "hi"')).toBe('"say ""hi"""')
-  })
-
-  it('Unicode 与 emoji 原样保留在短语中', () => {
-    expect(buildFtsQuery('记忆🙂系统')).toBe('"记忆🙂系统"')
-  })
-
-  it('首尾空白被裁剪', () => {
-    expect(buildFtsQuery('  查询  ')).toBe('"查询"')
-  })
-
-  it('括号/脱字符等语法字符剔除而非转义', () => {
-    expect(buildFtsQuery('(a+b)^c')).toBe('"abc"')
+  it('全部记忆为空时返回空串', () => {
+    expect(buildMemoryPromptBlock([], 0)).toBe('')
   })
 })
 
@@ -198,36 +196,5 @@ describe('memory-helpers 补充 / getConsolidationCandidates', () => {
 
   it('空输入返回空数组', () => {
     expect(getConsolidationCandidates([])).toEqual([])
-  })
-})
-
-describe('memory-helpers 补充 / generateFallbackSummary', () => {
-  it('话题最多列 10 条，但计数使用全部用户消息数', () => {
-    const messages = Array.from({ length: 15 }, (_, i) => ({ role: 'user', content: `问题${i}` }))
-    const out = generateFallbackSummary(messages)
-    expect(out).toContain('讨论了 15 个话题')
-    expect(out.split('\n').filter(l => l.startsWith('- 用户询问')).length).toBe(10)
-    expect(out).toContain('共 15 条用户消息，0 条助手回复')
-  })
-
-  it('空白内容的用户消息不计入话题列表', () => {
-    const out = generateFallbackSummary([
-      { role: 'user', content: '   ' },
-      { role: 'user', content: '有效问题' },
-    ])
-    expect(out).toContain('讨论了 1 个话题')
-    expect(out).toContain('共 2 条用户消息')
-  })
-
-  it('恰好 100 字不追加省略号，101 字追加', () => {
-    const exact = generateFallbackSummary([{ role: 'user', content: 'a'.repeat(100) }])
-    expect(exact).not.toContain('...')
-    const over = generateFallbackSummary([{ role: 'user', content: 'a'.repeat(101) }])
-    expect(over).toContain('...')
-  })
-
-  it('无用户消息时只有统计行', () => {
-    const out = generateFallbackSummary([{ role: 'assistant', content: 'hi' }])
-    expect(out).toBe('共 0 条用户消息，1 条助手回复。')
   })
 })

@@ -1,6 +1,6 @@
 /**
  * 记忆提示词构建单测（纯函数）：
- * - 记忆提取 / 合并整理 / 对话摘要三类 prompt 的结构与关键约束
+ * - 记忆提取 / 合并整理两类 prompt 的结构与关键约束
  * - 与 employee-memory-types 中常量的一致性（防止 prompt 文案与阈值常量漂移）
  * - 上下文拼接的边界（空数组、多段、超长、Unicode）
  */
@@ -8,7 +8,6 @@ import { describe, it, expect } from 'vitest'
 import {
   buildExtractionPrompt,
   buildConsolidationPrompt,
-  buildSummaryPrompt,
 } from '../../../electron/main/services/employee-memory-prompts'
 import {
   STALE_MEMORY_DAYS,
@@ -56,6 +55,14 @@ describe('employee-memory-prompts / buildExtractionPrompt', () => {
     // 服务层兜底截断上限不得小于提示词约定值，否则会出现"照提示写仍被截断"
     expect(MEMORY_CONTENT_MAX_CHARS).toBeGreaterThanOrEqual(150)
   })
+
+  it('包含作用域判定规则与输出字段（防止全局记忆被误判）', () => {
+    const p = buildExtractionPrompt([])
+    expect(p).toContain('激活范围（scope）')
+    expect(p).toContain('"scope":"employee|global"')
+    // 不确定时必须回落到 employee，避免错误地全局生效
+    expect(p).toContain('不确定时一律用 employee')
+  })
 })
 
 describe('employee-memory-prompts / buildConsolidationPrompt', () => {
@@ -79,19 +86,5 @@ describe('employee-memory-prompts / buildConsolidationPrompt', () => {
     const p = buildConsolidationPrompt('')
     expect(p).toContain('pinned(pin:1) 标记的记忆不允许删除')
     expect(p).toContain('不得丢弃背景前提或并列约束')
-  })
-})
-
-describe('employee-memory-prompts / buildSummaryPrompt', () => {
-  it('结构要求与对话内容均包含', () => {
-    const p = buildSummaryPrompt('用户: 你好\n助手: 你好')
-    expect(p).toContain('主题：')
-    expect(p).toContain('要点：')
-    expect(p).toContain('结论：')
-    expect(p).toContain('用户: 你好\n助手: 你好')
-  })
-
-  it('空对话内容不抛错', () => {
-    expect(buildSummaryPrompt('')).toContain('对话内容：')
   })
 })
