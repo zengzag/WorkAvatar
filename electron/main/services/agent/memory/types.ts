@@ -2,7 +2,11 @@ import { Message } from '../core/types'
 
 export type MemoryStrategy = 'sliding_window' | 'summary' | 'sliding_window_with_summary'
 
-export type SummarizeFn = (messages: Message[]) => Promise<string>
+/** 摘要回调：systemPrompt 为主会话系统提示词，使摘要调用复用主前缀缓存 */
+export type SummarizeFn = (
+  messages: Message[],
+  context?: { systemPrompt?: string }
+) => Promise<string>
 
 export interface MemoryConfig {
   maxTokens: number
@@ -25,6 +29,10 @@ export interface MemoryStats {
 export interface ManageContextOptions {
   forceCompress?: boolean
   lastKnownPromptTokens?: number
+  /** 锚定在 system 之后、历史之前的稳定上下文消息（agent 生命周期字节冻结，永不参与压缩） */
+  headAnchors?: Message[]
+  /** 置于历史之后、真实 query 之前的易变任务上下文消息（不参与压缩，变化只影响尾部） */
+  tailContext?: Message[]
 }
 
 export interface IMemoryManager {

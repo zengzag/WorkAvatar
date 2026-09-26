@@ -44,9 +44,20 @@ const ARTIFACT_EXT_WHITELIST = new Set([
   '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
   '.md', '.txt', '.csv', '.html', '.htm', '.json', '.zip',
 ])
-/** 子会话强制报告条款（拼入子会话指令） */
-const SUBAGENT_REPORT_RULE =
-  '重要：如果本任务产生了用户可直接消费的成品文件（文档/表格/演示/PDF/图片/代码工程等），必须在最终回复前调用 report_generated_files 工具逐一声明其绝对路径，即使最终总结中不再提及。'
+/** 子会话强制委托契约（拼入子会话指令）：成品文件声明 + 结构化任务回执 */
+const SUBAGENT_CONTRACT = [
+  'Delegation contract (mandatory):',
+  '1. If this task produces user-facing deliverable files (documents, spreadsheets, presentations, PDFs, images, code projects, and similar), you MUST call report_generated_files and declare every file by its absolute path before your final reply, even if the files are not mentioned in the summary. Temporary files do not need to be declared.',
+  '2. Your final reply must be a self-contained report: lead with the outcome in one or two sentences, then list key results and any produced deliverables. The parent agent cannot see your intermediate steps.',
+  '3. End the final reply with the following receipt block, filled in exactly:',
+  '---',
+  'Delegation Receipt',
+  'Status: Completed | Partially completed | Failed',
+  'Deliverables: <absolute paths, one per line; or "None">',
+  'Blockers: <reason and what is needed to proceed; or "None">',
+  '---',
+  '4. Do not ask the end user questions. If additional input from the parent agent is required, state it in Blockers and finish with status "Partially completed".',
+].join('\n')
 
 interface RunEntry {
   run: AgentRun
@@ -166,15 +177,15 @@ class SubAgentRuntime {
   }
 
   private async buildSubMessages(instruction: string, contextFiles: string[]): Promise<Array<{ role: string; content: string }>> {
-    let content = `${instruction.trim()}\n\n${SUBAGENT_REPORT_RULE}\n\n若主管通过 send_message 发送了补充指令，可调用 read_messages 查看最新要求。`
+    let content = `${instruction.trim()}\n\n${SUBAGENT_CONTRACT}\n\nIf the parent sent additional instructions through send_message, call read_messages to check for the latest requirements before finishing.`
     if (contextFiles.length > 0) {
-      const parts: string[] = [content, '', '--- 上下文文件 ---']
+      const parts: string[] = [content, '', '--- Context files ---']
       for (const fp of contextFiles) {
         try {
           const text = await fs.promises.readFile(fp, 'utf-8')
-          parts.push(`\n[文件: ${fp}]\n${text.slice(0, MAX_FILE_CHARS)}`)
+          parts.push(`\n[File: ${fp}]\n${text.slice(0, MAX_FILE_CHARS)}`)
         } catch {
-          parts.push(`\n[文件: ${fp}]\n(读取失败)`)
+          parts.push(`\n[File: ${fp}]\n(failed to read)`)
         }
       }
       content = parts.join('\n')
@@ -203,10 +214,11 @@ class SubAgentRuntime {
         history.push({ role: 'user', content: instruction })
         let reply = String(result.summary || '').trim()
         if (r.status === 'failed' || r.status === 'cancelled') {
-          const tail = `（本轮${r.status === 'failed' ? '执行失败' : '被取消'}${r.error ? `：${r.error}` : ''}）`
+          const label = r.status === 'failed' ? 'failed' : 'cancelled'
+          const tail = `(This turn was ${label}${r.error ? `: ${r.error}` : ''})`
           reply = reply ? `${reply}\n${tail}` : tail
         }
-        history.push({ role: 'assistant', content: reply.slice(0, MAX_ROUND_SUMMARY_CHARS) || '（本轮无文本输出）' })
+        history.push({ role: 'assistant', content: reply.slice(0, MAX_ROUND_SUMMARY_CHARS) || '(No text output this turn)' })
       }
       return history
     } catch (err: any) {

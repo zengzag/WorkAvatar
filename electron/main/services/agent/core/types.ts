@@ -77,6 +77,10 @@ export interface AgentRunOptions {
   history?: Message[]
   metadata?: Record<string, any>
   useSkills?: boolean
+  /** 稳定锚点上下文（合成 user 消息）：置于 system 之后、history 之前，不参与压缩 */
+  contextHead?: Message[]
+  /** 易变任务上下文（合成 user 消息）：置于 history 之后、query 之前，不参与压缩 */
+  contextTail?: Message[]
 }
 
 export interface AgentResponse {

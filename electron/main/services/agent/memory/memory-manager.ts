@@ -6,6 +6,7 @@ import {
   ManageContextOptions,
   DEFAULT_MEMORY_CONFIG,
 } from './types'
+import { buildCheckpointMessage } from './checkpoint'
 import { createLogger } from '../../logger'
 
 const logger = createLogger('MemoryManager')
@@ -41,7 +42,12 @@ export class MemoryManager implements IMemoryManager {
       content: currentQuery,
     }
 
-    const fixedMessages = [systemMessage, userMessage]
+    // 稳定锚点（system 之后、历史之前）与易变任务上下文（历史之后、query 之前）
+    // 均不参与压缩：锚点字节冻结构成缓存前缀，任务上下文只影响尾部。
+    const headAnchors = options?.headAnchors ?? []
+    const tailContext = options?.tailContext ?? []
+
+    const fixedMessages = [systemMessage, ...headAnchors, ...tailContext, userMessage]
     const fixedTokens = this.estimateTokens(fixedMessages)
     const availableForHistory = this.config.maxTokens - fixedTokens - this.config.reservedResponseTokens
 
@@ -53,10 +59,10 @@ export class MemoryManager implements IMemoryManager {
 
     if (shouldCompress && managedHistory.length > 0) {
       wasCompressed = true
-      managedHistory = await this.compressHistory(managedHistory, availableForHistory)
+      managedHistory = await this.compressHistory(managedHistory, availableForHistory, systemPrompt)
     }
 
-    const finalMessages = [systemMessage, ...managedHistory, userMessage]
+    const finalMessages = [systemMessage, ...headAnchors, ...managedHistory, ...tailContext, userMessage]
     const totalTokens = this.estimateTokens(finalMessages)
 
     const stats: MemoryStats = {
@@ -113,14 +119,18 @@ export class MemoryManager implements IMemoryManager {
     }
   }
 
-  private async compressHistory(history: Message[], tokenBudget: number): Promise<Message[]> {
+  private async compressHistory(
+    history: Message[],
+    tokenBudget: number,
+    systemPrompt: string
+  ): Promise<Message[]> {
     switch (this.config.strategy) {
       case 'sliding_window':
         return this.slidingWindowCompress(history, tokenBudget)
       case 'summary':
-        return this.summaryCompress(history, tokenBudget)
+        return this.summaryCompress(history, tokenBudget, systemPrompt)
       case 'sliding_window_with_summary':
-        return this.slidingWindowWithSummaryCompress(history, tokenBudget)
+        return this.slidingWindowWithSummaryCompress(history, tokenBudget, systemPrompt)
       default:
         return this.slidingWindowCompress(history, tokenBudget)
     }
@@ -138,7 +148,11 @@ export class MemoryManager implements IMemoryManager {
     return this.truncateFromStart(recentMessages, tokenBudget)
   }
 
-  private async summaryCompress(history: Message[], tokenBudget: number): Promise<Message[]> {
+  private async summaryCompress(
+    history: Message[],
+    tokenBudget: number,
+    systemPrompt: string
+  ): Promise<Message[]> {
     if (history.length <= 4) {
       return this.truncateFromStart(history, tokenBudget)
     }
@@ -146,13 +160,9 @@ export class MemoryManager implements IMemoryManager {
     const olderMessages = history.slice(0, -4)
     const recentMessages = history.slice(-4)
 
-    const summary = await this.generateSummary(olderMessages)
-    const summaryMessage: Message = {
-      role: 'system',
-      content: `[对话历史摘要]\n${summary}`,
-    }
+    const summary = await this.generateSummary(olderMessages, systemPrompt)
+    const compressed = [buildCheckpointMessage(summary), ...recentMessages]
 
-    const compressed = [summaryMessage, ...recentMessages]
     const compressedTokens = this.estimateTokens(compressed)
 
     if (compressedTokens <= tokenBudget) {
@@ -162,7 +172,11 @@ export class MemoryManager implements IMemoryManager {
     return this.truncateFromStart(recentMessages, tokenBudget)
   }
 
-  private async slidingWindowWithSummaryCompress(history: Message[], tokenBudget: number): Promise<Message[]> {
+  private async slidingWindowWithSummaryCompress(
+    history: Message[],
+    tokenBudget: number,
+    systemPrompt: string
+  ): Promise<Message[]> {
     const recentTurns = this.config.recentTurnsToKeep
     const recentMessages = this.getLastNTurns(history, recentTurns)
     const recentTokens = this.estimateTokens(recentMessages)
@@ -170,12 +184,8 @@ export class MemoryManager implements IMemoryManager {
     if (recentTokens <= tokenBudget) {
       const olderMessages = history.slice(0, history.length - recentMessages.length)
       if (olderMessages.length > 0) {
-        const summary = await this.generateSummary(olderMessages)
-        const summaryMessage: Message = {
-          role: 'system',
-          content: `[对话历史摘要]\n${summary}`,
-        }
-        return [summaryMessage, ...recentMessages]
+        const summary = await this.generateSummary(olderMessages, systemPrompt)
+        return [buildCheckpointMessage(summary), ...recentMessages]
       }
       return recentMessages
     }
@@ -235,11 +245,11 @@ export class MemoryManager implements IMemoryManager {
     // 段首孤儿 tool：回退起点至所属 assistant(toolCalls)
     let start = 0
     while (start < messages.length && messages[start].role === 'tool') {
-      const ownerId = messages[start].toolCallId
+      const toolCallId = messages[start].toolCallId
       let ownerIdx = -1
       for (let i = start - 1; i >= 0; i--) {
         const m = messages[i]
-        if (m.role === 'assistant' && (m.toolCalls ?? []).some((tc) => tc.id === ownerId)) {
+        if (m.role === 'assistant' && (m.toolCalls ?? []).some((tc) => tc.id === toolCallId)) {
           ownerIdx = i
           break
         }
@@ -268,7 +278,7 @@ export class MemoryManager implements IMemoryManager {
     return messages.slice(start, end)
   }
 
-  private async generateSummary(messages: Message[]): Promise<string> {
+  private async generateSummary(messages: Message[], systemPrompt: string): Promise<string> {
     // 同一批历史（条数一致 + 首尾内容一致）复用上轮摘要，避免长会话每轮 run 重复调 LLM
     const cacheKey = `${messages.length}:${(messages[0]?.content ?? '').slice(0, 50)}:${(messages[messages.length - 1]?.content ?? '').slice(0, 50)}`
     if (this.lastSummaryKey === cacheKey && this.lastSummaryText) {
@@ -283,7 +293,7 @@ export class MemoryManager implements IMemoryManager {
     const pending = (async () => {
       if (this.config.summarizeFn) {
         try {
-          return await this.config.summarizeFn(messages)
+          return await this.config.summarizeFn(messages, { systemPrompt })
         } catch (err) {
           logger.warn('LLM摘要失败，回退到简单摘要', err)
         }

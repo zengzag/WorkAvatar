@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { AgentRunOptions } from '../../../electron/main/services/agent/core/types'
 import type { ToolDefinition } from '../../../electron/main/services/agent/tools/types'
 
@@ -462,5 +462,27 @@ describe('BaseAgent / compactConversation', () => {
     const statsBefore = agent.getContextStats()
     const res = await agent.compactConversation([{ role: 'user', content: 'u' }, { role: 'assistant', content: 'a' }])
     expect(res.stats).toEqual(statsBefore)
+  })
+
+  it('压缩调用：system 复用主会话系统提示词，压缩指令作为最后一条 user 消息', async () => {
+    const captured: any[] = []
+    const chat = vi.fn(async (llmMessages: any) => {
+      captured.push(...llmMessages)
+      return { content: 'SUM' }
+    })
+    const agent = makeAgent()
+    ;(agent as any).llmProvider = fakeProvider(chat)
+    await agent.compactConversation([
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u2' },
+    ])
+    expect(captured[0]).toMatchObject({ role: 'system', content: 'SYS:' })
+    const last = captured[captured.length - 1]
+    expect(last.role).toBe('user')
+    expect(last.content).toContain('## Primary Objective')
+    expect(last.content).toContain('## Next Step')
+    // 对话内容在压缩指令之前
+    expect(last.content.indexOf('u1')).toBeLessThan(last.content.indexOf('## Primary Objective'))
   })
 })

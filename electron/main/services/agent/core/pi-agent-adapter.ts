@@ -431,10 +431,10 @@ function toPiMessages(
         }
       }
       const skipNote = httpImageUrls.length > 0
-        ? `\n\n[注意：${httpImageUrls.length} 张图片（HTTP 链接）未能随消息发送，仅支持内嵌 data URL 图片。链接如下：${httpImageUrls.join('、')}]`
+        ? `\n\n[Note: ${httpImageUrls.length} image(s) were referenced by HTTP links and could not be attached; only inline data URL images are supported. Links: ${httpImageUrls.join(', ')}]`
         : ''
       const missingNote = missingImageCount > 0
-        ? `\n\n[注意：${missingImageCount} 张图片附件文件已丢失，未能随消息发送，可能影响对相关内容的理解]`
+        ? `\n\n[Note: ${missingImageCount} image attachment(s) are missing and were not attached; understanding of the related content may be affected.]`
         : ''
       const userNote = skipNote + missingNote
       const content: string | (TextContent | ImageContent)[] = imageParts.length > 0
@@ -638,7 +638,7 @@ function formatToolMessageContent(result: ToolCallResult): string {
 function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
   const MAX_ESTIMATED_TOKENS = 80000
   const KEEP_RECENT = 6
-  const SUMMARY_PREFIX = '[已截断] '
+  const SUMMARY_PREFIX = '[Truncated] '
 
   let totalChars = 0
   for (const msg of messages) {
@@ -677,7 +677,7 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
       if (c.type === 'text' && c.text.length > 500 && !c.text.startsWith(SUMMARY_PREFIX)) {
         newContent.push({
           type: 'text',
-          text: SUMMARY_PREFIX + c.text.slice(0, 300) + `\n…(原 ${c.text.length} 字符，已截断以节省上下文)`,
+          text: SUMMARY_PREFIX + c.text.slice(0, 300) + `\n…(original ${c.text.length} chars, truncated to save context)`,
         })
       } else {
         newContent.push(c)
@@ -699,7 +699,8 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
 const MAX_INJECTED_IMAGES = 4
 
 /** 模型不支持图片输入时的降级提示（附在被抽掉图片的 toolResult 文本之后） */
-const IMAGE_UNSUPPORTED_NOTE = '\n\n[注意] 当前模型不支持图片输入，图片未随请求发送；如需读取图中文字，请改用 ocr_image 工具。'
+const IMAGE_UNSUPPORTED_NOTE = '\n\n[Note] This model does not support image input, so the image was not sent with the request. To read text inside the image, use the ocr_image tool.'
+const IMAGE_UNSUPPORTED_MARKER = 'This model does not support image input'
 
 function convertMessagesForLlm(messages: AgentMessage[], imageSupport: boolean): PiMessage[] {
   const out: PiMessage[] = []
@@ -715,7 +716,7 @@ function convertMessagesForLlm(messages: AgentMessage[], imageSupport: boolean):
       role: 'user',
       timestamp: Date.now(),
       content: [
-        { type: 'text', text: '[附图] 上述工具返回了以下图片，请结合图片内容继续分析：' },
+        { type: 'text', text: '[Attached images] The tool returned the following image(s). Continue the analysis using their content:' },
         ...injected,
       ],
     })
@@ -734,10 +735,10 @@ function convertMessagesForLlm(messages: AgentMessage[], imageSupport: boolean):
         }
       }
       if (!imageSupport && pm.content.some(c => c.type === 'image')
-        && !pm.content.some(c => c.type === 'text' && c.text.includes('当前模型不支持图片输入'))) {
+        && !pm.content.some(c => c.type === 'text' && c.text.includes(IMAGE_UNSUPPORTED_MARKER))) {
         rest.push({ type: 'text', text: IMAGE_UNSUPPORTED_NOTE })
       }
-      if (rest.length === 0) rest.push({ type: 'text', text: '（无文本输出）' })
+      if (rest.length === 0) rest.push({ type: 'text', text: '(no text output)' })
       out.push({ ...pm, content: rest })
       continue
     }
@@ -763,6 +764,12 @@ export interface RunPiAgentLoopParams {
   onPromptTokens?: (tokens: number) => void
   /** 会话 ID，传递给 pi-agent-core → streamFn → pi-ai 以启用 prompt cache */
   sessionId?: string
+  /**
+   * 每轮模型请求前查询节流提醒（turn 从 1 开始，按模型请求序号计）。
+   * 返回的文本作为合成 user 消息追加在当次请求尾部（append-only，不回写上下文），
+   * 因此不改变已发生对话的前缀缓存。
+   */
+  getLoopReminder?: (turn: number, maxIterations: number) => string | undefined
 }
 
 /**
@@ -792,6 +799,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
     onToolCallExecuted,
     onPromptTokens,
     sessionId,
+    getLoopReminder,
   } = params
 
   const { systemPrompt, piMessages } = toPiMessages(messages, config.providerType, config.model)
@@ -832,6 +840,8 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   }
 
   let turnCount = 0
+  // 模型请求序号（流式恢复重试会在同一 turn 内再次转换，序号只增不减）
+  let requestNumber = 0
   let totalTokenUsage: TokenUsage = {}
   // 缓存 toolCallId → args：pi-agent-core 的 tool_execution_end 不含 args，需从 start 时缓存
   const toolArgsCache = new Map<string, any>()
@@ -840,7 +850,22 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
 
   const loopConfig: AgentLoopConfig = {
     model: createPiModel(config),
-    convertToLlm: (msgs: AgentMessage[]) => convertMessagesForLlm(msgs, config.supportsImageInput === true),
+    convertToLlm: (msgs: AgentMessage[]) => {
+      const converted = convertMessagesForLlm(msgs, config.supportsImageInput === true)
+      // 节流提醒：append-only 合成 user 消息，仅出现在本次请求尾部，不回写上下文
+      if (getLoopReminder) {
+        requestNumber += 1
+        const reminder = getLoopReminder(requestNumber, maxIterations)
+        if (reminder) {
+          converted.push({
+            role: 'user',
+            timestamp: Date.now(),
+            content: reminder,
+          } as PiMessage)
+        }
+      }
+      return converted
+    },
     transformContext: async (msgs: AgentMessage[]) => trimPiToolResults(msgs),
     shouldStopAfterTurn: () => {
       turnCount++

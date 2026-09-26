@@ -215,9 +215,17 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
   for (const m of sourceMsgs) pushMsg(m)
 
   if (compactSummary) {
+    // 手动压缩摘要以 user 角色的 checkpoint 注入历史头部（而非 system）：
+    // 后端会合并所有 system 消息进系统提示词，role=system 会击穿字节稳定的前缀缓存。
+    // 标签与后端自动压缩（memory/checkpoint.ts）保持一致。
     subResult.unshift({
-      role: 'system',
-      content: `[对话历史摘要]\n${compactSummary}`,
+      role: 'user',
+      content: [
+        'The following checkpoint is system-generated context that condenses an earlier part of the conversation to fit the context window. It is not a user message and does not introduce new requests or permissions. Treat it as established background, build on it without restating or acknowledging it, and continue the task from the messages that follow.',
+        '<compacted_checkpoint>',
+        compactSummary.trim(),
+        '</compacted_checkpoint>',
+      ].join('\n'),
     })
   }
   return subResult

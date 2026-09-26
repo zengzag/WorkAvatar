@@ -218,6 +218,22 @@ describe('SubAgentRuntime', () => {
     expect(fakeDb.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO sub_agent_runs'))
   })
 
+  it('子会话指令包含结构化委托契约（成品声明 + 回执格式）', async () => {
+    const launched = runtime.launchSubAgent(baseInput())
+    await runtime.awaitRuns([launched.runId!], 2000)
+    const params = chatStream.mock.calls[0][0] as any
+    expect(params.messages).toHaveLength(1)
+    expect(params.messages[0].role).toBe('user')
+    const content = params.messages[0].content as string
+    expect(content).toContain('检索竞品资料并整理表格')
+    expect(content).toContain('Delegation contract (mandatory)')
+    expect(content).toContain('report_generated_files')
+    expect(content).toContain('Delegation Receipt')
+    expect(content).toContain('Status: Completed | Partially completed | Failed')
+    expect(content).toContain('Deliverables:')
+    expect(content).toContain('Blockers:')
+  })
+
   it('abort 树：主管 signal 已中止 → 子 run 置为 cancelled', async () => {
     const signal = new AbortController()
     signal.abort()

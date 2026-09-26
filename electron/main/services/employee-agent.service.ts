@@ -8,6 +8,7 @@ import McpRegistryService from './mcp-registry.service'
 import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
+import { PROMPT_FORMAT_MARKER } from './agent/business/prompts'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
@@ -191,7 +192,8 @@ class EmployeeAgentService {
       throw new Error(`Provider ${providerId} not found`)
     }
 
-    let instructions = '你是专业数字员工，基于资料库和工具为用户提供服务。'
+    // 身份由系统提示词模板锚定；rules 是唯一权威的用户自定义指令来源
+    let instructions = ''
     let role: string | undefined
     if (emp.profile_json) {
       try {
@@ -200,10 +202,10 @@ class EmployeeAgentService {
           role = profile.roleName
         }
       } catch (error) {
-        logger.warn('Failed to parse employee profile_json, using default instructions', error)
+        logger.warn('Failed to parse employee profile_json', error)
       }
     }
-    // 规则（系统提示词）：唯一权威来源
+    // 规则（系统提示词中的自定义指令）：唯一权威来源
     if (emp.rules?.trim()) {
       instructions = emp.rules
     }
@@ -264,9 +266,7 @@ class EmployeeAgentService {
         const osName = platformMap[process.platform] || process.platform
         const osRelease = os.release()
         const osArch = os.arch()
-        const parts: string[] = []
-        parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
-        return parts.join('\n')
+        return `System environment: ${osName} ${osRelease} (${osArch})`
       })(),
     }
 
@@ -529,13 +529,13 @@ class EmployeeAgentService {
       : ''
     const lines: string[] = []
     if (taskWorkspace) {
-      lines.push(`当前任务工作区：${taskWorkspace}（读写授权，增删改直接执行。完成任务产生的所有中间脚本、临时文件、过程产物及最终成果，一律在此目录内创建、读写和修改；除用户特殊要求外，不得在此目录之外新建或改动任何文件）`)
+      lines.push(`Current task workspace: ${taskWorkspace} (read/write authorized; create and modify files directly. Unless the user requests otherwise, all intermediate scripts, temporary files, work products, and final deliverables must be created, read, written, and modified inside this directory only; never create or change files outside it.)`)
       if (emp.workspace_path) {
-        lines.push(`数字员工工作区：${emp.workspace_path}（只读默认，增删改需用户确认，仅用于查看其他任务）`)
+        lines.push(`Digital employee workspace: ${emp.workspace_path} (read-only by default; modifications require user confirmation; use it only to inspect other tasks.)`)
       }
     } else if (emp.workspace_path) {
       // 旧对话无任务目录：回退到员工工作区为读写授权，保持兼容
-      lines.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
+      lines.push(`Workspace: ${emp.workspace_path} (read/write authorized; create and modify files directly.)`)
     }
     return lines.length > 0 ? lines.join('\n') : undefined
   }
@@ -549,7 +549,7 @@ class EmployeeAgentService {
     }
     const d = ts ? new Date(ts * 1000) : new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
-    return `任务发起时间：${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return `Task started at: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
@@ -635,28 +635,17 @@ class EmployeeAgentService {
     minimalMode: boolean,
   ): Promise<boolean> {
     // 1) system prompt 稳定前缀优先从 conversations 缓存加载（字节级相同 → KV cache 命中）
-    //    memory / 知识库范围 / 委托 / 能力清单不再嵌入 system prompt，
-    //    改为经 EmployeeAgent.runStream/run 以独立 role=user 上下文消息注入。
-    //    向后兼容：旧缓存中若含 "[DELEGATION]" / "[CAPABILITIES]" / "<skills>" 等旧标记，
-    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免与上下文注入重复。
+    //    能力/记忆/工作区等动态内容已移至 contextHead/contextTail 合成消息。
+    //    用格式标记识别旧版本缓存：不含 PROMPT_FORMAT_MARKER 的一律丢弃并按新格式重建。
     let systemPromptCached = false
     if (conversationId) {
       const conv = this.db.getDb().prepare(
         `SELECT system_prompt FROM conversations WHERE id = ?`
       ).get(conversationId) as { system_prompt?: string } | undefined
       const cached = conv?.system_prompt
-      if (cached) {
-        const isLegacy = cached.includes('[DELEGATION]')
-          || cached.includes('[CAPABILITIES]')
-          || cached.includes('## 跨任务记忆')
-          || cached.includes('## 当前对话可使用的资料库合集')
-          || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
-          || cached.includes('<skills>')
-          || !cached.includes('report_generated_files')
-        if (!isLegacy) {
-          agent.setCachedSystemPrompt(cached)
-          systemPromptCached = true
-        }
+      if (cached && cached.includes(PROMPT_FORMAT_MARKER)) {
+        agent.setCachedSystemPrompt(cached)
+        systemPromptCached = true
       }
     }
 
@@ -671,7 +660,7 @@ class EmployeeAgentService {
       const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
       if (selected.length > 0) {
         const names = selected.map((c: any) => c.name).join('、')
-        agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
+        agent.updateKBContextPrompt(`Knowledge collections available in this conversation: ${names} (searches are scoped to these collections by default.)`)
       } else {
         agent.updateKBContextPrompt(undefined)
       }
