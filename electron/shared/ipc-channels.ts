@@ -31,6 +31,7 @@ export type {
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
   EmployeeMemoryExtractConversationParams,
+  MemoryScope,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,
