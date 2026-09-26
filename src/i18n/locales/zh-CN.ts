@@ -293,6 +293,7 @@ export default {
       followup_delegation: '追问子智能体',
       launch_agents: '并行派发子任务',
       await_agents: '等待子任务完成',
+      todo_write: '更新任务清单',
     },
     // 工具说明（仅用于界面展示；工具面向 LLM 的描述由主进程提供）
     toolDescriptions: {
@@ -329,6 +330,7 @@ export default {
       followup_delegation: '针对已完成的委托继续追问',
       launch_agents: '并行派发多个子任务给数字员工',
       await_agents: '等待并行子任务返回结果',
+      todo_write: '创建或更新当前任务的多步工作清单，清单会展示给用户',
     },
     regenerate: '重新生成',
     editMessage: '编辑消息',

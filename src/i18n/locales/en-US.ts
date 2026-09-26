@@ -293,6 +293,7 @@ export default {
       followup_delegation: 'Follow up Sub-agent',
       launch_agents: 'Launch Sub-agents',
       await_agents: 'Await Sub-agents',
+      todo_write: 'Update Task List',
     },
     // Tool descriptions for UI display only (LLM-facing descriptions come from the main process)
     toolDescriptions: {
@@ -329,6 +330,7 @@ export default {
       followup_delegation: 'Ask a follow-up about a completed delegation',
       launch_agents: 'Dispatch multiple subtasks to digital employees in parallel',
       await_agents: 'Wait for parallel subtasks to return results',
+      todo_write: 'Create or update the multi-step task list for the current task; the list is shown to the user',
     },
     regenerate: 'Regenerate',
     editMessage: 'Edit Message',
