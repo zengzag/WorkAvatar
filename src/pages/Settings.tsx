@@ -8,6 +8,7 @@ import {
   AppstoreOutlined,
   ToolOutlined,
   ControlOutlined,
+  BulbOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +20,7 @@ import {
   StorageSettings,
   AboutSection,
   DefaultModelSettings,
+  GlobalMemorySettings,
   InternetSearchSettings,
   KMSMCPSettings,
   NavSettings,
@@ -76,6 +78,15 @@ const Settings: React.FC = () => {
         </span>
       ),
       children: contentWrap(<KMSMCPSettings />),
+    },
+    {
+      key: 'globalMemory',
+      label: (
+        <span>
+          <BulbOutlined /> {t('settings.tabGlobalMemory')}
+        </span>
+      ),
+      children: contentWrap(<GlobalMemorySettings />),
     },
     {
       key: 'storage',
@@ -138,7 +149,7 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['general', 'llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
+  const validTabs = ['general', 'llm', 'defaultModel', 'kmsMcp', 'globalMemory', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
 
   // 插件设置注入点：至少一个插件注册 settings.tab 视野时，追加聚合 Tab
   const pluginSettingsViews = getPluginViews('settings.tab')
