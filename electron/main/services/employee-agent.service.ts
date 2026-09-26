@@ -12,6 +12,7 @@ import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
+import { createMemorySearchTool } from './agent/tools/memory-search.tool'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
 import { parseEmployeeDelegation } from '../../shared/types'
@@ -78,6 +79,10 @@ interface CachedAgentEntry {
   mcpRelease?: () => Promise<void>
   /** 创建时的插件工具集合 epoch（插件增删/升级时由 bumpToolEpoch 递增；运行中的 agent 保留至本轮结束） */
   toolEpoch: number
+  /** 该 agent 的记忆开关（注册员工以注册表 KV 为准） */
+  memoryEnabled: boolean
+  /** 构建常驻记忆块时的记忆数据集版本号，用于按需刷新（见 refreshMemoryPromptIfStale） */
+  memoryRevision: number
 }
 
 class EmployeeAgentService {
@@ -211,11 +216,9 @@ class EmployeeAgentService {
 
     const resolvedModelName = modelConfig?.model || modelId || config.model
 
-    const memoryEnabled = emp.memory_enabled === 1
+    const memoryEnabled = this.isMemoryEnabled(employeeId, emp)
     const memoryPrompt = memoryEnabled
-      ? (this.memoryService.formatMemoriesForPrompt(
-          this.memoryService.listMemories(employeeId)
-        ) || undefined)
+      ? this.memoryService.buildInjectionMemoryPrompt(employeeId)
       : undefined
 
     // 委托能力：由员工委托设置驱动（不再是可配置工具）。
@@ -330,6 +333,11 @@ class EmployeeAgentService {
       agent.registerTools(this.applyToolModes(createConversationListTool(employeeId), toolModes))
     }
 
+    // 长期记忆检索工具：仅在记忆开启时注册（记忆关闭时无记忆可检索）
+    if (memoryEnabled && toolModes.get('search_memories') !== 'off') {
+      agent.registerTools(this.applyToolModes(createMemorySearchTool(employeeId), toolModes))
+    }
+
     // 注入员工已启用的外部 MCP server 工具（标记为按需工具）
     // 失败容忍：单个 server 失败不影响 agent 创建，仅记录日志
     let mcpRelease: (() => Promise<void>) | undefined
@@ -365,13 +373,42 @@ class EmployeeAgentService {
       agent.useToolMiddleware(mw)
     }
 
-    this.agentEntries.set(cacheKey, {
+    const entry: CachedAgentEntry = {
       agent,
       collectionIdsRef,
       mcpRelease,
       toolEpoch: this.toolEpoch,
-    })
-    return { agent, collectionIdsRef, toolEpoch: this.toolEpoch }
+      memoryEnabled,
+      memoryRevision: this.memoryService.getRevision(),
+    }
+    this.agentEntries.set(cacheKey, entry)
+    return entry
+  }
+
+  /**
+   * 记忆开关判定：注册员工（内置/插件）以注册表 KV 为准，
+   * 其 DB 影子记录的 memory_enabled 恒为 0，不可作判定依据。
+   */
+  private isMemoryEnabled(employeeId: string, emp: DBEmployee): boolean {
+    const registered = EmployeeRegistryService.getInstance().getRegistered(employeeId)
+    if (registered) return registered.memory_enabled === true
+    return emp.memory_enabled === 1
+  }
+
+  /**
+   * 按记忆数据集版本号懒刷新 agent 的常驻记忆块。
+   *
+   * 记忆提取/整理在会话进行中由定时任务写入；若只在 agent 创建时注入一次，
+   * 新记忆在本会话内永远不可见。版本号未变化时不重算（零额外开销），
+   * 变化时才重建常驻块——常驻块只含置顶/关键记忆，体量小且稳定，对 KV cache 影响有限。
+   */
+  private refreshMemoryPromptIfStale(entry: CachedAgentEntry, employeeId: string): void {
+    const current = this.memoryService.getRevision()
+    if (entry.memoryRevision === current) return
+    entry.agent.updateMemoryPrompt(
+      entry.memoryEnabled ? this.memoryService.buildInjectionMemoryPrompt(employeeId) : undefined
+    )
+    entry.memoryRevision = current
   }
 
   /**
@@ -426,6 +463,7 @@ class EmployeeAgentService {
       'kms_search', 'kms_get_content', 'kms_list_collections',
       'javascript_exec',
       'search_conversations', 'list_conversations', 'get_conversation_detail',
+      'search_memories',
     ]
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')
@@ -549,6 +587,8 @@ class EmployeeAgentService {
       )
       const agent = entry.agent
       entry.collectionIdsRef.current.collectionIds = collection_ids || []
+      // 记忆可能在会话进行中被定时任务写入，按版本号懒刷新常驻记忆块
+      this.refreshMemoryPromptIfStale(entry, employee_id)
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
       const lastMsg = messages[messages.length - 1]

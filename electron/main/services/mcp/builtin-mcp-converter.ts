@@ -50,7 +50,7 @@ export const BUILTIN_TOOL_CATEGORIES = [
     id: 'conversation',
     defaultEnabled: false,
     toolIds: [
-      'search_conversations', 'list_conversations', 'get_conversation_detail',
+      'search_conversations', 'list_conversations', 'get_conversation_detail', 'search_memories',
     ],
   },
 ] as const

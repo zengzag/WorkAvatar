@@ -80,12 +80,13 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     id: 'conversation_memory',
     name: 'conversation_memory',
     title: '对话记忆',
-    description: '历史对话搜索、列表查询和对话详情查看',
+    description: '历史对话搜索、列表查询、对话详情查看与长期记忆检索',
     icon: 'message',
     toolIds: [
       'search_conversations',
       'list_conversations',
       'get_conversation_detail',
+      'search_memories',
     ],
   },
   {
