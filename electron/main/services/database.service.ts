@@ -3,6 +3,7 @@ import fs from 'fs'
 import PathService from './path.service'
 import { createLogger } from './logger'
 import { extractMessagePreview } from './common-utils'
+import { migrateMemorySchema } from './employee-memory-migrations'
 
 const logger = createLogger('DB')
 
@@ -177,6 +178,8 @@ class DatabaseService {
         system_prompt TEXT DEFAULT '',
         memory_extracted_at INTEGER,
         memory_extracted_message_count INTEGER NOT NULL DEFAULT 0,
+        -- 自上次成功后连续提取失败次数：达到上限后放弃并推进指针，避免永久重试同一对话
+        memory_extract_attempts INTEGER NOT NULL DEFAULT 0,
         context_stats_json TEXT DEFAULT '{}',
         -- 对话绑定的默认模型（输入框模型按钮）：各任务独立，JSON 形如 {"providerId":"","modelId":""}
         default_model_json TEXT DEFAULT '',
@@ -298,7 +301,10 @@ class DatabaseService {
 
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
-        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        -- 归属员工：全局记忆（scope='global'）为空，故此处可为 NULL（NULL 不参与外键约束）
+        employee_id TEXT REFERENCES employees(id) ON DELETE CASCADE,
+        -- 作用域：employee=归属单个员工；global=跨员工共享的用户级事实
+        scope TEXT NOT NULL DEFAULT 'employee',
         key TEXT NOT NULL,
         topic TEXT NOT NULL,
         content TEXT NOT NULL DEFAULT '',
@@ -312,6 +318,7 @@ class DatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_scope ON employee_memories(scope, deleted_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
@@ -398,6 +405,9 @@ class DatabaseService {
         prefix='2,3'
       );
     `)
+
+    // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
+    migrateMemorySchema(this.db)
   }
 
   public getDb(): Database.Database {

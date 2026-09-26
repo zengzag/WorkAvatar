@@ -4,6 +4,7 @@ import EmployeeRegistryService from './employee-registry.service'
 import LLMClientService from './llm-client.service'
 import { ScheduledTaskBase } from './scheduled-task-base'
 import { createLogger } from './logger'
+import { EXTRACTION_MAX_ATTEMPTS } from './employee-memory-types'
 
 const logger = createLogger('MemoryRefinement')
 
@@ -45,7 +46,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
 
     const candidates = this.db.getDb().prepare(`
       SELECT c.id, c.employee_id, c.title, c.messages_json, c.message_count,
-             c.memory_extracted_message_count,
+             c.memory_extracted_message_count, c.memory_extract_attempts,
              e.name as employee_name
       FROM conversations c
       JOIN employees e ON c.employee_id = e.id
@@ -63,13 +64,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
     logger.info(`Found ${candidates.length} conversation(s) pending memory extraction`)
 
     for (const conv of candidates) {
-      try {
-        await this.extractMemoriesForConversation(conv)
-      } catch (err: any) {
-        logger.error(`Memory extraction failed for conversation ${conv.id}:`, err?.message || err)
-        // 推进 message_count 指针避免反复失败重试；用户可通过手动提取重新处理
-        this.markExtracted(conv.id, conv.message_count)
-      }
+      await this.extractMemoriesForConversation(conv)
     }
   }
 
@@ -83,11 +78,13 @@ class MemoryRefinementService extends ScheduledTaskBase {
       return
     }
 
+    const attempts = Number(conv.memory_extract_attempts) || 0
+
     // 获取员工配置的 LLM provider 和 model（复用与聊天相同的解析逻辑）
     const resolved = await this.resolveEmployeeLLM()
     if (!resolved) {
       logger.warn(`No LLM provider/model available for employee ${conv.employee_id}, skipping memory extraction`)
-      this.markExtracted(conv.id, messages.length)
+      this.handleExtractionFailure(conv, attempts, 'no LLM provider')
       return
     }
 
@@ -95,21 +92,45 @@ class MemoryRefinementService extends ScheduledTaskBase {
 
     logger.info(`Extracting memories for conversation "${conv.title || conv.id}" (employee: ${conv.employee_name}, model: ${modelId})`)
 
-    await this.memoryService.extractMemoriesFromConversation(
-      conv.employee_id,
-      messages,
-      providerId,
-      modelId,
-      conv.id,
-      conv.memory_extracted_message_count || 0,
-    )
+    try {
+      await this.memoryService.extractMemoriesFromConversation(
+        conv.employee_id,
+        messages,
+        providerId,
+        modelId,
+        conv.id,
+        conv.memory_extracted_message_count || 0,
+      )
+    } catch (err: any) {
+      this.handleExtractionFailure(conv, attempts, err?.message || String(err))
+      return
+    }
 
     // 清理过期记忆 + 自动合并
-    this.memoryService.removeStaleMemories(conv.employee_id)
+    this.memoryService.removeStaleMemories({ scope: 'employee', employeeId: conv.employee_id })
     await this.memoryService.autoConsolidateIfNeeded(conv.employee_id, providerId, modelId)
 
     this.markExtracted(conv.id, messages.length)
     logger.info(`Memory extraction completed for conversation ${conv.id}`)
+  }
+
+  /**
+   * 提取失败的统一处理：计数并重试，达到上限后放弃并推进指针。
+   *
+   * 原先"失败也推进指针"会静默丢弃记忆；改为有限重试后放弃，
+   * 既避免同一对话被永久反复重试，也不丢记忆。
+   */
+  private handleExtractionFailure(conv: any, attempts: number, reason: string): void {
+    const nextAttempts = attempts + 1
+    if (nextAttempts >= EXTRACTION_MAX_ATTEMPTS) {
+      logger.error(`记忆提取连续失败 ${nextAttempts} 次，放弃并推进指针: conversation=${conv.id}, reason=${reason}`)
+      this.markExtracted(conv.id, conv.message_count)
+      return
+    }
+    logger.warn(`记忆提取失败（第 ${nextAttempts}/${EXTRACTION_MAX_ATTEMPTS} 次），保留指针待下次重试: conversation=${conv.id}, reason=${reason}`)
+    this.db.getDb().prepare(
+      'UPDATE conversations SET memory_extract_attempts = ? WHERE id = ?'
+    ).run(nextAttempts, conv.id)
   }
 
   /** 手动触发指定对话的记忆提取（右键菜单调用）
@@ -136,7 +157,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
       await this.memoryService.extractMemoriesFromConversation(
         conv.employee_id, messages, resolved.providerId, resolved.modelId, conv.id, 0, true,
       )
-      this.memoryService.removeStaleMemories(conv.employee_id)
+      this.memoryService.removeStaleMemories({ scope: 'employee', employeeId: conv.employee_id })
       await this.memoryService.autoConsolidateIfNeeded(conv.employee_id, resolved.providerId, resolved.modelId)
       this.markExtracted(conv.id, messages.length)
       return { success: true }
@@ -244,20 +265,14 @@ class MemoryRefinementService extends ScheduledTaskBase {
     }
   }
 
-  /** 标记对话的记忆提取已完成。
-   *  传入 messageCount 时同时推进 memory_extracted_message_count 指针，
-   *  使增量查询 `message_count > memory_extracted_message_count` 在新消息到来前不再命中该对话。
+  /** 标记对话的记忆提取已完成：推进提取指针并清零失败计数。
+   *  推进 memory_extracted_message_count 后，增量查询
+   *  `message_count > memory_extracted_message_count` 在新消息到来前不再命中该对话。
    */
-  private markExtracted(conversationId: string, messageCount?: number): void {
-    if (messageCount !== undefined) {
-      this.db.getDb().prepare(
-        'UPDATE conversations SET memory_extracted_at = unixepoch(), memory_extracted_message_count = ? WHERE id = ?'
-      ).run(messageCount, conversationId)
-    } else {
-      this.db.getDb().prepare(
-        'UPDATE conversations SET memory_extracted_at = unixepoch() WHERE id = ?'
-      ).run(conversationId)
-    }
+  private markExtracted(conversationId: string, messageCount: number): void {
+    this.db.getDb().prepare(
+      'UPDATE conversations SET memory_extracted_at = unixepoch(), memory_extracted_message_count = ?, memory_extract_attempts = 0 WHERE id = ?'
+    ).run(messageCount, conversationId)
   }
 }
 
