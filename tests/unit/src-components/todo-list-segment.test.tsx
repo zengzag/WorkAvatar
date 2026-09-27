@@ -43,7 +43,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-async function renderTodo(seg: MessageSegment, props: { defaultCollapsed?: boolean } = {}) {
+async function renderTodo(seg: MessageSegment, props: { defaultCollapsed?: boolean; isActive?: boolean } = {}) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -56,6 +56,7 @@ async function renderTodo(seg: MessageSegment, props: { defaultCollapsed?: boole
             onToggle={() => { /* 直渲染场景无父级消息态 */ }}
             getToolDisplayName={getToolDisplayName}
             defaultCollapsed={props.defaultCollapsed}
+            isActive={props.isActive}
           />
         </AntApp>
       </ConfigProvider>
@@ -138,8 +139,19 @@ describe('TodoListSegment 渲染', () => {
     expect(c.textContent).toContain('编写测试报告')
     expect(c.textContent).toContain('1/3 已完成')
     expect(c.querySelectorAll('.anticon-check-circle').length).toBeGreaterThan(0)
-    expect(c.querySelectorAll('.anticon-loading').length).toBeGreaterThan(0)
     expect(c.querySelectorAll('.anticon-flag').length).toBe(1)
+  })
+
+  it('isActive=true → in_progress 项转圈', async () => {
+    const c = await renderTodo(makeSeg(), { isActive: true })
+    expect(c.querySelectorAll('.anticon-loading').length).toBeGreaterThan(0)
+  })
+
+  it('isActive=false（历史快照/消息已结束）→ in_progress 项静态实心点，不转圈', async () => {
+    const c = await renderTodo(makeSeg())
+    expect(c.querySelectorAll('.anticon-loading').length).toBe(0)
+    // 静态实心点（background 内联样式的 span），与 pending 空心圆区分
+    expect(c.querySelector('span[style*="background"]')).toBeTruthy()
   })
 
   it('全部完成 → 头部显示「全部完成」', async () => {
@@ -166,10 +178,15 @@ describe('TodoListSegment 渲染', () => {
     expect(c.textContent).toContain('进行中: 搭建项目骨架')
   })
 
-  it('参数流式生成中 → 加载态，不渲染条目', async () => {
-    const c = await renderTodo(makeSeg({ isToolArgsStreaming: true, toolArgsRaw: '{"todos":[{"con' }))
+  it('参数流式生成中（流式活跃）→ 加载态，不渲染条目', async () => {
+    const c = await renderTodo(makeSeg({ isToolArgsStreaming: true, toolArgsRaw: '{"todos":[{"con' }), { isActive: true })
     expect(c.textContent).toContain('正在生成任务清单…')
     expect(c.textContent).not.toContain('收集需求文档')
+  })
+
+  it('参数流式残留但消息已结束 → 不显示生成中转圈', async () => {
+    const c = await renderTodo(makeSeg({ isToolArgsStreaming: true, toolArgsRaw: '{"todos":[{"con' }))
+    expect(c.textContent).not.toContain('正在生成任务清单…')
   })
 
   it('todos 非法 → 回退通用工具调用视图（展示原始参数）', async () => {

@@ -200,6 +200,7 @@ const DelegationSegmentInner: React.FC<{
                   onToggle(msgId, `${seg.id}__sub__${subSegId}`)
                 }}
                 getToolDisplayName={getToolDisplayName}
+                isStreaming={seg.delegationStatus === 'streaming'}
               />
               {usage && (usage.promptTokens !== undefined || usage.completionTokens !== undefined) && (
                 <div style={{

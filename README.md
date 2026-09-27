@@ -109,6 +109,7 @@ WorkAvatar does not hard-wire features into the main program: **navigation-page 
 | **Data Model** | Canvas-based schema design with DBML import/export; conversational AI modeling with edits reflected on the canvas in real time |
 | **Document Editor** | A full-featured document editor: `.docx` import/export and PDF export, rich-text layout, an AI assistant that edits directly (read structure / read body / rewrite paragraphs / replace / insert-delete-reorder / apply styles), version snapshots; the editor UI is localized to Chinese |
 | **AI Assistants** | Open third-party AI web apps (such as Doubao and DeepSeek) in single-pane / dual-pane / tabbed layouts, with independent login state stored per site for easy multi-model comparison; use of each site is subject to its own terms of service |
+| **Task Templates** | Build complex workflows on a visual canvas (input / agent / review / condition / loop / parallel / manual / tool / end), composing digital employees or template-scoped ephemeral roles; review nodes return a PASS/FAIL verdict so the flow iterates automatically until it passes (or a round limit is hit). Runs create a task on the Tasks page whose agent nodes execute as sub-sessions, with artifacts and history tracked. A built-in **Template Designer** employee can turn a plain-language requirement or an existing SOP into a ready-to-run template on its own. |
 
 <div align="center">
   <table><tr>
@@ -178,7 +179,7 @@ On first launch, an **onboarding wizard** starts automatically: connect a model 
 | Speech recognition | sherpa-onnx |
 | Internationalization | i18next |
 
-> **Repository structure**: the source of the built-in plugins (notes/calendar/voice/automation/data-model) lives in a separate git repository, `WorkAvatar-Plugins`, as the `plugins/` submodule of this repo; `plugin-sdk/` (the plugin protocol type contracts) is owned by this repo. After cloning, run `git submodule update --init --recursive` to fetch the plugin sources.
+> **Repository structure**: the source of the built-in plugins (notes/calendar/voice/automation/data-model/workflow) lives in a separate git repository, `WorkAvatar-Plugins`, as the `plugins/` submodule of this repo; `plugin-sdk/` (the plugin protocol type contracts) is owned by this repo. After cloning, run `git submodule update --init --recursive` to fetch the plugin sources.
 
 ---
 

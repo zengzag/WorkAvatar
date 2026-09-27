@@ -87,7 +87,9 @@ const SegmentListInner: React.FC<{
   isError: boolean
   onToggleSegment: (msgId: string, segId: string) => void
   getToolDisplayName: (name: string) => string
-}> = ({ segments, msgId, isError, onToggleSegment, getToolDisplayName }) => {
+  /** 所属消息/子运行是否仍在流式输出（仅流式中的最新 todo 快照允许转圈） */
+  isStreaming?: boolean
+}> = ({ segments, msgId, isError, onToggleSegment, getToolDisplayName, isStreaming = false }) => {
   const items: React.ReactNode[] = []
 
   // todo_write 段以任务清单卡片渲染；同一消息多次更新时仅最后一次默认展开
@@ -98,6 +100,8 @@ const SegmentListInner: React.FC<{
       break
     }
   }
+  // 仅流式中的最新 todo 快照视为活跃（历史快照与已结束消息的 in_progress 项不转圈）
+  const activeTodoIdx = isStreaming ? lastTodoIdx : -1
 
   const waitSeg = (seg: MessageSegment) => (
     <DelegationSegment
@@ -158,6 +162,7 @@ const SegmentListInner: React.FC<{
             onToggle={() => onToggleSegment(msgId, seg.id)}
             getToolDisplayName={getToolDisplayName}
             defaultCollapsed={i !== lastTodoIdx}
+            isActive={i === activeTodoIdx}
           />
         )
       } else {
