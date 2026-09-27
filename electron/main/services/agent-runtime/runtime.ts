@@ -510,6 +510,10 @@ class SubAgentRuntime {
 
   /** 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托 */
   private validateDelegationSettings(parentEmployeeId: string, targetEmployeeId: string, targetName: string): string | undefined {
+    // 内联员工（模板任务编排）无委托设置也无 UI 可配置，不走用户侧委托校验
+    if (parentEmployeeId.startsWith('inline:') || targetEmployeeId.startsWith('inline:')) {
+      return undefined
+    }
     const db = DatabaseService.getInstance().getDb()
     const delegationRows = db.prepare(
       'SELECT id, delegation_json FROM employees WHERE id IN (?, ?)'

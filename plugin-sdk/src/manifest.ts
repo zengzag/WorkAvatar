@@ -53,6 +53,13 @@ export type PluginCapability =
   | { domain: 'data'; entities: PluginDataEntity[]; access: PluginDataAccess }
   | { domain: 'execute'; kinds: PluginExecuteKind[] }
   | { domain: 'kms'; query: PluginKmsQueryType[] }
+  | {
+      /**
+       * 模板任务运行（services.workflow）：驱动宿主内置的流程编排引擎，
+       * 用于模板任务（Workflow）插件按流程图逐节点执行数字员工/临时角色。
+       */
+      domain: 'workflow'
+    }
   | { domain: 'events'; subscribe?: string[]; publish?: boolean }
   | { domain: 'ui'; views: PluginViewPoint[] }
   | { domain: 'system'; features: PluginSystemFeature[] }

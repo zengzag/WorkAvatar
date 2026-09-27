@@ -37,6 +37,8 @@ class EmployeeRegistryService {
   private static instance: EmployeeRegistryService
   private builtin = new Map<string, RegisteredEmployee>()
   private pluginGroups = new Map<string, PluginEmployeeGroup>()
+  /** 模板内联员工（工作流运行期注册，不参与员工库列表/委托目标） */
+  private inline = new Map<string, RegisteredEmployee>()
 
   private constructor() {
     this.seedBuiltin()
@@ -146,7 +148,7 @@ class EmployeeRegistryService {
   }
 
   getRegistered(id: string): RegisteredEmployee | null {
-    const found = this.builtin.get(id) ?? this.findInPluginGroups(id)
+    const found = this.builtin.get(id) ?? this.inline.get(id) ?? this.findInPluginGroups(id)
     return found ? this.withEnabled(found) : null
   }
 
@@ -162,7 +164,6 @@ class EmployeeRegistryService {
     }
     return null
   }
-
   isRegistered(id: string): boolean {
     return this.getRegistered(id) !== null
   }
@@ -331,6 +332,33 @@ class EmployeeRegistryService {
     this.pluginGroups.delete(pluginId)
     logger.info(`插件员工下线: ${pluginId} 共 ${group.employees.length} 个`)
     this.broadcastEmployeeChanged()
+  }
+
+  // ====== 模板内联员工（Workflow ephemeral roles）：仅运行期间存在，不进员工库列表 ======
+
+  /**
+   * 注册模板内联员工（id 规则 `inline:<key>`）。
+   * 不广播员工变更事件——内联员工只服务工作流运行时，不应出现在员工库 UI 中。
+   */
+  registerInlineEmployee(employee: RegisteredEmployee): void {
+    this.inline.set(employee.id, employee)
+    try {
+      // 影子记录：保证 conversations 外键引用有效（运行结束后由下方 unregister 清理）
+      const db = DatabaseService.getInstance().getDb()
+      const now = Math.floor(Date.now() / 1000)
+      db.prepare(`
+        INSERT INTO employees (id, workspace_path, name, description, rules, profile_json, avatar_type, arch_version, total_tasks, total_approvals, is_registered, created_at, updated_at)
+        VALUES (?, NULL, ?, ?, ?, ?, 'default', 1, 0, 0, 1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET name = excluded.name, rules = excluded.rules, description = excluded.description, updated_at = excluded.updated_at
+      `).run(employee.id, employee.name, employee.description || '', employee.rules || '', employee.profile_json || '', now, now)
+    } catch (err: any) {
+      logger.warn(`注册内联员工影子记录失败 ${employee.id}:`, err?.message || err)
+    }
+  }
+
+  /** 下线模板内联员工；若其影子记录已被历史会话引用则保留记录（仅移出运行时注册表） */
+  unregisterInlineEmployee(id: string): void {
+    this.inline.delete(id)
   }
 
   /** 热重载时清理全部插件员工（内置保留） */

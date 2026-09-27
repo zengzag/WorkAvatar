@@ -273,6 +273,152 @@ export interface PluginBusService {
   call<T = unknown>(targetMethod: string, payload?: unknown): Promise<T>
 }
 
+// ====== 模板任务运行（services.workflow，需 capabilities.workflow） ======
+
+/** 节点类型 */
+export type PluginWorkflowNodeType =
+  | 'input' | 'agent' | 'review' | 'condition' | 'loop' | 'parallel' | 'human' | 'tool' | 'end'
+
+export type PluginWorkflowRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'aborted'
+export type PluginWorkflowNodeStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+
+/** 模板内联的临时数字员工（不落员工库，仅本次运行生效） */
+export interface PluginWorkflowEphemeralRole {
+  key: string
+  name: string
+  systemPrompt: string
+  /** 宿主内置工具 id 列表 */
+  tools?: string[]
+  /** 技能 id 列表 */
+  skills?: string[]
+}
+
+/**
+ * review 节点判定规则（模板业务语义持有在插件侧，内核只做通用解析与出边路由）
+ */
+export interface PluginWorkflowVerdictRules {
+  /** 附加在节点指令末尾的结构化结论契约文案（如 FINAL_VERDICT 标记约定） */
+  contractSuffix?: string
+  /** 结论标记正则源（捕获组 1 为标记结论，小写后与出边 when 匹配，'pass'/'fail' 参与路由） */
+  markedPattern?: string
+  /** 无标记命中时的兜底否定词（任一命中 → fail，否则取 defaultVerdict） */
+  failKeywords?: string[]
+  /** 解析不出结论时的默认判定 */
+  defaultVerdict?: 'pass' | 'fail'
+}
+
+/** condition 节点表达式判定：插值结果命中 passKeywords（不区分大小写）为 pass，否则 fail */
+export interface PluginWorkflowConditionRules {
+  passKeywords?: string[]
+}
+
+export interface PluginWorkflowNodeSpec {
+  id: string
+  type: PluginWorkflowNodeType
+  label: string
+  /** 正式数字员工 id；与 ephemeralRole 二选一 */
+  employeeId?: string
+  ephemeralRole?: PluginWorkflowEphemeralRole
+  /** 指令模板，支持 {{var}} / {{nodeId}} 变量插值 */
+  instruction?: string
+  providerId?: string
+  modelId?: string
+  /** loop 节点：最大回环轮次（达到上限后忽略回边，流程继续向下） */
+  maxRounds?: number
+  /** loop 节点：循环体起点节点 id */
+  loopTargetId?: string
+  /** review 节点判定规则 */
+  review?: PluginWorkflowVerdictRules
+  /** condition 节点判定规则 */
+  condition?: PluginWorkflowConditionRules
+}
+
+export interface PluginWorkflowEdgeSpec {
+  from: string
+  to: string
+  /** 条件分支标签：'pass' / 'fail' / 自定义 */
+  when?: string
+}
+
+export interface PluginWorkflowGraphSpec {
+  nodes: PluginWorkflowNodeSpec[]
+  edges: PluginWorkflowEdgeSpec[]
+  /** 入口节点 id；缺省取第一个无入边节点 */
+  entryNodeId?: string
+}
+
+export interface PluginWorkflowRunParams {
+  templateId?: string
+  templateName?: string
+  graph: PluginWorkflowGraphSpec
+  /** 运行入参：变量名 → 文本或文件绝对路径 */
+  variables?: Record<string, string>
+  providerId?: string
+  modelId?: string
+  conversationId?: string
+}
+
+export interface PluginWorkflowArtifact {
+  nodeId: string
+  name: string
+  path: string
+  kind: 'file' | 'text'
+}
+
+export interface PluginWorkflowNodeRun {
+  nodeId: string
+  label: string
+  type: PluginWorkflowNodeType
+  status: PluginWorkflowNodeStatus
+  round?: number
+  verdict?: string
+  output?: string
+  error?: string
+  conversationId?: string
+  startedAt?: number
+  endedAt?: number
+}
+
+export interface PluginWorkflowRun {
+  runId: string
+  templateId?: string
+  templateName?: string
+  conversationId?: string
+  employeeId?: string
+  status: PluginWorkflowRunStatus
+  nodes: PluginWorkflowNodeRun[]
+  artifacts: PluginWorkflowArtifact[]
+  error?: string
+  startedAt?: number
+  endedAt?: number
+}
+
+export interface PluginWorkflowRunEvent {
+  runId: string
+  eventType: 'run:start' | 'node:start' | 'node:end' | 'artifact' | 'run:end'
+  nodeId?: string
+  conversationId?: string
+  data?: unknown
+}
+
+/** 模板任务运行服务（需 capabilities.workflow 授权） */
+export interface PluginWorkflowService {
+  /** 启动一次模板任务运行，立即返回 runId（后台执行） */
+  run(params: PluginWorkflowRunParams): Promise<PluginWorkflowRun>
+  /** 查询运行详情 */
+  getRun(runId: string): Promise<PluginWorkflowRun | null>
+  /** 列出运行记录 */
+  listRuns(filter?: { conversationId?: string; templateId?: string; limit?: number }): Promise<PluginWorkflowRun[]>
+  /** 中止运行（级联中止其子会话） */
+  abortRun(runId: string): Promise<boolean>
+  /**
+   * 订阅运行事件。
+   * 不传 runId 时订阅全部运行（插件自行按 event.runId 过滤）。
+   * 返回取消订阅函数。
+   */
+  onRunEvent(runId: string | undefined, callback: (event: PluginWorkflowRunEvent) => void): () => void
+}
+
 /**
  * 宿主注入的共享服务聚合。
  * 未在 manifest capabilities 中声明的服务为 undefined（访问即报错便于发现）。
@@ -289,6 +435,8 @@ export interface PluginServices {
   kms?: PluginKmsService
   /** 统一执行入口（需 capabilities.execute 授权） */
   execute?: PluginExecuteService
+  /** 模板任务运行（需 capabilities.workflow 授权） */
+  workflow?: PluginWorkflowService
   /** 事件总线（需 capabilities.events 授权） */
   events?: PluginEventService
   /** 插件协作：共享 KV + 跨插件 RPC（需 capabilities.collaboration 授权） */
