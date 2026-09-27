@@ -51,6 +51,17 @@ const FILE_WRITE_PATTERNS = [
   /\bfs\.(?:writeFileSync|appendFileSync|mkdirSync|renameSync|copyFileSync)\s*\(/,
   /require\(['"](?:node:)?fs['"]\)\s*\.\s*(?:promises\s*\.\s*)?(?:writeFile|appendFile|mkdir|rename|copyFile|createWriteStream|truncate)\w*\s*\(/,
   /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\s*\(/,
+  // 网络下载/传输与解压：静态分析难以穷尽输出目标，一律按写入命令保守处理
+  // （工作区内目标照常自动放行，工作区外目标弹窗确认）
+  /\bcurl\s+[^|;&]*(?:\s(?:-o\b|-O\b|-J\b|--output\b|--output-dir\b|--remote-name\b|--upload-file\b))/,
+  /\bwget\b/i,                                        // wget 默认落盘保存
+  /\bgit\s+clone\b/i,
+  /\b(?:scp|sftp|rsync)\s/i,
+  /\b(?:Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b[^|;&]*-OutFile\b/i,
+  /\bunzip\s+/i,
+  /\btar\s+[^|;&]*\s-x/i,                             // tar 解压（-x/--extract/--extract-file）
+  /\bExpand-Archive\b/i,
+  /\b7z\s+[^|;&]*\s(?:x|e)\b/i,                       // 7z 解压命令
 ]
 
 /** 包管理器 rm 子命令（npm rm / yarn rm / pnpm rm / bun rm）只改依赖清单，不删除本地文件，不应按删除拦截 */

@@ -170,10 +170,13 @@ export function buildTodoReminderIfDue(params: {
   const { turn, maxIterations, items, lastReminderTurn } = params
   if (items.length === 0) return undefined
 
-  const inFinalPhase = maxIterations - turn < TODO_FINAL_PHASE_TURNS
+  const finalPhaseStart = maxIterations - TODO_FINAL_PHASE_TURNS
+  const inFinalPhase = turn > finalPhaseStart
+  // 收尾提醒只在进入收尾窗口后注入一次（lastReminderTurn 仍在窗口前），避免剩余几轮连发
+  const finalPhaseDue = inFinalPhase && lastReminderTurn <= finalPhaseStart
   const atCadence =
     turn >= TODO_REMINDER_FIRST_TURN && turn - lastReminderTurn >= TODO_REMINDER_INTERVAL
-  if (!inFinalPhase && !atCadence) return undefined
+  if (!finalPhaseDue && !atCadence) return undefined
 
   const marker: Record<TodoStatus, string> = {
     in_progress: '[in progress]',

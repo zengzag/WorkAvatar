@@ -53,13 +53,21 @@ const MAX_LENGTH_LIMIT = 50000
 
 const fileSnapshot = FileSnapshotService.getInstance()
 
-/** 读取文件改动前状态：内容超上限时只登记存在性（不可还原），避免把大文件写进快照表 */
+/** 读取文件改动前状态：内容超上限/二进制/非 UTF-8 时只登记存在性（不可还原），避免回滚损坏原文件 */
 function readFileState(filePath: string): { exists: boolean; content: string; restorable: boolean } {
   try {
     const stat = fs.statSync(filePath)
     if (!stat.isFile()) return { exists: true, content: '', restorable: false }
     if (stat.size > MAX_SNAPSHOT_FILE_BYTES) return { exists: true, content: '', restorable: false }
-    return { exists: true, content: fs.readFileSync(filePath, 'utf-8').replace(/\r\n/g, '\n'), restorable: true }
+    const buf = fs.readFileSync(filePath)
+    // NUL 字节 → 二进制文件；无效 UTF-8（如 GBK）→ 无法无损还原，均不做快照内容记录
+    if (buf.includes(0)) return { exists: true, content: '', restorable: false }
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+      return { exists: true, content: text, restorable: true }
+    } catch {
+      return { exists: true, content: '', restorable: false }
+    }
   } catch {
     return { exists: false, content: '', restorable: true }
   }
@@ -82,11 +90,10 @@ function recordSnapshot(
   })
 }
 
-/** 工具结果中的 diff 展示块（无改动时返回空串） */
+/** 工具结果中的 diff 展示块（无改动时返回空串；截断提示由 buildUnifiedDiff 内嵌，不重复追加） */
 function diffSuffix(diff: DiffDisclosure): string {
   if (!diff.content) return ''
-  const body = diff.truncated ? `${diff.content}\n…（diff 已截断）` : diff.content
-  return `\n\n\`\`\`diff\n${body}\n\`\`\``
+  return `\n\n\`\`\`diff\n${diff.content}\n\`\`\``
 }
 
 // ====== file_read：读取文件内容 ======
@@ -438,8 +445,6 @@ async function writeFile(args: any) {
   const confirm = await filePermission.authorizeFileOperation(append ? '追加' : '写入', [resolved], { diff })
   if (!confirm.allowed) return { success: false, error: confirm.error }
 
-  recordSnapshot('file_write', append ? 'append' : 'write', resolved, before)
-
   const dir = path.dirname(resolved)
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 
@@ -448,6 +453,8 @@ async function writeFile(args: any) {
   } else {
     fs.writeFileSync(resolved, content, 'utf-8')
   }
+  // 写盘成功后登记快照（写失败时不产生"从未发生"的回滚记录）
+  recordSnapshot('file_write', append ? 'append' : 'write', resolved, before)
 
   const mode = append ? '追加' : '写入'
   return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符${diffSuffix(diff)}` }
@@ -618,22 +625,21 @@ async function deleteFile(args: any) {
   })
   if (!confirm.allowed) return { success: false, error: confirm.error || '删除操作已取消' }
 
-  // 授权通过后登记改动前状态（目录不可还原，仅登记路径供展示）
-  for (const t of deletable) {
-    if (t.isDir) {
-      fileSnapshot.recordChange({
-        toolName: 'file_delete', changeKind: 'delete', path: t.resolved, existed: true, beforeContent: null, restorable: false,
-      })
-    } else {
-      recordSnapshot('file_delete', 'delete', t.resolved, readFileState(t.resolved))
-    }
-  }
+  // 删除前读取改动前状态（目录不可还原，仅登记路径供展示），删除成功后登记快照
+  const beforeStates = new Map(deletable.map(t => [t.resolved, t.isDir ? null : readFileState(t.resolved)]))
 
   const results: string[] = []
   const failures: string[] = []
   for (const t of deletable) {
     try {
       const via = await moveToTrash(t.resolved)
+      if (t.isDir) {
+        fileSnapshot.recordChange({
+          toolName: 'file_delete', changeKind: 'delete', path: t.resolved, existed: true, beforeContent: null, restorable: false,
+        })
+      } else {
+        recordSnapshot('file_delete', 'delete', t.resolved, beforeStates.get(t.resolved)!)
+      }
       const kind = t.isDir ? '目录' : '文件'
       results.push(via === 'trash'
         ? `✓ 已删除${kind}（移入回收站，可恢复）: ${t.resolved}`
@@ -666,12 +672,20 @@ async function loadEditTarget(args: any): Promise<{ content: string; resolved: s
   if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
   if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
-  const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
-  return { content, resolved }
+  // 非 UTF-8（如 GBK）或二进制文件无法安全做文本编辑（写回会静默损坏），显式拒绝
+  const buf = fs.readFileSync(resolved)
+  if (buf.includes(0)) return { success: false, error: `文件是二进制文件，无法进行文本编辑: ${filePath}` }
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+  } catch {
+    return { success: false, error: `文件不是有效的 UTF-8 文本，无法进行文本编辑（请用 shell 命令处理编码转换后重试）: ${filePath}` }
+  }
+  return { content: content.replace(/\r\n/g, '\n'), resolved }
 }
 
 /**
- * 编辑收尾：按改动生成 diff → 权限确认（弹窗内展示 diff）→ 登记快照 → 落盘。
+ * 编辑收尾：按改动生成 diff → 权限确认（弹窗内展示 diff）→ 落盘 → 登记快照。
  * 授权发生在计算改动之后，使确认弹窗能展示真实 diff。
  */
 async function commitEdit(
@@ -683,7 +697,9 @@ async function commitEdit(
   const confirm = await filePermission.authorizeFileOperation('编辑', [resolved], { diff })
   if (!confirm.allowed) return { ok: false, error: confirm.error || '编辑操作已取消' }
 
-  const restorable = before.length <= MAX_SNAPSHOT_FILE_BYTES
+  fs.writeFileSync(resolved, after, 'utf-8')
+  // 写盘成功后登记快照（写失败时不产生"从未发生"的回滚记录）；按字节而非字符数判断上限
+  const restorable = Buffer.byteLength(before, 'utf-8') <= MAX_SNAPSHOT_FILE_BYTES
   fileSnapshot.recordChange({
     toolName: 'file_edit',
     changeKind: 'edit',
@@ -692,7 +708,6 @@ async function commitEdit(
     beforeContent: restorable ? before : null,
     restorable,
   })
-  fs.writeFileSync(resolved, after, 'utf-8')
   return { ok: true, diff }
 }
 

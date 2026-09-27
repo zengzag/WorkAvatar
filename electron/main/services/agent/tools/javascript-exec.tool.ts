@@ -1,10 +1,14 @@
-import type { ToolDefinition } from './types'
+﻿import type { ToolDefinition } from './types'
 import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
 import FilePermissionService, { type ScriptConfirmInput } from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
 import { isFileDeletionCommand } from './command-analyzer'
+
+/** 路径大小写是否不敏感（Windows）：授权缓存 key 需归一化；macOS/Linux 保持原样避免误匹配 */
+const PATH_CASE_INSENSITIVE = process.platform === 'win32'
+const normalizeAuthPath = (p: string) => (PATH_CASE_INSENSITIVE ? p.toLowerCase() : p)
 
 /** 脚本触发确认时下发给弹窗的语言标识 */
 const SCRIPT_LANGUAGE = 'javascript'
@@ -216,12 +220,12 @@ function createSandboxedFile(
     if (typeof targetPath !== 'string') return
     let resolved: string
     try { resolved = path.resolve(workingDir, targetPath) } catch { return }
-    if (authorizedPaths.has(resolved.toLowerCase())) return
+    if (authorizedPaths.has(normalizeAuthPath(resolved))) return
     const result = await filePermission.authorizeFileOperation(operation, [resolved], { script })
     if (!result.allowed) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
-    authorizedPaths.add(resolved.toLowerCase())
+    authorizedPaths.add(normalizeAuthPath(resolved))
   }
 
   /** 相对路径统一基于工作目录解析，授权判定与实际 fs 调用必须使用同一路径 */
@@ -279,19 +283,19 @@ function createSandboxedRequire(
     if (typeof targetPath !== 'string') return
     let resolved: string
     try { resolved = path.resolve(workingDir, targetPath) } catch { return }
-    if (authorizedPaths.has(resolved.toLowerCase())) return
+    if (authorizedPaths.has(normalizeAuthPath(resolved))) return
     const result = await filePermission.authorizeFileOperation(operation, [resolved], { script })
     if (!result.allowed) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
-    authorizedPaths.add(resolved.toLowerCase())
+    authorizedPaths.add(normalizeAuthPath(resolved))
   }
 
   /** 同步写场景的边界校验：区内或已授权放行，否则直接拒绝（引导走预扫描/ file.save） */
   const assertSyncWriteAllowed = (targetPath: unknown): void => {
     if (typeof targetPath !== 'string') return
     const resolved = path.resolve(workingDir, targetPath)
-    if (authorizedPaths.has(resolved.toLowerCase())) return
+    if (authorizedPaths.has(normalizeAuthPath(resolved))) return
     if (filePermission.isPathAuthorized(resolved)) return
     throw new Error(
       `写入工作区外路径需先获得授权: ${resolved}。请将输出路径以字符串字面量直接传入 writeZip（执行前会弹窗确认），或改用 await file.save() 写入`,
@@ -471,7 +475,7 @@ export const javascriptExecTool: ToolDefinition = {
       const result = await filePermission.authorizeFileOperation('修改', writePaths, { script: scriptInput })
       if (!result.allowed) return { success: false, error: result.error }
       for (const p of writePaths) {
-        try { authorizedPaths.add(path.resolve(workingDir, p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
+        try { authorizedPaths.add(normalizeAuthPath(path.resolve(workingDir, p))) } catch { /* 忽略解析失败的路径 */ }
       }
     }
 

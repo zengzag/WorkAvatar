@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal, List, Button, Typography, Space, Tag, Empty, App, theme, Popconfirm, Spin } from 'antd'
 import { UndoOutlined, FileAddOutlined, EditOutlined, DeleteOutlined, WarningOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -38,6 +38,7 @@ const FileChangesModal: React.FC<{
   const [items, setItems] = useState<FileChangeItem[]>([])
   const [loading, setLoading] = useState(false)
   const [reverting, setReverting] = useState(false)
+  const revertingRef = useRef(false)
 
   const refresh = useCallback(async () => {
     if (!conversationId) {
@@ -61,6 +62,9 @@ const FileChangesModal: React.FC<{
 
   const handleRevert = useCallback(async (ids?: string[]) => {
     if (!conversationId) return
+    // 防重入：回滚 IPC 进行中时忽略重复触发（reverting state 异步更新，需即时判断）
+    if (revertingRef.current) return
+    revertingRef.current = true
     setReverting(true)
     try {
       const result = await window.electronAPI.snapshot.revert(conversationId, ids)
@@ -73,6 +77,7 @@ const FileChangesModal: React.FC<{
     } catch {
       message.error(t('fileChanges.revertFailed'))
     } finally {
+      revertingRef.current = false
       setReverting(false)
     }
   }, [conversationId, message, refresh, t])

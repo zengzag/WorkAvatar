@@ -71,29 +71,33 @@ class FileSnapshotService {
       const ctx = interactionContext.getStore()
       const conversationId = ctx?.conversationId
       if (!conversationId) return
-      if (!input.path) return
-
-      const db = this.getDb()
-      db.prepare(
-        `INSERT INTO file_snapshots
-           (id, conversation_id, employee_id, tool_name, change_kind, path, existed, restorable, before_content)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        generateId(),
-        conversationId,
-        ctx?.employeeId || '',
-        input.toolName,
-        input.changeKind,
-        input.path,
-        input.existed ? 1 : 0,
-        input.restorable ? 1 : 0,
-        input.restorable && input.beforeContent != null ? input.beforeContent : null,
-      )
-      this.prune(conversationId)
+      this.insertChange(conversationId, input)
     } catch (err: any) {
       // 快照失败不阻断文件操作
       logger.warn('recordChange failed:', err?.message || err)
     }
+  }
+
+  /** 实际插入快照记录（供交互上下文内 recordChange 与回滚备份共用） */
+  private insertChange(conversationId: string, input: FileSnapshotInput): void {
+    if (!input.path) return
+    const db = this.getDb()
+    db.prepare(
+      `INSERT INTO file_snapshots
+         (id, conversation_id, employee_id, tool_name, change_kind, path, existed, restorable, before_content)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      generateId(),
+      conversationId,
+      interactionContext.getStore()?.employeeId || '',
+      input.toolName,
+      input.changeKind,
+      input.path,
+      input.existed ? 1 : 0,
+      input.restorable ? 1 : 0,
+      input.restorable && input.beforeContent != null ? input.beforeContent : null,
+    )
+    this.prune(conversationId)
   }
 
   /** 丢弃超出上限的最旧记录 */
@@ -159,10 +163,13 @@ class FileSnapshotService {
       }
       try {
         if (row.existed === 1) {
+          // 回滚覆盖前先备份当前内容：任务结束后用户的手工修改可再次回滚找回
+          this.backupCurrentState(conversationId, target)
           const dir = path.dirname(target)
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
           fs.writeFileSync(target, String(row.before_content ?? ''), 'utf-8')
         } else if (fs.existsSync(target)) {
+          // 任务后新建的文件移入回收站（而非直接删除），用户可从回收站找回手工修改
           await moveToTrash(target)
         }
         revertedIds.push(row.id)
@@ -185,6 +192,41 @@ class FileSnapshotService {
       this.getDb().prepare('DELETE FROM file_snapshots WHERE conversation_id = ?').run(conversationId)
     } catch (err: any) {
       logger.warn('clearForConversation failed:', err?.message || err)
+    }
+  }
+
+  /**
+   * 回滚覆盖前登记当前内容为一条备份快照（changeKind=write、toolName=revert），
+   * 使"回滚"动作本身也可再次回滚；当前内容为二进制/非 UTF-8/超限时登记为不可还原。
+   * revert 不在聊天交互上下文中运行，因此显式传入 conversationId。
+   */
+  private backupCurrentState(conversationId: string, target: string): void {
+    try {
+      let content: string | null = null
+      let restorable = false
+      const stat = fs.existsSync(target) ? fs.statSync(target) : null
+      if (stat?.isFile() && stat.size <= MAX_SNAPSHOT_FILE_BYTES) {
+        const buf = fs.readFileSync(target)
+        if (!buf.includes(0)) {
+          try {
+            content = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+            restorable = true
+          } catch {
+            content = null
+          }
+        }
+      }
+      this.insertChange(conversationId, {
+        toolName: 'revert',
+        changeKind: 'write',
+        path: target,
+        existed: !!stat,
+        beforeContent: content,
+        restorable,
+      })
+    } catch (err: any) {
+      // 备份失败不阻断回滚，仅提示
+      logger.warn('backupCurrentState failed:', err?.message || err)
     }
   }
 }

@@ -10,6 +10,9 @@ import { useEffect, useRef, useCallback } from 'react'
  */
 const FORCE_FOLLOW_MS = 800
 
+/** 强制跟随窗口内判定为"用户主动上滚"的最小 scrollTop 上移量（px），低于该值视为程序化滚动噪声 */
+const USER_SCROLL_UP_THRESHOLD = 10
+
 /**
  * 聊天滚动控制 hook
  *
@@ -27,6 +30,8 @@ export function useChatScroll<T>(messages: T[]) {
   const isUserAtBottomRef = useRef(true)
   /** 强制跟随截止时间戳（0 表示未开启） */
   const forceFollowUntilRef = useRef(0)
+  /** 上一次 scrollTop：用于强制跟随窗口内识别用户上滚 */
+  const lastScrollTopRef = useRef(0)
 
   // scrollIntoView 节流：用 requestAnimationFrame 合并多个 token chunk 为单次滚动
   // 避免 2000 token 流式输出触发 2000 次同步 reflow
@@ -54,8 +59,17 @@ export function useChatScroll<T>(messages: T[]) {
     const el = chatContainerRef.current
     if (!el) return
     // 强制跟随窗口内保持跟随状态：新消息渲染使 scrollHeight 增大，
-    // 此刻程序化滚动触发的 scroll 事件会把 isAtBottom 误判为 false，从而漏滚新消息
-    if (Date.now() < forceFollowUntilRef.current) return
+    // 此刻程序化滚动触发的 scroll 事件会把 isAtBottom 误判为 false，从而漏滚新消息。
+    // 但用户明显上滚（超过阈值）时立即终止窗口并同步状态，避免窗口结束后仍被拉回底部。
+    if (Date.now() < forceFollowUntilRef.current) {
+      if (lastScrollTopRef.current - el.scrollTop > USER_SCROLL_UP_THRESHOLD) {
+        forceFollowUntilRef.current = 0
+        isUserAtBottomRef.current = false
+      }
+      lastScrollTopRef.current = el.scrollTop
+      return
+    }
+    lastScrollTopRef.current = el.scrollTop
     const threshold = 50
     isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
   }, [])

@@ -140,6 +140,11 @@ describe('todo.tool / buildTodoReminderIfDue 节流', () => {
     expect(r).toMatch(/remain before this run stops/)
   })
 
+  it('收尾提醒只注入一次：窗口内已提醒过则后续轮次不再提醒', () => {
+    expect(buildTodoReminderIfDue({ turn: 99, maxIterations: 100, items, lastReminderTurn: 98 })).toBeUndefined()
+    expect(buildTodoReminderIfDue({ turn: 100, maxIterations: 100, items, lastReminderTurn: 98 })).toBeUndefined()
+  })
+
   it('收尾窗口外不出现收尾指令', () => {
     const r = buildTodoReminderIfDue({ turn: 10, maxIterations: 100, items, lastReminderTurn: 0 })!
     expect(r).not.toMatch(/remain before this run stops/)

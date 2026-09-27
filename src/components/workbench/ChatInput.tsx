@@ -727,6 +727,15 @@ const ChatInput: React.FC<{
     }
   }, [editorContextMenu])
 
+  // 菜单打开后按实际尺寸做视口边界钳制，避免光标靠近右缘/底部时菜单溢出屏幕
+  useEffect(() => {
+    const menu = editorMenuRef.current
+    if (!editorContextMenu || !menu) return
+    const { width, height } = menu.getBoundingClientRect()
+    menu.style.left = `${Math.max(8, Math.min(editorContextMenu.x, window.innerWidth - width - 8))}px`
+    menu.style.top = `${Math.max(8, Math.min(editorContextMenu.y, window.innerHeight - height - 8))}px`
+  }, [editorContextMenu])
+
   const handleMenuCut = useCallback(() => {
     setEditorContextMenu(null)
     if (!restoreEditorSelection()) return
@@ -1529,7 +1538,7 @@ const ChatInput: React.FC<{
                 top: 4,
               }}
             >
-              {t('workbench.compactingPlaceholder', { defaultValue: '正在压缩对话上下文，请稍候...' })}
+              {t('workbench.compactingPlaceholder')}
             </div>
           )}
           {/* 插件视图注入点：对话输入框上方快捷建议区 */}
@@ -1560,7 +1569,7 @@ const ChatInput: React.FC<{
                 </Tooltip>
               )}
               {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
-              <Tooltip title={t('workbench.attachFile', { defaultValue: '上传文件' })}>
+              <Tooltip title={t('workbench.attachFile')}>
                 <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
                   onClick={() => fileInputRef.current?.click()}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
