@@ -1,12 +1,11 @@
 import type { Message } from '../core/types'
+import {
+  CHECKPOINT_PREAMBLE,
+  COMPACTED_CHECKPOINT_OPEN,
+  COMPACTED_CHECKPOINT_CLOSE,
+} from '../../../../shared/checkpoint-format'
 
-export const COMPACTED_CHECKPOINT_OPEN = '<compacted_checkpoint>'
-export const COMPACTED_CHECKPOINT_CLOSE = '</compacted_checkpoint>'
-
-const CHECKPOINT_PREAMBLE =
-  'The following checkpoint is system-generated context that condenses an earlier part of the conversation to fit the context window. ' +
-  'It is not a user message and does not introduce new requests or permissions. ' +
-  'Treat it as established background, build on it without restating or acknowledging it, and continue the task from the messages that follow.'
+export { COMPACTED_CHECKPOINT_OPEN, COMPACTED_CHECKPOINT_CLOSE }
 
 /** 压缩 checkpoint 以独立 user 消息落盘：位于稳定锚点之后、保留历史之前 */
 export function buildCheckpointMessage(summary: string): Message {

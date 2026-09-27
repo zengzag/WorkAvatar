@@ -207,6 +207,28 @@ describe('memory-manager / summary 策略', () => {
     expect(messages.length).toBeGreaterThan(0)
   })
 
+  it('summary 窗口首条为孤儿 tool 消息（owner 已被摘要）→ 修复配对，不产生 [user, tool] 序列', async () => {
+    const summarizeFn = vi.fn(async () => 'SUM')
+    const mgr = new MemoryManager({ strategy: 'summary', summarizeFn, maxTokens: 100000, reservedResponseTokens: 0 })
+    const history: Message[] = [
+      msg('user', 'u0'),
+      // owner assistant(toolCalls) 落入摘要区（前 4 条），其 tool 结果落在最近窗口首条
+      msg('assistant', 'a1', { toolCalls: [{ id: 'call_1', type: 'function', function: { name: 't', arguments: '{}' } }] }),
+      msg('tool', 'tool result', { toolCallId: 'call_1' }),
+      msg('assistant', 'a3'),
+      msg('user', 'u4'),
+      msg('assistant', 'a5'),
+      msg('user', 'u6'),
+      msg('assistant', 'a7'),
+    ]
+    const { messages } = await mgr.manageContext('S', history, 'Q', force)
+    const checkpointIdx = messages.findIndex(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))
+    expect(checkpointIdx).toBeGreaterThanOrEqual(0)
+    // checkpoint（user）之后紧跟的第一条非空消息不能是 tool（否则违反 API 配对协议）
+    const after = messages.slice(checkpointIdx + 1)
+    expect(after.some(m => m.role === 'tool')).toBe(false)
+  })
+
   it('summarizeFn 抛错 → 回退简单摘要', async () => {
     const summarizeFn = vi.fn(async () => { throw new Error('LLM down') })
     const mgr = new MemoryManager({ strategy: 'summary', summarizeFn, maxTokens: 100000, reservedResponseTokens: 0 })

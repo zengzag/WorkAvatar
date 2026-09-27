@@ -173,7 +173,8 @@ export abstract class BaseAgent {
       // 每次 run 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
       this._lastKnownPromptTokens = undefined
 
-      const systemPrompt = this.buildSystemPrompt(options)
+      // run 级覆盖优先：插件注入的 system 只作用于本轮，不写 agent 缓存（避免污染后续会话）
+      const systemPrompt = options.systemPromptOverride ?? this.buildSystemPrompt(options)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
@@ -266,7 +267,8 @@ export abstract class BaseAgent {
       // 每次 runStream 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
       this._lastKnownPromptTokens = undefined
 
-      const systemPrompt = this.buildSystemPrompt(options)
+      // run 级覆盖优先：插件注入的 system 只作用于本轮，不写 agent 缓存（避免污染后续会话）
+      const systemPrompt = options.systemPromptOverride ?? this.buildSystemPrompt(options)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],

@@ -161,7 +161,8 @@ export class MemoryManager implements IMemoryManager {
     const recentMessages = history.slice(-4)
 
     const summary = await this.generateSummary(olderMessages, systemPrompt)
-    const compressed = [buildCheckpointMessage(summary), ...recentMessages]
+    // checkpoint 是 user 消息，窗口首条若为孤儿 tool 消息会产生 [user, tool] 非法序列，需修复配对
+    const compressed = this.repairToolCallPairing([buildCheckpointMessage(summary), ...recentMessages])
 
     const compressedTokens = this.estimateTokens(compressed)
 

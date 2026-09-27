@@ -225,12 +225,16 @@ describe('chatStream', () => {
     expect(agentControl.instances).toHaveLength(1)
   })
 
-  it('system 覆盖：agent.setCachedSystemPrompt 被调用', async () => {
+  it('system 覆盖：经 runStream systemPromptOverride 传递，不写入 agent 缓存', async () => {
     await EmployeeAgentService.getInstance().chatStream(
       baseParams({ system: '自定义系统提示词' }),
       noopCallbacks()
     )
-    expect(agentControl.instances[0].setCachedSystemPrompt).toHaveBeenCalledWith('自定义系统提示词')
+    const agent = agentControl.instances[0]
+    const [streamInput] = agent.runStream.mock.calls[0]
+    expect(streamInput.systemPromptOverride).toBe('自定义系统提示词')
+    // 不写缓存：避免插件提示词污染会话（缓存泄漏进下一轮并可能被持久化）
+    expect(agent.setCachedSystemPrompt).not.toHaveBeenCalledWith('自定义系统提示词')
   })
 
   it('极简模式：prepareSystemPrompt 收到 agent.getMinimalMode()=true，KB 上下文被清空', async () => {

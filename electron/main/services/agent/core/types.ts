@@ -77,6 +77,8 @@ export interface AgentRunOptions {
   history?: Message[]
   metadata?: Record<string, any>
   useSkills?: boolean
+  /** 本次 run 的 system 提示词覆盖（插件调用方注入）：只作用于本轮，不写入 agent 缓存、不持久化 */
+  systemPromptOverride?: string
   /** 稳定锚点上下文（合成 user 消息）：置于 system 之后、history 之前，不参与压缩 */
   contextHead?: Message[]
   /** 易变任务上下文（合成 user 消息）：置于 history 之后、query 之前，不参与压缩 */

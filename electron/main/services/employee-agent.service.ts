@@ -81,6 +81,8 @@ interface CachedAgentEntry {
   mcpRelease?: () => Promise<void>
   /** 创建时的插件工具集合 epoch（插件增删/升级时由 bumpToolEpoch 递增；运行中的 agent 保留至本轮结束） */
   toolEpoch: number
+  /** 创建时冻结的极简模式：toolEpoch 触发重建时沿用，避免按请求参数重建导致模式翻转 */
+  minimalMode: boolean
   /** 该 agent 的记忆开关（注册员工以注册表 KV 为准） */
   memoryEnabled: boolean
   /** 构建常驻记忆块时的记忆数据集版本号，用于按需刷新（见 refreshMemoryPromptIfStale） */
@@ -143,6 +145,8 @@ class EmployeeAgentService {
             existing.mcpRelease().catch(() => { /* ignore */ })
           }
           this.agentEntries.delete(cacheKey)
+          // 重建沿用创建时冻结的极简模式，而不是本次调用参数（会话模式不随单次请求翻转）
+          minimalMode = existing.minimalMode
         } else {
           // 运行中：本次 run 的 tools schema 已快照，保留旧工具集跑完本轮，任务结束后下次访问自然重建
           return existing
@@ -379,6 +383,7 @@ class EmployeeAgentService {
       collectionIdsRef,
       mcpRelease,
       toolEpoch: this.toolEpoch,
+      minimalMode: agent.getMinimalMode(),
       memoryEnabled,
       memoryRevision: this.memoryService.getRevision(),
     }
@@ -613,10 +618,13 @@ class EmployeeAgentService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      // KB 范围是否注入取决于任务冻结的极简模式（agent.getMinimalMode()），而非传入的 minimal_mode 参数
+      // 插件注入的 system 只作用于本次 run（systemPromptOverride），不写 agent 缓存：
+      // 否则无 DB 缓存的新会话会把插件提示词当作会话提示词继续生效并持久化，永久污染会话。
+      // KB 范围始终按本轮 collectionIds 更新，与是否覆盖 system 无关。
       const systemPromptCached = system
-        ? (agent.setCachedSystemPrompt(system), true)
-        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
+        ? false
+        : await this.loadCachedSystemPrompt(agent, conversation_id)
+      this.updateKBContextForAgent(agent, collection_ids, agent.getMinimalMode())
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
 
       await agent.runStream(
@@ -625,6 +633,7 @@ class EmployeeAgentService {
           history,
           useSkills: use_skills,
           maxIterations,
+          systemPromptOverride: system || undefined,
           metadata: { queryImages },
         },
         {
@@ -646,45 +655,43 @@ class EmployeeAgentService {
     })
   }
 
-  private async prepareSystemPrompt(
+  /** 从 conversations 表加载字节级稳定的 system prompt 缓存（KV cache 前缀命中） */
+  private async loadCachedSystemPrompt(
     agent: EmployeeAgent,
     conversationId: string | undefined,
+  ): Promise<boolean> {
+    if (!conversationId) return false
+    const conv = this.db.getDb().prepare(
+      `SELECT system_prompt FROM conversations WHERE id = ?`
+    ).get(conversationId) as { system_prompt?: string } | undefined
+    const cached = conv?.system_prompt
+    // 用格式标记识别旧版本缓存：不含 PROMPT_FORMAT_MARKER 的一律丢弃并按新格式重建
+    if (cached && cached.includes(PROMPT_FORMAT_MARKER)) {
+      agent.setCachedSystemPrompt(cached)
+      return true
+    }
+    return false
+  }
+
+  /** 更新 KB 范围上下文：独立于 system prompt，按本轮 collectionIds 设置 */
+  private updateKBContextForAgent(
+    agent: EmployeeAgent,
     collectionIds: string[],
     minimalMode: boolean,
-  ): Promise<boolean> {
-    // 1) system prompt 稳定前缀优先从 conversations 缓存加载（字节级相同 → KV cache 命中）
-    //    能力/记忆/工作区等动态内容已移至 contextHead/contextTail 合成消息。
-    //    用格式标记识别旧版本缓存：不含 PROMPT_FORMAT_MARKER 的一律丢弃并按新格式重建。
-    let systemPromptCached = false
-    if (conversationId) {
-      const conv = this.db.getDb().prepare(
-        `SELECT system_prompt FROM conversations WHERE id = ?`
-      ).get(conversationId) as { system_prompt?: string } | undefined
-      const cached = conv?.system_prompt
-      if (cached && cached.includes(PROMPT_FORMAT_MARKER)) {
-        agent.setCachedSystemPrompt(cached)
-        systemPromptCached = true
-      }
-    }
-
-    // 2) 知识库范围：独立于 system prompt，始终根据本轮 collectionIds 设置
-    //    （它会在 EmployeeAgent.runStream/run 中作为 <knowledge_scope> 拼到 query 前缀，
-    //     不影响 system prompt 的字节级稳定性）
+  ): void {
     if (minimalMode || collectionIds.length === 0) {
       agent.updateKBContextPrompt(undefined)
-    } else {
-      const kmsService = require('./kms/kms.service').default.getInstance()
-      const allCollections = kmsService.listCollections() as any[]
-      const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
-      if (selected.length > 0) {
-        const names = selected.map((c: any) => c.name).join('、')
-        agent.updateKBContextPrompt(`Knowledge collections available in this conversation: ${names} (searches are scoped to these collections by default.)`)
-      } else {
-        agent.updateKBContextPrompt(undefined)
-      }
+      return
     }
-
-    return systemPromptCached
+    const kmsService = require('./kms/kms.service').default.getInstance()
+    const allCollections = kmsService.listCollections() as any[]
+    const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
+    if (selected.length > 0) {
+      const names = selected.map((c: any) => c.name).join('、')
+      agent.updateKBContextPrompt(`Knowledge collections available in this conversation: ${names} (searches are scoped to these collections by default.)`)
+    } else {
+      agent.updateKBContextPrompt(undefined)
+    }
   }
 
   private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {
@@ -747,7 +754,8 @@ class EmployeeAgentService {
 
       const history = this.expandFrontendMessages(messages)
 
-      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
+      await this.loadCachedSystemPrompt(agent, conversation_id)
+      this.updateKBContextForAgent(agent, collection_ids, agent.getMinimalMode())
 
       const { summary, stats } = await agent.compactConversation(history)
 

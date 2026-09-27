@@ -198,7 +198,7 @@ class EmployeeMemoryService {
 
   updateMemory(id: string, params: EmployeeMemoryUpdateData): EmployeeMemory | undefined {
     const existing = this.getMemory(id)
-    if (!existing) return undefined
+    if (!existing || existing.deleted_at) return undefined
 
     const sets: string[] = []
     const values: any[] = []
@@ -270,7 +270,7 @@ class EmployeeMemoryService {
 
   togglePin(id: string): EmployeeMemory | undefined {
     const existing = this.getMemory(id)
-    if (!existing) return undefined
+    if (!existing || existing.deleted_at) return undefined
     const newPinned = existing.is_pinned ? 0 : 1
     this.db.getDb().prepare(
       'UPDATE employee_memories SET is_pinned = ?, updated_at = ? WHERE id = ?'
