@@ -14,6 +14,7 @@ import { useLocation, Outlet } from 'react-router-dom'
 import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 import { useNavConfigStore } from '../../stores/nav.store'
 import { hasDirtyCloseGuard } from '../../plugins/loader'
+import { PageVisibleBoundary } from './page-visibility'
 
 /**
  * Tab 独立窗口壳：
@@ -201,9 +202,13 @@ const TabWindowLayout: React.FC = () => {
         `}</style>
       </div>
 
-      {/* 主体内容 */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <Outlet />
+      {/* 主体内容：PageVisibleBoundary 让插件页面按窗口可见性暂停后台高频 UI 工作 */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+        <PageVisibleBoundary>
+          <div style={{ position: 'absolute', inset: 0 }}>
+            <Outlet />
+          </div>
+        </PageVisibleBoundary>
       </div>
     </div>
   )
