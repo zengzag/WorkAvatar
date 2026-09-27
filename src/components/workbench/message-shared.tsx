@@ -4,6 +4,7 @@ import { memo } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
+import TodoListSegment from './TodoListSegment'
 import AnswerSegment from './AnswerSegment'
 import { DelegationSegment } from './DelegationSegment'
 
@@ -89,6 +90,15 @@ const SegmentListInner: React.FC<{
 }> = ({ segments, msgId, isError, onToggleSegment, getToolDisplayName }) => {
   const items: React.ReactNode[] = []
 
+  // todo_write 段以任务清单卡片渲染；同一消息多次更新时仅最后一次默认展开
+  let lastTodoIdx = -1
+  for (let j = segments.length - 1; j >= 0; j--) {
+    if (segments[j].type === 'tool_call' && segments[j].toolName === 'todo_write') {
+      lastTodoIdx = j
+      break
+    }
+  }
+
   const waitSeg = (seg: MessageSegment) => (
     <DelegationSegment
       key={seg.id}
@@ -140,14 +150,26 @@ const SegmentListInner: React.FC<{
         />
       )
     } else if (seg.type === 'tool_call') {
-      items.push(
-        <ToolCallSegment
-          key={seg.id}
-          seg={seg}
-          onToggle={() => onToggleSegment(msgId, seg.id)}
-          getToolDisplayName={getToolDisplayName}
-        />
-      )
+      if (seg.toolName === 'todo_write') {
+        items.push(
+          <TodoListSegment
+            key={seg.id}
+            seg={seg}
+            onToggle={() => onToggleSegment(msgId, seg.id)}
+            getToolDisplayName={getToolDisplayName}
+            defaultCollapsed={i !== lastTodoIdx}
+          />
+        )
+      } else {
+        items.push(
+          <ToolCallSegment
+            key={seg.id}
+            seg={seg}
+            onToggle={() => onToggleSegment(msgId, seg.id)}
+            getToolDisplayName={getToolDisplayName}
+          />
+        )
+      }
     } else if (seg.type === 'answer') {
       items.push(
         <AnswerSegment
