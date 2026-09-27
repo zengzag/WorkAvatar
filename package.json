@@ -14,6 +14,8 @@
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs",
     "test": "vitest run --config tests/vitest.config.ts",
+    "test:plugins": "vitest run --config plugins/vitest.config.ts",
+    "test:all": "npm run test && npm run test:plugins",
     "test:watch": "vitest --config tests/vitest.config.ts"
   },
   "keywords": [
