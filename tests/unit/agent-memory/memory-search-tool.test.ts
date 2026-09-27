@@ -42,9 +42,9 @@ beforeEach(() => {
 })
 
 describe('memory-search tool / 参数处理', () => {
-  it('工具元数据：按需、安全、归属对话记忆分类', () => {
+  it('工具元数据：常驻、安全、归属对话记忆分类', () => {
     expect(tool.id).toBe('search_memories')
-    expect(tool.onDemand).toBe(true)
+    expect(tool.onDemand).toBe(false)
     expect(tool.permission).toBe('safe')
   })
 

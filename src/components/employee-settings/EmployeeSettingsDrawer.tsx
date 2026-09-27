@@ -281,6 +281,8 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       }
       message.success(t('common.saveSuccess'))
       loadEmployee()
+      // 记忆开关联动工具列表：关闭后与记忆绑定的工具整类隐藏
+      loadTools()
     } catch {
       message.error(t('common.saveFailed'))
     }

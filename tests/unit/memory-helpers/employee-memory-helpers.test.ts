@@ -8,8 +8,9 @@ import {
   formatMemoriesForPrompt,
   getExtractionRelevantMemories,
   getConsolidationCandidates,
+  hideMemoryBoundCategories,
 } from '../../../electron/main/services/employee-memory-helpers'
-import { MEMORY_SEARCH_MAX_TERMS } from '../../../electron/main/services/employee-memory-types'
+import { MEMORY_SEARCH_MAX_TERMS, MEMORY_BOUND_TOOL_IDS } from '../../../electron/main/services/employee-memory-types'
 import type { EmployeeMemory } from '../../../electron/main/services/employee-memory-types'
 
 function makeMemory(partial: Partial<EmployeeMemory>): EmployeeMemory {
@@ -219,5 +220,31 @@ describe('employee-memory-helpers / getConsolidationCandidates', () => {
     expect(picked).toHaveLength(15)
     expect(picked.map(m => m.id)).toContain('pin1')
     expect(picked.map(m => m.id)).toContain('recent1')
+  })
+})
+
+describe('employee-memory-helpers / hideMemoryBoundCategories', () => {
+  it('记忆开启时原样返回（同一引用）', () => {
+    const categories = [
+      { id: 'conversation_memory', tool_ids: [...MEMORY_BOUND_TOOL_IDS] },
+      { id: 'web', tool_ids: ['web_search'] },
+    ]
+    expect(hideMemoryBoundCategories(categories, true)).toBe(categories)
+  })
+
+  it('记忆关闭时整类隐藏与记忆绑定的分类，其他分类保留', () => {
+    const categories = [
+      { id: 'file_operations', tool_ids: ['file_read'] },
+      { id: 'conversation_memory', tool_ids: [...MEMORY_BOUND_TOOL_IDS] },
+      { id: 'web', tool_ids: ['web_search'] },
+    ]
+    expect(hideMemoryBoundCategories(categories, false).map(c => c.id)).toEqual([
+      'file_operations',
+      'web',
+    ])
+  })
+
+  it('空列表返回空数组', () => {
+    expect(hideMemoryBoundCategories([], false)).toEqual([])
   })
 })

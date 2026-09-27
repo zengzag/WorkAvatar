@@ -303,7 +303,11 @@ class EmployeeMemoryService {
       `SELECT * FROM employee_memories WHERE ${owner.sql} AND is_pinned = 1 AND deleted_at IS NULL ORDER BY updated_at DESC`
     ).all(...owner.params) as EmployeeMemory[]
 
-    const ranked = this.ftsSearch(`${owner.sql} AND m.is_pinned = 0`, owner.params, query, limit)
+    // JOIN 中 FTS 表同样含 employee_id 列，归属条件必须带 m. 前缀消除歧义
+    const joinSql = isGlobalScope(bucket.scope)
+      ? 'm.scope = ?'
+      : 'm.scope = ? AND m.employee_id = ?'
+    const ranked = this.ftsSearch(`${joinSql} AND m.is_pinned = 0`, owner.params, query, limit)
     return [...pinned, ...ranked.map(r => r.memory)]
   }
 

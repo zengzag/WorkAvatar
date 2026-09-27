@@ -98,6 +98,17 @@ export const MEMORY_SEARCH_SCORE_FLOOR = 0.15
 /** MATCH 表达式最多使用的词元数，避免超长查询拖慢 FTS */
 export const MEMORY_SEARCH_MAX_TERMS = 12
 
+/**
+ * 与「跨任务记忆」开关绑定的工具 id（即「对话记忆」分类的 4 个工具）。
+ * 开关关闭时：工具列表整类不可见，运行时也强制 off（不注册）。
+ */
+export const MEMORY_BOUND_TOOL_IDS: readonly string[] = [
+  'search_conversations',
+  'list_conversations',
+  'get_conversation_detail',
+  'search_memories',
+]
+
 export function isGlobalScope(scope: MemoryScope | undefined): boolean {
   return scope === MEMORY_SCOPE_GLOBAL
 }

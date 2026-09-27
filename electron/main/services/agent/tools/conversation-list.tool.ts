@@ -296,7 +296,7 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
       }
     },
     source: 'builtin',
-    onDemand: true,
+    onDemand: false,
     permission: 'safe',
   }
 
@@ -415,7 +415,7 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
       }
     },
     source: 'builtin',
-    onDemand: true,
+    onDemand: false,
     permission: 'safe',
   }
 

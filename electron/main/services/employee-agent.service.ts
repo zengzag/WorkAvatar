@@ -14,6 +14,7 @@ import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKM
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import { createMemorySearchTool } from './agent/tools/memory-search.tool'
+import { MEMORY_BOUND_TOOL_IDS } from './employee-memory-types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
 import { parseEmployeeDelegation } from '../../shared/types'
@@ -296,7 +297,7 @@ class EmployeeAgentService {
     // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
     // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
     // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
-    const toolModes = this.getEmployeeToolModes(employeeId)
+    const toolModes = this.getEmployeeToolModes(employeeId, memoryEnabled)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
     // 委托类工具（串行委托 + 并行派发 + 追问）：仅当委托能力开启且存在有效目标时注册，
@@ -388,11 +389,15 @@ class EmployeeAgentService {
   /**
    * 记忆开关判定：注册员工（内置/插件）以注册表 KV 为准，
    * 其 DB 影子记录的 memory_enabled 恒为 0，不可作判定依据。
+   * 未传 emp 时按 employeeId 查库（供工具列表等外部调用）。
    */
-  private isMemoryEnabled(employeeId: string, emp: DBEmployee): boolean {
+  isMemoryEnabled(employeeId: string, emp?: DBEmployee): boolean {
     const registered = EmployeeRegistryService.getInstance().getRegistered(employeeId)
     if (registered) return registered.memory_enabled === true
-    return emp.memory_enabled === 1
+    const target = emp ?? (this.db.getDb()
+      .prepare('SELECT * FROM employees WHERE id = ?')
+      .get(employeeId) as DBEmployee | undefined)
+    return target?.memory_enabled === 1
   }
 
   /**
@@ -448,8 +453,9 @@ class EmployeeAgentService {
    * 工具三态（on/on_demand/off）映射：
    * - 无配置行 → 按工具定义默认模式（onDemand 标志：常驻=on，否则 on_demand）
    * - 有配置行 → 使用 tool_mode 列值
+   * - 记忆开关关闭时，与记忆绑定的工具在配置行之后被强制 off（记忆数据不可用）
    */
-  private getEmployeeToolModes(employeeId: string): Map<string, ToolMode> {
+  private getEmployeeToolModes(employeeId: string, memoryEnabled: boolean): Map<string, ToolMode> {
     const modeMap = new Map<string, ToolMode>()
     for (const t of allBuiltinTools) {
       modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
@@ -458,15 +464,20 @@ class EmployeeAgentService {
     for (const t of PluginHostService.getInstance().getAgentTools() as any[]) {
       modeMap.set(t.id, 'off')
     }
-    // KMS / 脚本 / 对话记忆工具（工厂函数创建，均按需）
+    // KMS / 脚本工具（工厂函数创建，默认按需）
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
       'javascript_exec',
-      'search_conversations', 'list_conversations', 'get_conversation_detail',
-      'search_memories',
     ]
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')
+    }
+
+    // 对话记忆工具（工厂函数创建）：记忆开启时默认常驻；关闭时由末尾统一强制 off
+    if (memoryEnabled) {
+      for (const id of MEMORY_BOUND_TOOL_IDS) {
+        modeMap.set(id, 'on')
+      }
     }
 
     // 平级协作消息工具默认关闭（委托类工具不在此列：由员工委托设置驱动注册）
@@ -489,6 +500,13 @@ class EmployeeAgentService {
     for (const row of rows) {
       if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {
         modeMap.set(row.tool_id, row.tool_mode)
+      }
+    }
+
+    // 记忆关闭：历史遗留的配置行不得复活记忆绑定工具，末位强制 off
+    if (!memoryEnabled) {
+      for (const id of MEMORY_BOUND_TOOL_IDS) {
+        modeMap.set(id, 'off')
       }
     }
     return modeMap

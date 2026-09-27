@@ -121,7 +121,7 @@ export function createMemorySearchTool(employeeId: string): import('./types').To
       }
     },
     source: 'builtin',
-    onDemand: true,
+    onDemand: false,
     permission: 'safe',
   }
 

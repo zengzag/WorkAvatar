@@ -318,7 +318,6 @@ class DatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
-      CREATE INDEX IF NOT EXISTS idx_employee_memories_scope ON employee_memories(scope, deleted_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
@@ -408,6 +407,11 @@ class DatabaseService {
 
     // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
     migrateMemorySchema(this.db)
+
+    // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_employee_memories_scope ON employee_memories(scope, deleted_at)'
+    )
   }
 
   public getDb(): Database.Database {

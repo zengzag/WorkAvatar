@@ -6,6 +6,7 @@ import {
   MEMORY_ALWAYS_ON_MAX_COUNT,
   MEMORY_ALWAYS_ON_MAX_CHARS,
   MEMORY_SEARCH_MAX_TERMS,
+  MEMORY_BOUND_TOOL_IDS,
 } from './employee-memory-types'
 
 /** 重要性排序权重（critical 最靠前） */
@@ -143,6 +144,19 @@ export function buildMemoryPromptBlock(alwaysOn: EmployeeMemory[], totalCount: n
     return `${header}\n（暂无置顶/关键记忆）\n${hint}`
   }
   return `${header}\n${lines}\n${hint}`
+}
+
+/**
+ * 记忆开关关闭时，隐藏与记忆绑定的工具所在分类（「对话记忆」4 个工具全部与
+ * 「跨任务记忆」开关绑定，开关关闭时整类不可见）；开关开启时原样返回。
+ * 运行时同样对这批工具强制 off，见 employee-agent.service 的 getEmployeeToolModes。
+ */
+export function hideMemoryBoundCategories<T extends { tool_ids: string[] }>(
+  categories: T[],
+  memoryEnabled: boolean
+): T[] {
+  if (memoryEnabled) return categories
+  return categories.filter(cat => !cat.tool_ids.some(id => MEMORY_BOUND_TOOL_IDS.includes(id)))
 }
 
 /** 根据对话文本相关性对现有记忆打分，返回最相关的子集 */
