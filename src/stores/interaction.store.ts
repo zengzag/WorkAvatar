@@ -17,6 +17,13 @@ export interface ScriptDisclosure {
   truncated: boolean
 }
 
+/** 文件改动预览（unified diff），按行首 +/-/@@ 前缀着色展示 */
+export interface DiffDisclosure {
+  content: string
+  /** 内容是否已截断 */
+  truncated: boolean
+}
+
 export interface InteractionRequest {
   id: string
   type: 'confirm' | 'select' | 'input'
@@ -33,6 +40,10 @@ export interface InteractionRequest {
   dirScope?: string
   /** 脚本执行确认：弹窗在正文下方以可滚动代码块展示原始脚本内容 */
   script?: ScriptDisclosure
+  /** 文件改动预览：弹窗在正文下方展示 unified diff */
+  diff?: DiffDisclosure
+  /** 强制确认（不可逆/敏感文件）：隐藏"始终允许"类按钮，仅允许一次性确认或拒绝 */
+  forced?: boolean
   /** 发起请求的会话 id：弹窗据此把"本轮任务不再提醒"状态标记到对应会话 */
   conversationId?: string
 }

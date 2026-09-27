@@ -114,3 +114,10 @@ export type {
 export type {
   AttachmentSaveResult,
 } from './channels/attachment'
+export type {
+  FileChangeKind,
+  SnapshotListParams,
+  SnapshotRevertParams,
+  FileChangeItem,
+  SnapshotRevertResult,
+} from './channels/snapshot'

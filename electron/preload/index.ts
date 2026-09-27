@@ -75,6 +75,8 @@ import type {
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
+  FileChangeItem,
+  SnapshotRevertResult,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -457,6 +459,14 @@ const electronAPI = {
     /** 关闭/开启"本轮任务不再提醒"高权限模式（conversationId 优先，无 DB 会话时传 sessionId） */
     setTaskHighPermission: (params: { conversationId?: string; sessionId?: string; enabled: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_SET_TASK_PERMISSION, params),
+  },
+
+  // 工作区文件改动快照：列出任务内改动记录与回滚
+  snapshot: {
+    list: (conversationId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_LIST, { conversationId }) as Promise<FileChangeItem[]>,
+    revert: (conversationId: string, ids?: string[]) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_REVERT, { conversationId, ids }) as Promise<SnapshotRevertResult>,
   },
 
   // 宿主通用通知（自动化完成 / ask_user 交互等）：插件通知（日历提醒）经插件桥广播，不占宿主通道

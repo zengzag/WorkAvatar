@@ -3,7 +3,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
 import mainUiI18n from './ui-i18n.service'
-import type { ThinkingLevel, ScriptDisclosure } from '../../shared/types'
+import type { ThinkingLevel, ScriptDisclosure, DiffDisclosure } from '../../shared/types'
 
 /** 用户交互默认超时（5 分钟），工具层 timeoutMs 需大于此值以保证内层先触发 */
 export const INTERACTION_TIMEOUT_MS = 300000
@@ -31,6 +31,13 @@ export interface InteractionRequest {
   dirScope?: string
   /** 脚本执行确认：渲染端以可滚动代码块展示原始脚本内容（脚本触发的确认才有） */
   script?: ScriptDisclosure
+  /** 文件改动预览（unified diff）：渲染端按行前缀着色展示 */
+  diff?: DiffDisclosure
+  /**
+   * 强制确认：不可逆操作（删除）与敏感文件路径的确认。
+   * 渲染端据此隐藏"始终允许 / 始终允许此文件夹 / 本轮任务不再提醒"，且不消费 allowAlways 缓存。
+   */
+  forced?: boolean
   /** 发起请求的会话 id：前端据此把"本轮任务不再提醒"的高权限状态标记到对应会话 */
   conversationId?: string
 }
@@ -153,7 +160,7 @@ class UnifiedInteractionService {
     // allowAlways 授权缓存 key：优先 conversationId（覆盖整个会话），降级 sessionId（仅当前消息流）
     const allowKey = ctx.conversationId || ctx.sessionId
 
-    if (request.source && this.isSourceAllowed(allowKey, request.source)) {
+    if (!request.forced && request.source && this.isSourceAllowed(allowKey, request.source)) {
       return {
         id: '',
         confirmed: true,

@@ -5,6 +5,7 @@ import type { IMemoryManager, MemoryConfig, MemoryStats } from '../memory/types'
 import { ToolRegistry } from '../tools/tool-registry'
 import { ToolDispatcher } from '../tools/tool-dispatcher'
 import { ToolMiddlewareChain, createTimeoutMiddleware, createRetryMiddleware, createLoggingMiddleware, createResultSizeMiddleware, type ToolMiddleware } from '../tools/tool-middleware'
+import { createToolPermissionGate } from '../tools/tool-permission'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
@@ -70,6 +71,8 @@ export abstract class BaseAgent {
     this.llmProvider = this.createLLMProvider()
     this.toolRegistry = new ToolRegistry()
     this.toolDispatcher = new ToolDispatcher(this.toolRegistry)
+    // 前置权限门：先于全部中间件（含插件链首中间件）执行，保证权限判定不可绕过
+    this.toolDispatcher.setPreExecuteGate(createToolPermissionGate())
     this.memoryManager = this.createMemoryManager()
     this.middlewareChain = this.toolDispatcher.getMiddlewareChain()
 

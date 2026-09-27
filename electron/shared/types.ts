@@ -167,6 +167,17 @@ export interface ScriptDisclosure {
   truncated: boolean
 }
 
+/**
+ * 文件改动预览（unified diff），随权限确认弹窗下发。
+ * 渲染端按行首 +/-/@@ 前缀着色展示。
+ */
+export interface DiffDisclosure {
+  /** unified diff 文本（含 @@ 头，新增行 +、删除行 -） */
+  content: string
+  /** 内容是否已按上限截断 */
+  truncated: boolean
+}
+
 export interface ParseResult {
   type: string
   fullText: string

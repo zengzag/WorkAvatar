@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag, Popconfirm, App, theme } from 'antd'
 import { ExclamationCircleOutlined, WarningOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useInteractionStore, type InteractionRequest, type ScriptDisclosure } from '../../stores/interaction.store'
+import { useInteractionStore, type InteractionRequest, type ScriptDisclosure, type DiffDisclosure } from '../../stores/interaction.store'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 
 const { TextArea } = Input
@@ -54,6 +54,49 @@ const ScriptPreview: React.FC<{ script: ScriptDisclosure }> = ({ script }) => {
       {script.truncated && (
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
           {t('interaction.scriptTruncatedHint')}
+        </Text>
+      )}
+    </div>
+  )
+}
+
+/** 文件改动预览（unified diff）：按行首 +/-/@@ 前缀着色，独立滚动区 */
+const DiffPreview: React.FC<{ diff: DiffDisclosure }> = ({ diff }) => {
+  const { t } = useTranslation()
+  const { token } = useToken()
+  const lines = diff.content.split('\n')
+  return (
+    <div style={{ marginTop: 12 }}>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+        {t('interaction.diffLabel')}
+      </Text>
+      <div
+        style={{
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: token.borderRadius,
+          maxHeight: 260,
+          overflow: 'auto',
+          background: token.colorFillQuaternary,
+          fontFamily: token.fontFamilyCode,
+          fontSize: 12,
+          lineHeight: 1.6,
+        }}
+      >
+        {lines.map((line, i) => {
+          const color = line.startsWith('+') ? token.colorSuccess
+            : line.startsWith('-') ? token.colorError
+            : line.startsWith('@@') ? token.colorTextTertiary
+            : token.colorText
+          return (
+            <div key={i} style={{ padding: '0 10px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color }}>
+              {line || ' '}
+            </div>
+          )
+        })}
+      </div>
+      {diff.truncated && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+          {t('interaction.diffTruncatedHint')}
         </Text>
       )}
     </div>
@@ -147,6 +190,7 @@ const UnifiedInteractionModal: React.FC = () => {
             <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
               {currentRequest.message}
             </Paragraph>
+            {currentRequest.diff && <DiffPreview diff={currentRequest.diff} />}
             {currentRequest.script && <ScriptPreview script={currentRequest.script} />}
           </div>
         )
@@ -219,7 +263,7 @@ const UnifiedInteractionModal: React.FC = () => {
       closable={false}
       mask={{ closable: false }}
       width={
-        currentRequest.script ? 560
+        currentRequest.script || currentRequest.diff ? 560
           : currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480
       }
       // 正文超高时整体滚动：长路径列表 + 脚本代码块都可能超出视口
@@ -229,17 +273,17 @@ const UnifiedInteractionModal: React.FC = () => {
           <Button onClick={handleCancel}>
             {currentRequest.type === 'confirm' ? t('interaction.reject') : t('common.cancel')}
           </Button>
-          {currentRequest.type === 'confirm' && isSecurityConfirm && !currentRequest.dirScope && (
+          {currentRequest.type === 'confirm' && isSecurityConfirm && !currentRequest.forced && !currentRequest.dirScope && (
             <Button onClick={handleAllowAlways}>
               {t('interaction.allowAlways')}
             </Button>
           )}
-          {currentRequest.type === 'confirm' && isSecurityConfirm && currentRequest.dirScope && (
+          {currentRequest.type === 'confirm' && isSecurityConfirm && !currentRequest.forced && currentRequest.dirScope && (
             <Button onClick={handleAllowAlwaysDir}>
               {t('interaction.allowAlwaysDir')}
             </Button>
           )}
-          {currentRequest.type === 'confirm' && isSecurityConfirm && (
+          {currentRequest.type === 'confirm' && isSecurityConfirm && !currentRequest.forced && (
             <Popconfirm
               title={t('interaction.taskHighPermissionTitle')}
               description={
@@ -283,7 +327,7 @@ const UnifiedInteractionModal: React.FC = () => {
         <Alert
           type="warning"
           showIcon
-          title={t('interaction.securityWarning')}
+          title={currentRequest.forced ? t('interaction.forcedHint') : t('interaction.securityWarning')}
           style={{ marginBottom: 16 }}
         />
       )}

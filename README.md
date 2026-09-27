@@ -59,6 +59,7 @@ Digital employees are the core of WorkAvatar: each role gets its own profile —
 
 - **Streaming conversation**: streaming responses with reasoning and tool calls shown step by step; supports asking multiple models in parallel for side-by-side comparison.
 - **Tool system**: built-in tools for file read/write/edit/delete (deletion moves to the recycle bin and is recoverable), code execution, web search, knowledge base retrieval, Office document generation, and more — configured per tool as **always-on / on-demand / off**; MCP tools are dynamically integrated.
+- **File safety & rollback**: all file write/edit/delete operations pass a unified permission gate. Operations outside the workspace, or on sensitive files (`.env`, keys, `.git`, …), require confirmation; irreversible deletes can never be pre-authorized ("always allow" / "don't remind again" are unavailable); the change is previewed as a diff in the confirmation dialog; and every change can be rolled back from the task's file-change history.
 - **Task delegation**: digital employees can delegate sub-tasks to each other, with parallel dispatch and follow-up queries, and a delegation depth cap of 3 levels. Sub-tasks run independently and only return a summary.
 - **Persistent memory**: preferences, constraints, and lessons learned during conversations are captured automatically. Pinned and key memories stay resident, the rest are retrieved on demand; a cross-employee global memory is also available.
 - **Skills extension**: supports skills in the SKILL.md format, so third-party skills can be installed.
@@ -150,6 +151,7 @@ On first launch, an **onboarding wizard** starts automatically: connect a model 
 | **Local-first** | Parsing, indexing, and retrieval run on your machine; inference and embedding use the model service you configure |
 | **Plugin extensibility** | Core features are plugins, capability-domain authorized, with independent enable/disable and secondary development |
 | **Multi-agent collaboration** | Task delegation and parallel dispatch between employees, with isolated sub-task execution |
+| **File safety & rollback** | Unified permission gate with sensitive-file protection, diff preview before confirmation, and per-task file change rollback |
 | **LLM fault tolerance** | Falls back to basic retrieval when the LLM is unavailable |
 
 ## Use Cases

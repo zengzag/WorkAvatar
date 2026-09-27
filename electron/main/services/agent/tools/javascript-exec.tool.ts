@@ -611,6 +611,9 @@ export const javascriptExecTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  permission: 'requires_confirmation',
+  // 沙箱内写操作统一经 FilePermissionService 授权（含区外与敏感路径弹窗）
+  selfAuthorized: true,
   onDemand: true,
   // timeout 参数上限 300s，工具级超时须不小于该上限（否则中间件默认超时/此值会先截断用户指定的长任务）
   timeoutMs: 310_000,

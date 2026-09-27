@@ -384,6 +384,25 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id);
 
+      -- 工作区文件改动快照：文件写入/编辑/删除前记录变更前状态，供任务内回滚（见 file-snapshot.service）
+      CREATE TABLE IF NOT EXISTS file_snapshots (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL DEFAULT '',
+        employee_id TEXT NOT NULL DEFAULT '',
+        tool_name TEXT NOT NULL DEFAULT '',
+        -- 改动类型：write / append / edit / delete
+        change_kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        -- 改动前文件是否存在（0 表示由本次操作新建，回滚即删除）
+        existed INTEGER NOT NULL DEFAULT 0,
+        -- 是否可在应用内还原（目录、超大文件为 0）
+        restorable INTEGER NOT NULL DEFAULT 1,
+        -- 改动前内容（仅可还原且已读取时记录）
+        before_content TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_snapshots_conv ON file_snapshots(conversation_id, created_at DESC);
+
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
         key,
         topic,

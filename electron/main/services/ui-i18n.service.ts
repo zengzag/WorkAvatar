@@ -45,6 +45,14 @@ const STRINGS = {
     'en-US': 'A digital employee needs your confirmation',
   },
 
+  toolConfirmTitle: { 'zh-CN': '确认执行工具', 'en-US': 'Confirm Tool Execution' },
+  toolConfirmMessage: {
+    'zh-CN': '数字员工即将执行工具「{{name}}」，该工具可能修改文件或执行脚本，是否允许？',
+    'en-US': 'The digital employee is about to run the tool "{{name}}". It may modify files or execute scripts. Allow?',
+  },
+  sensitiveFileTitle: { 'zh-CN': '确认操作敏感文件', 'en-US': 'Confirm Sensitive File Operation' },
+  irreversibleConfirmTitle: { 'zh-CN': '确认不可逆操作', 'en-US': 'Confirm Irreversible Operation' },
+
   ocrInitFailedTitle: { 'zh-CN': 'OCR 初始化失败', 'en-US': 'OCR Initialization Failed' },
   ocrRuntimeErrorTitle: { 'zh-CN': 'OCR 运行异常', 'en-US': 'OCR Runtime Error' },
   ocrRecognizeFailedTitle: { 'zh-CN': 'OCR 识别失败', 'en-US': 'OCR Recognition Failed' },

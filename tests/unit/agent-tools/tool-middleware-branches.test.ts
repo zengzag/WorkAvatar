@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   ToolMiddlewareChain,
   createLoggingMiddleware,
-  createPermissionMiddleware,
   createResultSizeMiddleware,
   createRetryMiddleware,
   createTimeoutMiddleware,
@@ -136,36 +135,6 @@ describe('agent/tools/tool-middleware / retry', () => {
     const start = Date.now()
     await chain.execute('t', {}, async () => fail('rate limit'))
     expect(Date.now() - start).toBeLessThan(200)
-  })
-})
-
-describe('agent/tools/tool-middleware / permission', () => {
-  it('允许时透传结果', async () => {
-    const chain = new ToolMiddlewareChain()
-    chain.use(createPermissionMiddleware(() => true))
-    const res = await chain.execute('allowed', {}, async () => ok('yes'))
-    expect(res.success).toBe(true)
-    expect(res.output).toBe('yes')
-  })
-
-  it('拒绝时不执行 handler，并触发 onDenied 回调', async () => {
-    const chain = new ToolMiddlewareChain()
-    const denied: string[] = []
-    let handlerHit = false
-    chain.use(createPermissionMiddleware(() => false, name => denied.push(name)))
-    const res = await chain.execute('blocked', {}, async () => { handlerHit = true; return ok() })
-    expect(handlerHit).toBe(false)
-    expect(denied).toEqual(['blocked'])
-    expect(res.success).toBe(false)
-    expect(res.error).toBe('Tool "blocked" is not allowed')
-    expect(res.toolName).toBe('blocked')
-  })
-
-  it('未提供 onDenied 时拒绝不报错', async () => {
-    const chain = new ToolMiddlewareChain()
-    chain.use(createPermissionMiddleware(() => false))
-    const res = await chain.execute('blocked', {}, async () => ok())
-    expect(res.success).toBe(false)
   })
 })
 

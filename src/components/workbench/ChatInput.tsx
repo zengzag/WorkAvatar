@@ -1,11 +1,12 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { isColorDark } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
+import FileChangesModal from './FileChangesModal'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -849,6 +850,7 @@ const ChatInput: React.FC<{
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
   const [showKbPicker, setShowKbPicker] = useState(false)
+  const [showFileChanges, setShowFileChanges] = useState(false)
 
   const modelTags = useMemo(() => selectedModels.map((sel, i) => {
     const p = providers.find((p: any) => p.id === sel.providerId)
@@ -1563,6 +1565,14 @@ const ChatInput: React.FC<{
                   onClick={() => fileInputRef.current?.click()}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Tooltip>
+              {/* 文件改动与回滚：仅在已绑定任务（会话）时可用 */}
+              {conversationId && (
+                <Tooltip title={t('fileChanges.entryTooltip')}>
+                  <Button type="text" size="small" icon={<HistoryOutlined style={{ fontSize: 12 }} />}
+                    onClick={() => setShowFileChanges(true)}
+                    style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                </Tooltip>
+              )}
               {/* 插件视图注入点：对话输入框工具栏 */}
               <PluginViewSlot view="chat.toolbar" />
               {!hideToolbar && (
@@ -1729,6 +1739,11 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
+      <FileChangesModal
+        open={showFileChanges}
+        conversationId={conversationId}
+        onClose={() => setShowFileChanges(false)}
+      />
     </div>
   )
 }
