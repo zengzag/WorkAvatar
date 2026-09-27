@@ -10,28 +10,38 @@ import {
   type ExtractionResult,
   type ConsolidationResult,
   type MemoryStats,
+  type MemoryScope,
+  type MemoryBucket,
+  MEMORY_SCOPE_EMPLOYEE,
+  MEMORY_SCOPE_GLOBAL,
+  isGlobalScope,
   MEMORY_MAX_CHARS,
   MEMORY_MAX_COUNT,
   MEMORY_CONTENT_MAX_CHARS,
   MEMORY_CONSOLIDATION_THRESHOLD,
   STALE_MEMORY_DAYS,
   CONSOLIDATION_COOLDOWN_SECONDS,
+  MEMORY_SEARCH_DEFAULT_LIMIT,
+  MEMORY_SEARCH_MAX_LIMIT,
+  MEMORY_SEARCH_SCORE_FLOOR,
+  MEMORY_ALWAYS_ON_MAX_COUNT,
 } from './employee-memory-types'
+import { buildExtractionPrompt, buildConsolidationPrompt } from './employee-memory-prompts'
 import {
-  buildExtractionPrompt,
-  buildConsolidationPrompt,
-  buildSummaryPrompt,
-} from './employee-memory-prompts'
-import {
-  buildFtsQuery,
   formatContentOnlyMessages,
-  formatMemoriesForPrompt,
   getExtractionRelevantMemories,
   getConsolidationCandidates,
-  generateFallbackSummary,
+  applyScoreFloor,
+  selectAlwaysOnMemories,
+  buildMemoryPromptBlock,
 } from './employee-memory-helpers'
+import { segmentMemoryText, buildMemoryFtsMatch } from './employee-memory-fts'
 
 const logger = createLogger('Memory')
+
+/** 检索候选过取倍数：先多取再按相对分数下限裁剪，避免噪声挤掉真实命中 */
+const SEARCH_OVERFETCH_FACTOR = 3
+const SEARCH_OVERFETCH_CAP = 50
 
 /** 截断单条 content，超长时按句号/逗号优先在最近的标点处断开，保持语义完整 */
 function clampContent(text: string, max: number = MEMORY_CONTENT_MAX_CHARS): string {
@@ -45,10 +55,20 @@ function clampContent(text: string, max: number = MEMORY_CONTENT_MAX_CHARS): str
   return cut
 }
 
+interface ScoredMemory {
+  memory: EmployeeMemory
+  score: number
+}
+
 class EmployeeMemoryService {
   private db: DatabaseService
   private static instance: EmployeeMemoryService
   private lastConsolidationAt: Map<string, number> = new Map()
+  /**
+   * 记忆数据集版本号：任何写操作（增删改/提取/整理/过期清理）都会递增。
+   * agent 侧据此判断常驻记忆块是否需要刷新，避免每轮都重算（见 employee-agent.service）。
+   */
+  private revision = 0
 
   private constructor() {
     this.db = DatabaseService.getInstance()
@@ -61,27 +81,83 @@ class EmployeeMemoryService {
     return EmployeeMemoryService.instance
   }
 
-  /** 统一 LLM 调用入口（提取/整合/摘要共用） */
+  /** 记忆数据集版本号（单调递增，仅进程内有效） */
+  getRevision(): number {
+    return this.revision
+  }
+
+  private markChanged(): void {
+    this.revision += 1
+  }
+
+  /** 统一 LLM 调用入口（提取/整合共用）
+   *  sessionId 用于上游会话路由：记忆任务使用独立命名空间，不占用用户对话会话，
+   *  避免服务端会话记录错乱与 KV cache 互相失效。
+   */
   private async llmChat(
     providerId: string,
     modelId: string | undefined,
     prompt: string,
-    options: { maxTokens: number; logSource: string },
+    options: { maxTokens: number; logSource: string; sessionId?: string },
   ): Promise<string> {
     const provider = await createPiProvider(providerId, modelId)
     if (!provider) throw new Error('LLM Provider not found')
     const response = await provider.chat(
       [{ role: 'user', content: prompt }],
       [],
-      { temperature: 0.7, maxTokens: options.maxTokens, logSource: options.logSource },
+      { temperature: 0.7, maxTokens: options.maxTokens, logSource: options.logSource, sessionId: options.sessionId },
     )
     return response.content
   }
 
+  /** 将记忆桶转换为 SQL 归属条件（同时给出 employee 作用域的双重约束，防止越界读写） */
+  private ownerClause(bucket: MemoryBucket): { sql: string; params: any[] } {
+    if (isGlobalScope(bucket.scope)) {
+      return { sql: `scope = ?`, params: [MEMORY_SCOPE_GLOBAL] }
+    }
+    return { sql: `scope = ? AND employee_id = ?`, params: [MEMORY_SCOPE_EMPLOYEE, bucket.employeeId ?? ''] }
+  }
+
+  // ---------------------------------------------------------------- 读取
+
+  /** 列出某员工的员工作用域记忆（UI / 插件数据访问视角） */
   listMemories(employeeId: string): EmployeeMemory[] {
     return this.db.getDb().prepare(
-      'SELECT * FROM employee_memories WHERE employee_id = ? AND deleted_at IS NULL ORDER BY is_pinned DESC, updated_at DESC'
-    ).all(employeeId) as EmployeeMemory[]
+      `SELECT * FROM employee_memories
+       WHERE scope = ? AND employee_id = ? AND deleted_at IS NULL
+       ORDER BY is_pinned DESC, updated_at DESC`
+    ).all(MEMORY_SCOPE_EMPLOYEE, employeeId) as EmployeeMemory[]
+  }
+
+  /** 列出全局作用域记忆（跨员工共享） */
+  listGlobalMemories(): EmployeeMemory[] {
+    return this.db.getDb().prepare(
+      `SELECT * FROM employee_memories
+       WHERE scope = ? AND deleted_at IS NULL
+       ORDER BY is_pinned DESC, updated_at DESC`
+    ).all(MEMORY_SCOPE_GLOBAL) as EmployeeMemory[]
+  }
+
+  /** 列出注入给某个 agent 的全部生效记忆（员工作用域 + 全局作用域） */
+  listMemoriesForInjection(employeeId: string): EmployeeMemory[] {
+    return this.db.getDb().prepare(
+      `SELECT * FROM employee_memories
+       WHERE deleted_at IS NULL AND (
+         (scope = ? AND employee_id = ?) OR scope = ?
+       )
+       ORDER BY is_pinned DESC, updated_at DESC`
+    ).all(MEMORY_SCOPE_EMPLOYEE, employeeId, MEMORY_SCOPE_GLOBAL) as EmployeeMemory[]
+  }
+
+  /**
+   * 构建注入到任务上下文的常驻记忆块：
+   * 仅置顶 + 关键记忆入 prompt，其余交给 search_memories 工具按需检索。
+   */
+  buildInjectionMemoryPrompt(employeeId: string): string | undefined {
+    const memories = this.listMemoriesForInjection(employeeId)
+    const alwaysOn = selectAlwaysOnMemories(memories, { maxCount: MEMORY_ALWAYS_ON_MAX_COUNT })
+    const block = buildMemoryPromptBlock(alwaysOn, memories.length)
+    return block || undefined
   }
 
   getMemory(id: string): EmployeeMemory | undefined {
@@ -90,16 +166,21 @@ class EmployeeMemoryService {
     ).get(id) as EmployeeMemory | undefined
   }
 
-  createMemory(params: EmployeeMemoryCreateParams): EmployeeMemory {
+  // ---------------------------------------------------------------- 写入
+
+  createMemory(params: EmployeeMemoryCreateParams & { scope?: MemoryScope }): EmployeeMemory {
     const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     const content = clampContent(params.content)
+    const scope: MemoryScope = isGlobalScope(params.scope) ? MEMORY_SCOPE_GLOBAL : MEMORY_SCOPE_EMPLOYEE
+    const employeeId = scope === MEMORY_SCOPE_GLOBAL ? null : (params.employee_id ?? '')
     this.db.getDb().prepare(
-      `INSERT INTO employee_memories (id, employee_id, key, topic, content, is_pinned, source, importance, created_at, updated_at, last_referenced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO employee_memories (id, employee_id, scope, key, topic, content, is_pinned, source, importance, created_at, updated_at, last_referenced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
-      params.employee_id,
+      employeeId,
+      scope,
       params.key,
       params.topic,
       content,
@@ -110,13 +191,14 @@ class EmployeeMemoryService {
       now,
       now
     )
-    this.syncMemoryFTS(id, params.employee_id, params.key, params.topic, content)
+    this.syncMemoryFTS(id, employeeId, params.key, params.topic, content)
+    this.markChanged()
     return this.getMemory(id)!
   }
 
   updateMemory(id: string, params: EmployeeMemoryUpdateData): EmployeeMemory | undefined {
     const existing = this.getMemory(id)
-    if (!existing) return undefined
+    if (!existing || existing.deleted_at) return undefined
 
     const sets: string[] = []
     const values: any[] = []
@@ -141,15 +223,23 @@ class EmployeeMemoryService {
       const updated = this.getMemory(id)!
       this.syncMemoryFTS(id, updated.employee_id, updated.key, updated.topic, updated.content)
     }
+    this.markChanged()
 
     return this.getMemory(id)
   }
 
-  private syncMemoryFTS(id: string, employeeId: string, key: string, topic: string, content: string): void {
+  /** 同步 FTS 索引：索引侧使用 jieba 预分词（中文必需，否则整段中文会被 unicode61 视作单个 token） */
+  private syncMemoryFTS(id: string, employeeId: string | null, key: string, topic: string, content: string): void {
     this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
     this.db.getDb().prepare(
       'INSERT INTO employee_memories_fts (key, topic, content, memory_id, employee_id) VALUES (?, ?, ?, ?, ?)'
-    ).run(key, topic, content, id, employeeId)
+    ).run(
+      segmentMemoryText(key),
+      segmentMemoryText(topic),
+      segmentMemoryText(content),
+      id,
+      employeeId ?? ''
+    )
   }
 
   deleteMemory(id: string): boolean {
@@ -158,68 +248,140 @@ class EmployeeMemoryService {
     const result = this.db.getDb().prepare(
       'UPDATE employee_memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL'
     ).run(Math.floor(Date.now() / 1000), id)
+    if (result.changes > 0) this.markChanged()
     return result.changes > 0
   }
 
-  deleteMemoryByKey(employeeId: string, key: string): boolean {
+  deleteMemoryByKey(bucket: MemoryBucket, key: string): boolean {
+    const owner = this.ownerClause(bucket)
     // 软删除：仅标记 deleted_at，不物理删除
     const ids = this.db.getDb().prepare(
-      'SELECT id FROM employee_memories WHERE employee_id = ? AND key = ? AND deleted_at IS NULL'
-    ).all(employeeId, key) as Array<{ id: string }>
+      `SELECT id FROM employee_memories WHERE ${owner.sql} AND key = ? AND deleted_at IS NULL`
+    ).all(...owner.params, key) as Array<{ id: string }>
     if (ids.length === 0) return false
     const placeholders = ids.map(() => '?').join(',')
     this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...ids.map(i => i.id))
     const result = this.db.getDb().prepare(
-      'UPDATE employee_memories SET deleted_at = ? WHERE employee_id = ? AND key = ? AND deleted_at IS NULL'
-    ).run(Math.floor(Date.now() / 1000), employeeId, key)
+      `UPDATE employee_memories SET deleted_at = ? WHERE ${owner.sql} AND key = ? AND deleted_at IS NULL`
+    ).run(Math.floor(Date.now() / 1000), ...owner.params, key)
+    if (result.changes > 0) this.markChanged()
     return result.changes > 0
   }
 
   togglePin(id: string): EmployeeMemory | undefined {
     const existing = this.getMemory(id)
-    if (!existing) return undefined
+    if (!existing || existing.deleted_at) return undefined
     const newPinned = existing.is_pinned ? 0 : 1
     this.db.getDb().prepare(
       'UPDATE employee_memories SET is_pinned = ?, updated_at = ? WHERE id = ?'
     ).run(newPinned, Math.floor(Date.now() / 1000), id)
+    this.markChanged()
     return this.getMemory(id)
   }
 
-  touchMemory(id: string): void {
-    this.db.getDb().prepare(
-      'UPDATE employee_memories SET last_referenced_at = ? WHERE id = ?'
-    ).run(Math.floor(Date.now() / 1000), id)
+  /** 批量刷新"最近被引用"时间：检索命中时调用，使过期清理反映真实使用情况 */
+  touchMemories(ids: string[]): void {
+    const unique = Array.from(new Set(ids.filter(Boolean)))
+    if (unique.length === 0) return
+    const now = Math.floor(Date.now() / 1000)
+    const stmt = this.db.getDb().prepare('UPDATE employee_memories SET last_referenced_at = ? WHERE id = ?')
+    const tx = this.db.getDb().transaction(() => {
+      for (const id of unique) stmt.run(now, id)
+    })
+    tx()
   }
 
-  searchMemories(employeeId: string, query: string, limit: number = 10): EmployeeMemory[] {
-    return this.queryMemories(employeeId, query, limit)
-  }
+  // ---------------------------------------------------------------- 检索
 
-  getRelevantMemories(employeeId: string, query: string, limit: number = 5): EmployeeMemory[] {
-    return this.queryMemories(employeeId, query, limit)
-  }
-
-  private queryMemories(employeeId: string, query: string, limit: number): EmployeeMemory[] {
+  /**
+   * 指定作用域内的检索（UI / 插件视角）：置顶优先展示，随后按相关度排序的非置顶命中。
+   * 不刷新 last_referenced_at（检索行为发生在 UI 浏览场景，不代表记忆被 agent 实际使用）。
+   */
+  searchScopeMemories(bucket: MemoryBucket, query: string, limit: number = 10): EmployeeMemory[] {
+    const owner = this.ownerClause(bucket)
     const pinned = this.db.getDb().prepare(
-      'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 AND deleted_at IS NULL ORDER BY updated_at DESC'
-    ).all(employeeId) as EmployeeMemory[]
+      `SELECT * FROM employee_memories WHERE ${owner.sql} AND is_pinned = 1 AND deleted_at IS NULL ORDER BY updated_at DESC`
+    ).all(...owner.params) as EmployeeMemory[]
 
-    const ftsQuery = buildFtsQuery(query)
-    const searchResults = ftsQuery
-      ? (this.db.getDb().prepare(
-          `SELECT m.* FROM employee_memories m
-           JOIN employee_memories_fts f ON f.memory_id = m.id
-           WHERE f.employee_id = ? AND m.is_pinned = 0 AND m.deleted_at IS NULL AND employee_memories_fts MATCH ?
-           ORDER BY f.rank LIMIT ?`
-        ).all(employeeId, ftsQuery, limit) as EmployeeMemory[])
-      : []
-
-    return [...pinned, ...searchResults]
+    // JOIN 中 FTS 表同样含 employee_id 列，归属条件必须带 m. 前缀消除歧义
+    const joinSql = isGlobalScope(bucket.scope)
+      ? 'm.scope = ?'
+      : 'm.scope = ? AND m.employee_id = ?'
+    const ranked = this.ftsSearch(`${joinSql} AND m.is_pinned = 0`, owner.params, query, limit)
+    return [...pinned, ...ranked.map(r => r.memory)]
   }
 
-  getMemoryStats(employeeId: string): MemoryStats {
+  /** 员工作用域检索的便捷入口 */
+  searchMemories(employeeId: string, query: string, limit: number = 10): EmployeeMemory[] {
+    return this.searchScopeMemories({ scope: MEMORY_SCOPE_EMPLOYEE, employeeId }, query, limit)
+  }
+
+  /**
+   * agent 检索：员工作用域 + 全局作用域（可过滤），BM25 排序 + 相对分数下限去噪，
+   * 命中项刷新 last_referenced_at。
+   */
+  searchMemoriesForAgent(
+    employeeId: string,
+    query: string,
+    options?: { limit?: number; scope?: MemoryScope | 'all' }
+  ): EmployeeMemory[] {
+    const limit = Math.min(
+      Math.max(Math.floor(options?.limit ?? MEMORY_SEARCH_DEFAULT_LIMIT) || MEMORY_SEARCH_DEFAULT_LIMIT, 1),
+      MEMORY_SEARCH_MAX_LIMIT
+    )
+    const scope = options?.scope ?? 'all'
+
+    let ownerSql: string
+    let ownerParams: any[]
+    if (scope === MEMORY_SCOPE_GLOBAL) {
+      ownerSql = `m.scope = ?`
+      ownerParams = [MEMORY_SCOPE_GLOBAL]
+    } else if (scope === MEMORY_SCOPE_EMPLOYEE) {
+      ownerSql = `m.scope = ? AND m.employee_id = ?`
+      ownerParams = [MEMORY_SCOPE_EMPLOYEE, employeeId]
+    } else {
+      ownerSql = `((m.scope = ? AND m.employee_id = ?) OR m.scope = ?)`
+      ownerParams = [MEMORY_SCOPE_EMPLOYEE, employeeId, MEMORY_SCOPE_GLOBAL]
+    }
+
+    const ranked = this.ftsSearch(ownerSql, ownerParams, query, limit)
+    this.touchMemories(ranked.map(r => r.memory.id))
+    return ranked.map(r => r.memory)
+  }
+
+  /**
+   * FTS5 检索（BM25 降序 → 相对分数下限裁剪）。
+   * @param ownerSql 归属过滤片段（可含 `m.` 前缀）
+   */
+  private ftsSearch(ownerSql: string, ownerParams: any[], query: string, limit: number): ScoredMemory[] {
+    const match = buildMemoryFtsMatch(query)
+    if (!match) return []
+
+    const fetchLimit = Math.min(limit * SEARCH_OVERFETCH_FACTOR, SEARCH_OVERFETCH_CAP)
+    const rows = this.db.getDb().prepare(
+      `SELECT m.*, bm25(employee_memories_fts) AS raw_score
+       FROM employee_memories_fts f
+       JOIN employee_memories m ON m.id = f.memory_id
+       WHERE m.deleted_at IS NULL AND ${ownerSql}
+         AND employee_memories_fts MATCH ?
+       ORDER BY raw_score ASC
+       LIMIT ?`
+    ).all(...ownerParams, match, fetchLimit) as Array<EmployeeMemory & { raw_score: number }>
+
+    // bm25() 越小越相关；翻转为越大越相关，供相对分数下限判断
+    const scored: ScoredMemory[] = rows.map(r => {
+      const { raw_score, ...memory } = r
+      return { memory: memory as EmployeeMemory, score: -raw_score }
+    })
+    return applyScoreFloor(scored, MEMORY_SEARCH_SCORE_FLOOR).slice(0, limit)
+  }
+
+  // ---------------------------------------------------------------- 统计与维护
+
+  getMemoryStats(bucket: MemoryBucket): MemoryStats {
     const now = Math.floor(Date.now() / 1000)
     const staleThreshold = now - STALE_MEMORY_DAYS * 86400
+    const owner = this.ownerClause(bucket)
 
     const row = this.db.getDb().prepare(`
       SELECT
@@ -233,8 +395,8 @@ class EmployeeMemoryService {
           (last_referenced_at IS NOT NULL AND last_referenced_at < ?) OR
           (last_referenced_at IS NULL AND created_at < ?)
         ) THEN 1 ELSE 0 END) as staleCount
-      FROM employee_memories WHERE employee_id = ? AND deleted_at IS NULL
-    `).get(staleThreshold, staleThreshold, employeeId) as any
+      FROM employee_memories WHERE ${owner.sql} AND deleted_at IS NULL
+    `).get(staleThreshold, staleThreshold, ...owner.params) as any
 
     return {
       count: row?.count ?? 0,
@@ -247,16 +409,12 @@ class EmployeeMemoryService {
     }
   }
 
-  needsConsolidation(employeeId: string): boolean {
-    const stats = this.getMemoryStats(employeeId)
+  needsConsolidation(bucket: MemoryBucket): boolean {
+    const stats = this.getMemoryStats(bucket)
     if (stats.count > MEMORY_MAX_COUNT) return true
     if (stats.totalChars > MEMORY_MAX_CHARS * MEMORY_CONSOLIDATION_THRESHOLD) return true
     if (stats.staleCount > stats.count * 0.3) return true
     return false
-  }
-
-  formatMemoriesForPrompt(memories: EmployeeMemory[], maxChars?: number): string {
-    return formatMemoriesForPrompt(memories, maxChars)
   }
 
   getConversationSummary(conversationId: string): string {
@@ -267,6 +425,14 @@ class EmployeeMemoryService {
     return row?.summary || ''
   }
 
+  // ---------------------------------------------------------------- 提取
+
+  /**
+   * 从对话中提取记忆（增量或全量）。
+   *
+   * 失败会抛出异常（而非静默返回空数组），以便调用方决定是否推进提取指针——
+   * 静默吞掉失败会让记忆永久丢失且无从感知。
+   */
   async extractMemoriesFromConversation(
     employeeId: string,
     messages: Array<{ role: string; content: string }>,
@@ -286,9 +452,13 @@ class EmployeeMemoryService {
 
     // 全量手动提取时不使用摘要——用户主动触发说明觉得有遗漏，给完整上下文更充分
     const summary = (!fullExtract && conversationId) ? this.getConversationSummary(conversationId) : ''
-    const relevantMemories = getExtractionRelevantMemories(this.listMemories(employeeId), conversationText)
+    const existingMemories = [
+      ...this.listMemories(employeeId),
+      ...this.listGlobalMemories(),
+    ]
+    const relevantMemories = getExtractionRelevantMemories(existingMemories, conversationText)
     const existingMemoriesText = relevantMemories.length > 0
-      ? relevantMemories.map(m => `${m.key}|${m.topic}|${m.content}`).join('\n')
+      ? relevantMemories.map(m => `${isGlobalScope(m.scope) ? '[global] ' : ''}${m.key}|${m.topic}|${m.content}`).join('\n')
       : ''
 
     const contextParts: string[] = []
@@ -300,110 +470,132 @@ class EmployeeMemoryService {
       : '【本轮新对话】（自上次提取以来的新消息，仅含 content，需从中提取记忆）'
     contextParts.push(`${dialogLabel}\n${conversationText}`)
     if (existingMemoriesText) {
-      contextParts.push(`【现有记忆】（key|topic|content，用于去重与更新判断）\n${existingMemoriesText}`)
+      contextParts.push(`【现有记忆】（[global] 前缀为全局记忆，其余为当前员工记忆；格式 key|topic|content，用于去重与更新判断）\n${existingMemoriesText}`)
     }
 
     const prompt = buildExtractionPrompt(contextParts)
 
-    try {
-      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 800, logSource: 'memory_extract' })
+    const response = await this.llmChat(providerId, modelId, prompt, {
+      maxTokens: 800,
+      logSource: 'memory_extract',
+      sessionId: `memory-extract:${employeeId}`,
+    })
 
-      const jsonMatch = response.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) return []
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      throw new Error('EXTRACTION_INVALID_OUTPUT')
+    }
 
-      const parsed = JSON.parse(jsonMatch[0]) as ExtractionResult
+    const parsed = JSON.parse(jsonMatch[0]) as ExtractionResult
 
-      const validExtracted = (parsed.memories || []).filter(m => m.key && m.topic && m.content)
+    const validExtracted = (parsed.memories || []).filter(m => m.key && m.topic && m.content)
 
-      this.db.getDb().transaction(() => {
-        const now = Math.floor(Date.now() / 1000)
-        const allNewKeys = validExtracted.map(m => m.key)
-        const existingMap = new Map<string, EmployeeMemory>()
-        if (allNewKeys.length > 0) {
-          const keyPlaceholders = allNewKeys.map(() => '?').join(',')
-          const existingRows = this.db.getDb().prepare(
-            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${keyPlaceholders}) AND deleted_at IS NULL`
-          ).all(employeeId, ...allNewKeys) as EmployeeMemory[]
-          for (const row of existingRows) {
-            existingMap.set(row.key, row)
-          }
-        }
+    this.db.getDb().transaction(() => {
+      const now = Math.floor(Date.now() / 1000)
 
-        for (const memory of validExtracted) {
-          const existing = existingMap.get(memory.key)
+      for (const memory of validExtracted) {
+        const bucket: MemoryBucket = isGlobalScope(memory.scope)
+          ? { scope: MEMORY_SCOPE_GLOBAL }
+          : { scope: MEMORY_SCOPE_EMPLOYEE, employeeId }
+        this.upsertExtractedMemory(bucket, memory, now)
+      }
 
-          if (existing) {
-            this.db.getDb().prepare(
-              'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-            ).run(clampContent(memory.content), memory.topic, now, now, existing.id)
-            this.syncMemoryFTS(existing.id, employeeId, existing.key, memory.topic, clampContent(memory.content))
-          } else {
-            this.createMemory({
-              employee_id: employeeId,
-              key: memory.key,
-              topic: memory.topic,
-              content: memory.content,
-              source: 'auto',
-            })
-          }
-        }
-
-        for (const key of (parsed.delete_keys || [])) {
-          this.deleteMemoryByKey(employeeId, key)
+      for (const key of (parsed.delete_keys || [])) {
+        if (this.deleteMemoryByKey({ scope: MEMORY_SCOPE_EMPLOYEE, employeeId }, key)) {
           logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
         }
+      }
 
-        const allUpdateKeys = (parsed.update_memories || []).map(u => u.key).filter(Boolean)
-        const updateExistingMap = new Map<string, EmployeeMemory>()
-        if (allUpdateKeys.length > 0) {
-          const upPlaceholders = allUpdateKeys.map(() => '?').join(',')
-          const upRows = this.db.getDb().prepare(
-            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${upPlaceholders}) AND deleted_at IS NULL`
-          ).all(employeeId, ...allUpdateKeys) as EmployeeMemory[]
-          for (const row of upRows) {
-            updateExistingMap.set(row.key, row)
-          }
+      for (const update of (parsed.update_memories || [])) {
+        if (!update.key || !update.content) continue
+        const candidateScopes: MemoryBucket[] = isGlobalScope(update.scope)
+          ? [{ scope: MEMORY_SCOPE_GLOBAL }]
+          : [
+              { scope: MEMORY_SCOPE_EMPLOYEE, employeeId },
+              { scope: MEMORY_SCOPE_GLOBAL },
+            ]
+        const applied = this.applyExtractedUpdate(candidateScopes, update, now)
+        if (applied) logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
+      }
+
+      if (conversationId && parsed.summary) {
+        const newSummary = parsed.summary.trim().substring(0, 500)
+        if (newSummary) {
+          this.db.getDb().prepare(
+            'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
+          ).run(newSummary, now, conversationId)
         }
+      }
+    })()
 
-        for (const update of (parsed.update_memories || [])) {
-          if (!update.key || !update.content) continue
-          const existing = updateExistingMap.get(update.key)
-          if (existing) {
-            const topic = update.topic || existing.topic
-            const content = clampContent(update.content)
-            this.db.getDb().prepare(
-              'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-            ).run(content, topic, now, now, existing.id)
-            this.syncMemoryFTS(existing.id, employeeId, existing.key, topic, content)
-            logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
-          }
-        }
+    logger.info(`Extracted ${validExtracted.length} memories, deleted ${(parsed.delete_keys || []).length}, updated ${(parsed.update_memories || []).length} for employee ${employeeId}`)
+    this.markChanged()
 
-        if (conversationId && parsed.summary) {
-          const newSummary = parsed.summary.trim().substring(0, 500)
-          if (newSummary) {
-            this.db.getDb().prepare(
-              'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
-            ).run(newSummary, now, conversationId)
-          }
-        }
-      })()
-
-      logger.info(`Extracted ${validExtracted.length} memories, deleted ${(parsed.delete_keys || []).length}, updated ${(parsed.update_memories || []).length} for employee ${employeeId}`)
-
-      return validExtracted
-    } catch (error: any) {
-      logger.error(`Memory extraction failed: ${error.message}`)
-      return []
-    }
+    return validExtracted
   }
 
+  /** 按 key 在指定作用域内 upsert 一条提取结果 */
+  private upsertExtractedMemory(bucket: MemoryBucket, memory: ExtractedMemory, now: number): void {
+    const owner = this.ownerClause(bucket)
+    const existing = this.db.getDb().prepare(
+      `SELECT * FROM employee_memories WHERE ${owner.sql} AND key = ? AND deleted_at IS NULL`
+    ).get(...owner.params, memory.key) as EmployeeMemory | undefined
+
+    if (existing) {
+      const content = clampContent(memory.content)
+      this.db.getDb().prepare(
+        'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
+      ).run(content, memory.topic, now, now, existing.id)
+      this.syncMemoryFTS(existing.id, existing.employee_id, existing.key, memory.topic, content)
+      return
+    }
+
+    this.createMemory({
+      employee_id: bucket.employeeId ?? '',
+      scope: bucket.scope,
+      key: memory.key,
+      topic: memory.topic,
+      content: memory.content,
+      source: 'auto',
+    })
+  }
+
+  /** 依次尝试在候选作用域中更新指定 key，命中第一个即返回 */
+  private applyExtractedUpdate(
+    scopes: MemoryBucket[],
+    update: { key: string; content: string; topic?: string },
+    now: number
+  ): boolean {
+    for (const bucket of scopes) {
+      const owner = this.ownerClause(bucket)
+      const existing = this.db.getDb().prepare(
+        `SELECT * FROM employee_memories WHERE ${owner.sql} AND key = ? AND deleted_at IS NULL`
+      ).get(...owner.params, update.key) as EmployeeMemory | undefined
+      if (!existing) continue
+      const topic = update.topic || existing.topic
+      const content = clampContent(update.content)
+      this.db.getDb().prepare(
+        'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
+      ).run(content, topic, now, now, existing.id)
+      this.syncMemoryFTS(existing.id, existing.employee_id, existing.key, topic, content)
+      return true
+    }
+    return false
+  }
+
+  // ---------------------------------------------------------------- 整理
+
+  /** 记忆整理：按作用域分桶整理；传字符串等价于员工作用域（兼容旧调用形态） */
   async consolidateMemories(
-    employeeId: string,
+    bucketOrEmployeeId: MemoryBucket | string,
     providerId: string,
     modelId?: string
   ): Promise<{ deleted: number; merged: number; simplified: number }> {
-    const candidates = getConsolidationCandidates(this.listMemories(employeeId))
+    const bucket: MemoryBucket = typeof bucketOrEmployeeId === 'string'
+      ? { scope: MEMORY_SCOPE_EMPLOYEE, employeeId: bucketOrEmployeeId }
+      : bucketOrEmployeeId
+    const bucketKey = this.bucketKey(bucket)
+    const candidates = getConsolidationCandidates(this.listBucketMemories(bucket))
     if (candidates.length < 2) return { deleted: 0, merged: 0, simplified: 0 }
 
     const now = Math.floor(Date.now() / 1000)
@@ -418,78 +610,88 @@ class EmployeeMemoryService {
 
     const prompt = buildConsolidationPrompt(memoriesText)
 
+    let response: string
     try {
-      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 1200, logSource: 'memory_consolidate' })
-
-      const jsonMatch = response.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) return { deleted: 0, merged: 0, simplified: 0 }
-
-      const parsed = JSON.parse(jsonMatch[0]) as ConsolidationResult
-
-      let deleted = 0
-      let merged = 0
-      let simplified = 0
-
-      this.db.getDb().transaction(() => {
-        for (const key of (parsed.delete_keys || [])) {
-          if (this.deleteMemoryByKey(employeeId, key)) deleted++
-        }
-
-        for (const group of (parsed.merge_groups || [])) {
-          if (!group.keys || group.keys.length < 2 || !group.merged) continue
-          const hasPinned = candidates.some(m => group.keys.includes(m.key) && m.is_pinned)
-          this.createMemory({
-            employee_id: employeeId,
-            key: group.merged.key,
-            topic: group.merged.topic,
-            content: group.merged.content,
-            source: 'auto',
-            is_pinned: hasPinned,
-          })
-          for (const key of group.keys) {
-            const mem = candidates.find(m => m.key === key)
-            if (mem && !mem.is_pinned) {
-              this.deleteMemoryByKey(employeeId, key)
-            } else if (mem && mem.is_pinned) {
-              this.db.getDb().prepare(
-                'UPDATE employee_memories SET is_pinned = 0, updated_at = ? WHERE id = ?'
-              ).run(Math.floor(Date.now() / 1000), mem.id)
-            }
-          }
-          merged++
-        }
-
-        for (const update of (parsed.simplify_updates || [])) {
-          if (!update.key || !update.content) continue
-          const existing = candidates.find(m => m.key === update.key)
-          if (existing && existing.content !== update.content) {
-            const content = clampContent(update.content)
-            this.db.getDb().prepare(
-              'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
-            ).run(content, Math.floor(Date.now() / 1000), existing.id)
-            this.syncMemoryFTS(existing.id, employeeId, existing.key, existing.topic, content)
-            simplified++
-          }
-        }
-
-        for (const update of (parsed.importance_updates || [])) {
-          if (!update.key || !update.importance) continue
-          const existing = candidates.find(m => m.key === update.key)
-          if (existing) {
-            this.db.getDb().prepare(
-              'UPDATE employee_memories SET importance = ?, updated_at = ? WHERE id = ?'
-            ).run(update.importance, Math.floor(Date.now() / 1000), existing.id)
-          }
-        }
-      })()
-
-      this.lastConsolidationAt.set(employeeId, Math.floor(Date.now() / 1000))
-      logger.info(`Consolidated memories for employee ${employeeId}: deleted=${deleted}, merged=${merged}, simplified=${simplified}`)
-      return { deleted, merged, simplified }
+      response = await this.llmChat(providerId, modelId, prompt, {
+        maxTokens: 1200,
+        logSource: 'memory_consolidate',
+        sessionId: `memory-consolidate:${bucketKey}`,
+      })
     } catch (error: any) {
       logger.error(`Memory consolidation failed: ${error.message}`)
       return { deleted: 0, merged: 0, simplified: 0 }
     }
+
+    const jsonMatch = response.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      logger.error('Memory consolidation failed: invalid JSON output')
+      return { deleted: 0, merged: 0, simplified: 0 }
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as ConsolidationResult
+
+    let deleted = 0
+    let merged = 0
+    let simplified = 0
+
+    this.db.getDb().transaction(() => {
+      for (const key of (parsed.delete_keys || [])) {
+        if (this.deleteMemoryByKey(bucket, key)) deleted++
+      }
+
+      for (const group of (parsed.merge_groups || [])) {
+        if (!group.keys || group.keys.length < 2 || !group.merged) continue
+        const hasPinned = candidates.some(m => group.keys.includes(m.key) && m.is_pinned)
+        this.createMemory({
+          employee_id: bucket.employeeId ?? '',
+          scope: bucket.scope,
+          key: group.merged.key,
+          topic: group.merged.topic,
+          content: group.merged.content,
+          source: 'auto',
+          is_pinned: hasPinned,
+        })
+        for (const key of group.keys) {
+          const mem = candidates.find(m => m.key === key)
+          if (mem && !mem.is_pinned) {
+            this.deleteMemoryByKey(bucket, key)
+          } else if (mem && mem.is_pinned) {
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET is_pinned = 0, updated_at = ? WHERE id = ?'
+            ).run(Math.floor(Date.now() / 1000), mem.id)
+          }
+        }
+        merged++
+      }
+
+      for (const update of (parsed.simplify_updates || [])) {
+        if (!update.key || !update.content) continue
+        const existing = candidates.find(m => m.key === update.key)
+        if (existing && existing.content !== update.content) {
+          const content = clampContent(update.content)
+          this.db.getDb().prepare(
+            'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
+          ).run(content, Math.floor(Date.now() / 1000), existing.id)
+          this.syncMemoryFTS(existing.id, existing.employee_id, existing.key, existing.topic, content)
+          simplified++
+        }
+      }
+
+      for (const update of (parsed.importance_updates || [])) {
+        if (!update.key || !update.importance) continue
+        const existing = candidates.find(m => m.key === update.key)
+        if (existing) {
+          this.db.getDb().prepare(
+            'UPDATE employee_memories SET importance = ?, updated_at = ? WHERE id = ?'
+          ).run(update.importance, Math.floor(Date.now() / 1000), existing.id)
+        }
+      }
+    })()
+
+    this.lastConsolidationAt.set(bucketKey, Math.floor(Date.now() / 1000))
+    this.markChanged()
+    logger.info(`Consolidated memories for ${bucketKey}: deleted=${deleted}, merged=${merged}, simplified=${simplified}`)
+    return { deleted, merged, simplified }
   }
 
   async autoConsolidateIfNeeded(
@@ -497,29 +699,45 @@ class EmployeeMemoryService {
     providerId: string,
     modelId?: string
   ): Promise<{ deleted: number; merged: number; simplified: number } | null> {
-    if (!this.needsConsolidation(employeeId)) return null
+    const bucket: MemoryBucket = { scope: MEMORY_SCOPE_EMPLOYEE, employeeId }
+    if (!this.needsConsolidation(bucket)) return null
 
-    const lastTime = this.lastConsolidationAt.get(employeeId) || 0
+    const bucketKey = this.bucketKey(bucket)
+    const lastTime = this.lastConsolidationAt.get(bucketKey) || 0
     const elapsed = Math.floor(Date.now() / 1000) - lastTime
     if (elapsed < CONSOLIDATION_COOLDOWN_SECONDS) {
-      logger.info(`Consolidation cooldown for employee ${employeeId}, ${CONSOLIDATION_COOLDOWN_SECONDS - elapsed}s remaining`)
+      logger.info(`Consolidation cooldown for ${bucketKey}, ${CONSOLIDATION_COOLDOWN_SECONDS - elapsed}s remaining`)
       return null
     }
 
-    logger.info(`Auto-consolidation triggered for employee ${employeeId}`)
-    return this.consolidateMemories(employeeId, providerId, modelId)
+    logger.info(`Auto-consolidation triggered for ${bucketKey}`)
+    return this.consolidateMemories(bucket, providerId, modelId)
   }
 
-  removeStaleMemories(employeeId: string): number {
+  private bucketKey(bucket: MemoryBucket): string {
+    return isGlobalScope(bucket.scope) ? '__global__' : (bucket.employeeId ?? '')
+  }
+
+  private listBucketMemories(bucket: MemoryBucket): EmployeeMemory[] {
+    return isGlobalScope(bucket.scope)
+      ? this.listGlobalMemories()
+      : this.listMemories(bucket.employeeId ?? '')
+  }
+
+  // ---------------------------------------------------------------- 过期清理
+
+  removeStaleMemories(bucket: MemoryBucket): number {
     const now = Math.floor(Date.now() / 1000)
     const staleThreshold = now - STALE_MEMORY_DAYS * 86400
+    const owner = this.ownerClause(bucket)
 
-    const staleIds = this.db.getDb().prepare(
-      `SELECT id FROM employee_memories
-       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low' AND deleted_at IS NULL
+    const staleClause = `is_pinned = 0 AND importance = 'low' AND deleted_at IS NULL
        AND ((last_referenced_at IS NOT NULL AND last_referenced_at < ?)
             OR (last_referenced_at IS NULL AND created_at < ?))`
-    ).all(employeeId, staleThreshold, staleThreshold) as Array<{ id: string }>
+
+    const staleIds = this.db.getDb().prepare(
+      `SELECT id FROM employee_memories WHERE ${owner.sql} AND ${staleClause}`
+    ).all(...owner.params, staleThreshold, staleThreshold) as Array<{ id: string }>
 
     if (staleIds.length === 0) return 0
 
@@ -527,22 +745,23 @@ class EmployeeMemoryService {
     this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...staleIds.map(i => i.id))
     // 软删除过期记忆，移入回收站便于恢复
     const result = this.db.getDb().prepare(
-      `UPDATE employee_memories SET deleted_at = ?
-       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low' AND deleted_at IS NULL
-       AND ((last_referenced_at IS NOT NULL AND last_referenced_at < ?)
-            OR (last_referenced_at IS NULL AND created_at < ?))`
-    ).run(now, employeeId, staleThreshold, staleThreshold)
+      `UPDATE employee_memories SET deleted_at = ? WHERE ${owner.sql} AND ${staleClause}`
+    ).run(now, ...owner.params, staleThreshold, staleThreshold)
 
     if (result.changes > 0) {
-      logger.info(`Soft-deleted ${result.changes} stale memories for employee ${employeeId}`)
+      logger.info(`Soft-deleted ${result.changes} stale memories for ${this.bucketKey(bucket)}`)
+      this.markChanged()
     }
     return result.changes
   }
 
-  listTrashedMemories(employeeId: string): EmployeeMemory[] {
+  // ---------------------------------------------------------------- 回收站
+
+  listTrashedMemories(bucket: MemoryBucket): EmployeeMemory[] {
+    const owner = this.ownerClause(bucket)
     return this.db.getDb().prepare(
-      'SELECT * FROM employee_memories WHERE employee_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC'
-    ).all(employeeId) as EmployeeMemory[]
+      `SELECT * FROM employee_memories WHERE ${owner.sql} AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`
+    ).all(...owner.params) as EmployeeMemory[]
   }
 
   restoreMemory(id: string): EmployeeMemory | undefined {
@@ -553,6 +772,7 @@ class EmployeeMemoryService {
     ).run(Math.floor(Date.now() / 1000), id)
     // 恢复 FTS 索引
     this.syncMemoryFTS(id, existing.employee_id, existing.key, existing.topic, existing.content)
+    this.markChanged()
     return this.getMemory(id)
   }
 
@@ -561,46 +781,23 @@ class EmployeeMemoryService {
     const result = this.db.getDb().prepare(
       'DELETE FROM employee_memories WHERE id = ? AND deleted_at IS NOT NULL'
     ).run(id)
+    if (result.changes > 0) this.markChanged()
     return result.changes > 0
   }
 
-  emptyTrash(employeeId: string): number {
+  emptyTrash(bucket: MemoryBucket): number {
+    const owner = this.ownerClause(bucket)
     const ids = this.db.getDb().prepare(
-      'SELECT id FROM employee_memories WHERE employee_id = ? AND deleted_at IS NOT NULL'
-    ).all(employeeId) as Array<{ id: string }>
+      `SELECT id FROM employee_memories WHERE ${owner.sql} AND deleted_at IS NOT NULL`
+    ).all(...owner.params) as Array<{ id: string }>
     if (ids.length === 0) return 0
     const placeholders = ids.map(() => '?').join(',')
     this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...ids.map(i => i.id))
     const result = this.db.getDb().prepare(
-      'DELETE FROM employee_memories WHERE employee_id = ? AND deleted_at IS NOT NULL'
-    ).run(employeeId)
+      `DELETE FROM employee_memories WHERE ${owner.sql} AND deleted_at IS NOT NULL`
+    ).run(...owner.params)
+    if (result.changes > 0) this.markChanged()
     return result.changes
-  }
-
-  async generateLLMSummary(
-    messages: Array<{ role: string; content: string }>,
-    providerId: string,
-    modelId?: string
-  ): Promise<string> {
-    const conversationText = messages
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
-      .join('\n')
-
-    if (conversationText.length < 30) {
-      return generateFallbackSummary(messages)
-    }
-
-    const prompt = buildSummaryPrompt(conversationText)
-
-    try {
-      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 1000, logSource: 'memory_summary' })
-
-      return response || generateFallbackSummary(messages)
-    } catch (error: any) {
-      logger.error(`LLM summary generation failed: ${error.message}`)
-      return generateFallbackSummary(messages)
-    }
   }
 }
 

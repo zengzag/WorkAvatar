@@ -152,26 +152,6 @@ export function createLoggingMiddleware(logger: (level: string, action: string, 
   }
 }
 
-export function createPermissionMiddleware(
-  isAllowed: (toolName: string) => boolean,
-  onDenied?: (toolName: string) => void
-): ToolMiddleware {
-  return {
-    name: 'permission',
-    fn: async (toolName, _args, next) => {
-      if (!isAllowed(toolName)) {
-        onDenied?.(toolName)
-        return {
-          success: false,
-          error: `Tool "${toolName}" is not allowed`,
-          toolName,
-        }
-      }
-      return next()
-    },
-  }
-}
-
 export function createResultSizeMiddleware(maxResultSize: number = 50000): ToolMiddleware {
   return {
     name: 'result_size',

@@ -198,9 +198,9 @@ describe('agent/tools/conversation-list / list_conversations', () => {
     expect(res.error).toContain('db down')
   })
 
-  it('工具元信息：按需 + 安全权限', () => {
+  it('工具元信息：常驻 + 安全权限', () => {
     const tool = createConversationListTool(EMP)[0]
-    expect(tool.onDemand).toBe(true)
+    expect(tool.onDemand).toBe(false)
     expect(tool.permission).toBe('safe')
     expect(tool.parameters.required).toBeUndefined()
   })
@@ -379,9 +379,9 @@ describe('agent/tools/conversation-search / search_conversations', () => {
 
   const searchTool = () => createConversationSearchTool(EMP)[0].handler!
 
-  it('空查询报错；工具元信息为按需 + 安全权限', () => {
+  it('空查询报错；工具元信息为常驻 + 安全权限', () => {
     const tool = createConversationSearchTool(EMP)[0]
-    expect(tool.onDemand).toBe(true)
+    expect(tool.onDemand).toBe(false)
     expect(tool.permission).toBe('safe')
     expect(tool.parameters.required).toEqual(['query'])
     expect(searchTool()({ query: '   ' })).toMatchObject({ success: false, error: '查询不能为空' })

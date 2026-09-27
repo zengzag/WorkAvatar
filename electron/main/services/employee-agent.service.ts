@@ -8,10 +8,13 @@ import McpRegistryService from './mcp-registry.service'
 import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
+import { PROMPT_FORMAT_MARKER } from './agent/business/prompts'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
+import { createMemorySearchTool } from './agent/tools/memory-search.tool'
+import { MEMORY_BOUND_TOOL_IDS } from './employee-memory-types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
 import { parseEmployeeDelegation } from '../../shared/types'
@@ -78,6 +81,12 @@ interface CachedAgentEntry {
   mcpRelease?: () => Promise<void>
   /** 创建时的插件工具集合 epoch（插件增删/升级时由 bumpToolEpoch 递增；运行中的 agent 保留至本轮结束） */
   toolEpoch: number
+  /** 创建时冻结的极简模式：toolEpoch 触发重建时沿用，避免按请求参数重建导致模式翻转 */
+  minimalMode: boolean
+  /** 该 agent 的记忆开关（注册员工以注册表 KV 为准） */
+  memoryEnabled: boolean
+  /** 构建常驻记忆块时的记忆数据集版本号，用于按需刷新（见 refreshMemoryPromptIfStale） */
+  memoryRevision: number
 }
 
 class EmployeeAgentService {
@@ -136,6 +145,8 @@ class EmployeeAgentService {
             existing.mcpRelease().catch(() => { /* ignore */ })
           }
           this.agentEntries.delete(cacheKey)
+          // 重建沿用创建时冻结的极简模式，而不是本次调用参数（会话模式不随单次请求翻转）
+          minimalMode = existing.minimalMode
         } else {
           // 运行中：本次 run 的 tools schema 已快照，保留旧工具集跑完本轮，任务结束后下次访问自然重建
           return existing
@@ -186,7 +197,8 @@ class EmployeeAgentService {
       throw new Error(`Provider ${providerId} not found`)
     }
 
-    let instructions = '你是专业数字员工，基于资料库和工具为用户提供服务。'
+    // 身份由系统提示词模板锚定；rules 是唯一权威的用户自定义指令来源
+    let instructions = ''
     let role: string | undefined
     if (emp.profile_json) {
       try {
@@ -195,10 +207,10 @@ class EmployeeAgentService {
           role = profile.roleName
         }
       } catch (error) {
-        logger.warn('Failed to parse employee profile_json, using default instructions', error)
+        logger.warn('Failed to parse employee profile_json', error)
       }
     }
-    // 规则（系统提示词）：唯一权威来源
+    // 规则（系统提示词中的自定义指令）：唯一权威来源
     if (emp.rules?.trim()) {
       instructions = emp.rules
     }
@@ -211,11 +223,9 @@ class EmployeeAgentService {
 
     const resolvedModelName = modelConfig?.model || modelId || config.model
 
-    const memoryEnabled = emp.memory_enabled === 1
+    const memoryEnabled = this.isMemoryEnabled(employeeId, emp)
     const memoryPrompt = memoryEnabled
-      ? (this.memoryService.formatMemoriesForPrompt(
-          this.memoryService.listMemories(employeeId)
-        ) || undefined)
+      ? this.memoryService.buildInjectionMemoryPrompt(employeeId)
       : undefined
 
     // 委托能力：由员工委托设置驱动（不再是可配置工具）。
@@ -261,9 +271,7 @@ class EmployeeAgentService {
         const osName = platformMap[process.platform] || process.platform
         const osRelease = os.release()
         const osArch = os.arch()
-        const parts: string[] = []
-        parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
-        return parts.join('\n')
+        return `System environment: ${osName} ${osRelease} (${osArch})`
       })(),
     }
 
@@ -293,7 +301,7 @@ class EmployeeAgentService {
     // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
     // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
     // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
-    const toolModes = this.getEmployeeToolModes(employeeId)
+    const toolModes = this.getEmployeeToolModes(employeeId, memoryEnabled)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
     // 委托类工具（串行委托 + 并行派发 + 追问）：仅当委托能力开启且存在有效目标时注册，
@@ -328,6 +336,11 @@ class EmployeeAgentService {
 
     if (toolModes.get('list_conversations') !== 'off' || toolModes.get('get_conversation_detail') !== 'off') {
       agent.registerTools(this.applyToolModes(createConversationListTool(employeeId), toolModes))
+    }
+
+    // 长期记忆检索工具：仅在记忆开启时注册（记忆关闭时无记忆可检索）
+    if (memoryEnabled && toolModes.get('search_memories') !== 'off') {
+      agent.registerTools(this.applyToolModes(createMemorySearchTool(employeeId), toolModes))
     }
 
     // 注入员工已启用的外部 MCP server 工具（标记为按需工具）
@@ -365,13 +378,47 @@ class EmployeeAgentService {
       agent.useToolMiddleware(mw)
     }
 
-    this.agentEntries.set(cacheKey, {
+    const entry: CachedAgentEntry = {
       agent,
       collectionIdsRef,
       mcpRelease,
       toolEpoch: this.toolEpoch,
-    })
-    return { agent, collectionIdsRef, toolEpoch: this.toolEpoch }
+      minimalMode: agent.getMinimalMode(),
+      memoryEnabled,
+      memoryRevision: this.memoryService.getRevision(),
+    }
+    this.agentEntries.set(cacheKey, entry)
+    return entry
+  }
+
+  /**
+   * 记忆开关判定：注册员工（内置/插件）以注册表 KV 为准，
+   * 其 DB 影子记录的 memory_enabled 恒为 0，不可作判定依据。
+   * 未传 emp 时按 employeeId 查库（供工具列表等外部调用）。
+   */
+  isMemoryEnabled(employeeId: string, emp?: DBEmployee): boolean {
+    const registered = EmployeeRegistryService.getInstance().getRegistered(employeeId)
+    if (registered) return registered.memory_enabled === true
+    const target = emp ?? (this.db.getDb()
+      .prepare('SELECT * FROM employees WHERE id = ?')
+      .get(employeeId) as DBEmployee | undefined)
+    return target?.memory_enabled === 1
+  }
+
+  /**
+   * 按记忆数据集版本号懒刷新 agent 的常驻记忆块。
+   *
+   * 记忆提取/整理在会话进行中由定时任务写入；若只在 agent 创建时注入一次，
+   * 新记忆在本会话内永远不可见。版本号未变化时不重算（零额外开销），
+   * 变化时才重建常驻块——常驻块只含置顶/关键记忆，体量小且稳定，对 KV cache 影响有限。
+   */
+  private refreshMemoryPromptIfStale(entry: CachedAgentEntry, employeeId: string): void {
+    const current = this.memoryService.getRevision()
+    if (entry.memoryRevision === current) return
+    entry.agent.updateMemoryPrompt(
+      entry.memoryEnabled ? this.memoryService.buildInjectionMemoryPrompt(employeeId) : undefined
+    )
+    entry.memoryRevision = current
   }
 
   /**
@@ -411,8 +458,9 @@ class EmployeeAgentService {
    * 工具三态（on/on_demand/off）映射：
    * - 无配置行 → 按工具定义默认模式（onDemand 标志：常驻=on，否则 on_demand）
    * - 有配置行 → 使用 tool_mode 列值
+   * - 记忆开关关闭时，与记忆绑定的工具在配置行之后被强制 off（记忆数据不可用）
    */
-  private getEmployeeToolModes(employeeId: string): Map<string, ToolMode> {
+  private getEmployeeToolModes(employeeId: string, memoryEnabled: boolean): Map<string, ToolMode> {
     const modeMap = new Map<string, ToolMode>()
     for (const t of allBuiltinTools) {
       modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
@@ -421,14 +469,20 @@ class EmployeeAgentService {
     for (const t of PluginHostService.getInstance().getAgentTools() as any[]) {
       modeMap.set(t.id, 'off')
     }
-    // KMS / 脚本 / 对话记忆工具（工厂函数创建，均按需）
+    // KMS / 脚本工具（工厂函数创建，默认按需）
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
       'javascript_exec',
-      'search_conversations', 'list_conversations', 'get_conversation_detail',
     ]
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')
+    }
+
+    // 对话记忆工具（工厂函数创建）：记忆开启时默认常驻；关闭时由末尾统一强制 off
+    if (memoryEnabled) {
+      for (const id of MEMORY_BOUND_TOOL_IDS) {
+        modeMap.set(id, 'on')
+      }
     }
 
     // 平级协作消息工具默认关闭（委托类工具不在此列：由员工委托设置驱动注册）
@@ -451,6 +505,13 @@ class EmployeeAgentService {
     for (const row of rows) {
       if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {
         modeMap.set(row.tool_id, row.tool_mode)
+      }
+    }
+
+    // 记忆关闭：历史遗留的配置行不得复活记忆绑定工具，末位强制 off
+    if (!memoryEnabled) {
+      for (const id of MEMORY_BOUND_TOOL_IDS) {
+        modeMap.set(id, 'off')
       }
     }
     return modeMap
@@ -491,13 +552,13 @@ class EmployeeAgentService {
       : ''
     const lines: string[] = []
     if (taskWorkspace) {
-      lines.push(`当前任务工作区：${taskWorkspace}（读写授权，增删改直接执行。完成任务产生的所有中间脚本、临时文件、过程产物及最终成果，一律在此目录内创建、读写和修改；除用户特殊要求外，不得在此目录之外新建或改动任何文件）`)
+      lines.push(`Current task workspace: ${taskWorkspace} (read/write authorized; create and modify files directly. Unless the user requests otherwise, all intermediate scripts, temporary files, work products, and final deliverables must be created, read, written, and modified inside this directory only; never create or change files outside it.)`)
       if (emp.workspace_path) {
-        lines.push(`数字员工工作区：${emp.workspace_path}（只读默认，增删改需用户确认，仅用于查看其他任务）`)
+        lines.push(`Digital employee workspace: ${emp.workspace_path} (read-only by default; modifications require user confirmation; use it only to inspect other tasks.)`)
       }
     } else if (emp.workspace_path) {
       // 旧对话无任务目录：回退到员工工作区为读写授权，保持兼容
-      lines.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
+      lines.push(`Workspace: ${emp.workspace_path} (read/write authorized; create and modify files directly.)`)
     }
     return lines.length > 0 ? lines.join('\n') : undefined
   }
@@ -511,7 +572,7 @@ class EmployeeAgentService {
     }
     const d = ts ? new Date(ts * 1000) : new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
-    return `任务发起时间：${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return `Task started at: ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
@@ -549,16 +610,21 @@ class EmployeeAgentService {
       )
       const agent = entry.agent
       entry.collectionIdsRef.current.collectionIds = collection_ids || []
+      // 记忆可能在会话进行中被定时任务写入，按版本号懒刷新常驻记忆块
+      this.refreshMemoryPromptIfStale(entry, employee_id)
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
       const lastMsg = messages[messages.length - 1]
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      // KB 范围是否注入取决于任务冻结的极简模式（agent.getMinimalMode()），而非传入的 minimal_mode 参数
+      // 插件注入的 system 只作用于本次 run（systemPromptOverride），不写 agent 缓存：
+      // 否则无 DB 缓存的新会话会把插件提示词当作会话提示词继续生效并持久化，永久污染会话。
+      // KB 范围始终按本轮 collectionIds 更新，与是否覆盖 system 无关。
       const systemPromptCached = system
-        ? (agent.setCachedSystemPrompt(system), true)
-        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
+        ? false
+        : await this.loadCachedSystemPrompt(agent, conversation_id)
+      this.updateKBContextForAgent(agent, collection_ids, agent.getMinimalMode())
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
 
       await agent.runStream(
@@ -567,6 +633,7 @@ class EmployeeAgentService {
           history,
           useSkills: use_skills,
           maxIterations,
+          systemPromptOverride: system || undefined,
           metadata: { queryImages },
         },
         {
@@ -588,56 +655,43 @@ class EmployeeAgentService {
     })
   }
 
-  private async prepareSystemPrompt(
+  /** 从 conversations 表加载字节级稳定的 system prompt 缓存（KV cache 前缀命中） */
+  private async loadCachedSystemPrompt(
     agent: EmployeeAgent,
     conversationId: string | undefined,
+  ): Promise<boolean> {
+    if (!conversationId) return false
+    const conv = this.db.getDb().prepare(
+      `SELECT system_prompt FROM conversations WHERE id = ?`
+    ).get(conversationId) as { system_prompt?: string } | undefined
+    const cached = conv?.system_prompt
+    // 用格式标记识别旧版本缓存：不含 PROMPT_FORMAT_MARKER 的一律丢弃并按新格式重建
+    if (cached && cached.includes(PROMPT_FORMAT_MARKER)) {
+      agent.setCachedSystemPrompt(cached)
+      return true
+    }
+    return false
+  }
+
+  /** 更新 KB 范围上下文：独立于 system prompt，按本轮 collectionIds 设置 */
+  private updateKBContextForAgent(
+    agent: EmployeeAgent,
     collectionIds: string[],
     minimalMode: boolean,
-  ): Promise<boolean> {
-    // 1) system prompt 稳定前缀优先从 conversations 缓存加载（字节级相同 → KV cache 命中）
-    //    memory / 知识库范围 / 委托 / 能力清单不再嵌入 system prompt，
-    //    改为经 EmployeeAgent.runStream/run 以独立 role=user 上下文消息注入。
-    //    向后兼容：旧缓存中若含 "[DELEGATION]" / "[CAPABILITIES]" / "<skills>" 等旧标记，
-    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免与上下文注入重复。
-    let systemPromptCached = false
-    if (conversationId) {
-      const conv = this.db.getDb().prepare(
-        `SELECT system_prompt FROM conversations WHERE id = ?`
-      ).get(conversationId) as { system_prompt?: string } | undefined
-      const cached = conv?.system_prompt
-      if (cached) {
-        const isLegacy = cached.includes('[DELEGATION]')
-          || cached.includes('[CAPABILITIES]')
-          || cached.includes('## 跨任务记忆')
-          || cached.includes('## 当前对话可使用的资料库合集')
-          || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
-          || cached.includes('<skills>')
-          || !cached.includes('report_generated_files')
-        if (!isLegacy) {
-          agent.setCachedSystemPrompt(cached)
-          systemPromptCached = true
-        }
-      }
-    }
-
-    // 2) 知识库范围：独立于 system prompt，始终根据本轮 collectionIds 设置
-    //    （它会在 EmployeeAgent.runStream/run 中作为 <knowledge_scope> 拼到 query 前缀，
-    //     不影响 system prompt 的字节级稳定性）
+  ): void {
     if (minimalMode || collectionIds.length === 0) {
       agent.updateKBContextPrompt(undefined)
-    } else {
-      const kmsService = require('./kms/kms.service').default.getInstance()
-      const allCollections = kmsService.listCollections() as any[]
-      const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
-      if (selected.length > 0) {
-        const names = selected.map((c: any) => c.name).join('、')
-        agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
-      } else {
-        agent.updateKBContextPrompt(undefined)
-      }
+      return
     }
-
-    return systemPromptCached
+    const kmsService = require('./kms/kms.service').default.getInstance()
+    const allCollections = kmsService.listCollections() as any[]
+    const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
+    if (selected.length > 0) {
+      const names = selected.map((c: any) => c.name).join('、')
+      agent.updateKBContextPrompt(`Knowledge collections available in this conversation: ${names} (searches are scoped to these collections by default.)`)
+    } else {
+      agent.updateKBContextPrompt(undefined)
+    }
   }
 
   private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {
@@ -700,7 +754,8 @@ class EmployeeAgentService {
 
       const history = this.expandFrontendMessages(messages)
 
-      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
+      await this.loadCachedSystemPrompt(agent, conversation_id)
+      this.updateKBContextForAgent(agent, collection_ids, agent.getMinimalMode())
 
       const { summary, stats } = await agent.compactConversation(history)
 

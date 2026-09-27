@@ -1,189 +1,211 @@
-# WorkAvatar - 办公数字员工工作台
+# WorkAvatar — Office Digital Employee Workbench
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.3.0-blue)
 ![Electron](https://img.shields.io/badge/Electron-35-green)
 ![React](https://img.shields.io/badge/React-19-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**本地优先的 Windows 桌面数字员工工作台 —— 以资料库管理文档知识，以插件扩展能力边界**
+**A local-first digital employee workbench for Windows — organize document knowledge with a knowledge base, extend capabilities with plugins.**
 
-文档解析、检索与模型推理全程在本机完成，敏感数据不出本地。
+Document parsing, index building, speech recognition, and retrieval run on your machine. Model inference and embedding use the model service you configure — a local service or a cloud API — so whether data leaves your device depends on that configuration.
+
+**English** | [简体中文](README.zh-CN.md)
 
 </div>
 
 ---
 
-## 为什么做 WorkAvatar
+## Table of Contents
 
-日常办公中积累了大量本地文档——项目资料、合同报表、技术文档、会议记录。想让 AI 真正用好这些知识，常见方案各有取舍：
-
-- **纯关键词检索**：上手快，但只能字面匹配，跨文档汇总、概念理解类需求力不从心
-- **RAG 语义检索**：能理解语义，但通常需要先全量向量化，文档越多等待越久；纯语义匹配也存在"看着相关、实际不对"的情况
-- **知识图谱**：关联能力强，但构建与维护成本高，适合特定领域的深度应用
-
-WorkAvatar 选择了"**轻量起步、渐进沉淀**"的中间道路：添加目录先用轻量关键词索引跑起来，再随使用逐步补齐语义向量、摘要与知识卡片，让检索质量在使用过程中持续提升。
-
----
-
-## 数字员工：会使用工具的 AI 同事
-
-<div align="center">
-  <img src="images/agent-chat.gif" alt="数字员工任务对话" width="88%" />
-</div>
-
-数字员工是 WorkAvatar 的核心：为每个角色配置专属档案——系统提示词、默认模型、可用工具、外部 MCP 服务与持久化记忆。选择员工、描述需求，它自主调用工具完成任务，过程全程可视。
-
-<div align="center">
-  <img src="images/employees.png" alt="数字员工管理" width="88%" />
-</div>
-
-- **流式对话**：响应流式输出，思考过程与工具调用分步展示；支持同时向多个模型提问并排对比
-- **工具系统**：文件读写/编辑/删除（删除移入回收站可恢复）、代码执行、联网搜索、资料库检索、Office 文档生成等内置工具，按"常驻 / 按需 / 关闭"三态配置；MCP 工具动态接入
-- **任务委托**：数字员工之间可互相委托子任务，支持并行派发与结果追问，深度≤3 防止递归失控；子任务过程独立运行，仅回传摘要
-- **持久化记忆**：对话中的偏好与经验自动沉淀为记忆，后续任务按需注入
-- **Skills 扩展**：兼容社区 Skills 标准（SKILL.md），支持安装第三方技能
-- **独立工作区**：每个任务拥有独立子目录互不干扰；员工配置可导入导出，方便团队复用
-- **内置与插件员工**：宿主随应用发布「资料搜索助手」等内置员工，插件也可声明专属数字员工；内置/插件员工分组展示、只读，可另存副本后个性化
+- [Why WorkAvatar](#why-workavatar)
+- [Digital Employees: AI Colleagues That Use Tools](#digital-employees-ai-colleagues-that-use-tools)
+- [Local Knowledge Base (KMS)](#local-knowledge-base-kms)
+- [Plugin-Based Extensibility](#plugin-based-extensibility)
+- [Quick Tour](#quick-tour)
+- [Key Features](#key-features)
+- [Use Cases](#use-cases)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [License](#license)
 
 ---
 
-## 本地资料库（KMS）：把散落的文档变成可对话的知识
+## Why WorkAvatar
 
-<div align="center">
-  <img src="images/kms-search.gif" alt="本地资料库混合检索" width="88%" />
-</div>
+Office work accumulates a large amount of local documents — project files, contracts, reports, technical docs, meeting notes. To let AI truly make use of this knowledge, common approaches each have trade-offs:
 
-把本地文件夹交给资料库管理，面向个人与团队的文档检索场景：
+- **Keyword search**: quick to start, but literal matching only — weak for cross-document synthesis and concept-level understanding.
+- **RAG semantic search**: understands meaning, but usually requires full-scale vectorization upfront — the more documents, the longer the wait. Pure semantic matching also produces "looks relevant, actually isn't" results.
+- **Knowledge graphs**: strong at relationships, but costly to build and maintain, and best suited to deep, domain-specific applications.
 
-- **即加即用**：添加目录后先构建关键词索引，无需等待全量向量化即可搜索；文件增删改自动同步索引，也支持从指定节点增量重建
-- **混合检索**：全文关键词（SQLite FTS5 + 中文分词）、语义向量、文件名三路并行检索，经 RRF 融合排序——精确匹配打底，语义查找扩展，兼顾精准与召回
-- **渐进式沉淀（冷热分层）**：冷数据仅保存轻量索引；被频繁查阅的文件自动晋升为热数据，补齐章节摘要、语义向量与知识卡片，越用越顺手；长期未访问的内容自动降级，控制资源占用
-- **资料合集**：手动挑选文件组成专题合集，自动生成全局摘要与目录结构，便于按主题检索或喂给数字员工
-- **格式覆盖**：PDF、Word、Excel、PPT、Markdown、TXT、HTML、图片（OCR）；LLM 不可用时自动降级为基础检索，保证可用性
-
-> 隐私边界：文档解析、索引构建、向量化与推理均在本地完成；资料库检索能力还可通过内置 MCP 服务（仅绑定 127.0.0.1）输出给本机的其他 Agent 工具使用。
+WorkAvatar takes a middle path: **start lightweight, refine progressively.** Add a directory and search immediately with a lightweight keyword index; as you use it, semantic vectors, summaries, and knowledge cards are filled in gradually, so retrieval quality keeps improving over time.
 
 ---
 
-## 插件化能力扩展：核心功能即插件，能力可自由扩展
+## Digital Employees: AI Colleagues That Use Tools
 
 <div align="center">
-  <img src="images/plugins.gif" alt="插件管理" width="88%" />
+  <img src="images/agent-chat.gif" alt="Digital employee task conversation" width="88%" />
 </div>
 
-WorkAvatar 不把功能焊死在主程序里：**导航页功能（笔记、日历、语音识别、自动化、数据模型等）全部以插件形式交付**，与第三方插件走完全相同的加载逻辑。插件采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 架构，并以**能力域授权（capabilities）**开放数据访问、统一执行入口、事件总线与 UI 注入，在可控的前提下最大化扩展空间。
+Digital employees are the core of WorkAvatar: each role gets its own profile — system prompt, default model, available tools, external MCP services, and persistent memory. Pick an employee, describe your request, and it autonomously calls tools to complete the task with a fully visible process.
 
-- **独立分发**：插件打包为 `.wap`（zip 归档），在「设置 → 插件」导入、启停、删除与覆盖升级，全部即时生效、无需重启
-- **独立存储**：每个插件使用独立 SQLite 分库（`userData/plugin-data/<id>/`），互不干扰，卸载不留残留
-- **UI 注入**：插件可注册导航页、设置页 Tab、对话页工具栏等视图；渲染端共享宿主 React/antd 单例，自动继承明暗主题与多语言
-- **AI 二次开发**：内置 plugin-dev Skill，安装包即可让数字员工辅助开发插件——脚手架、编码、构建、安装一条龙
-- **插件数字员工**：插件可在 manifest 中声明专属数字员工（如「日历助手」），与内置员工分组展示，可另存副本后个性化
+<div align="center">
+  <img src="images/employees.png" alt="Digital employee management" width="88%" />
+</div>
 
-| 随应用分发的插件 | 说明 |
+- **Streaming conversation**: streaming responses with reasoning and tool calls shown step by step; supports asking multiple models in parallel for side-by-side comparison.
+- **Tool system**: built-in tools for file read/write/edit/delete (deletion moves to the recycle bin and is recoverable), code execution, web search, knowledge base retrieval, Office document generation, and more — configured per tool as **always-on / on-demand / off**; MCP tools are dynamically integrated.
+- **File safety & rollback**: all file write/edit/delete operations pass a unified permission gate. Operations outside the workspace, or on sensitive files (`.env`, keys, `.git`, …), require confirmation; irreversible deletes can never be pre-authorized ("always allow" / "don't remind again" are unavailable); the change is previewed as a diff in the confirmation dialog; and every change can be rolled back from the task's file-change history.
+- **Task delegation**: digital employees can delegate sub-tasks to each other, with parallel dispatch and follow-up queries, and a delegation depth cap of 3 levels. Sub-tasks run independently and only return a summary.
+- **Persistent memory**: preferences, constraints, and lessons learned during conversations are captured automatically. Pinned and key memories stay resident, the rest are retrieved on demand; a cross-employee global memory is also available.
+- **Skills extension**: supports skills in the SKILL.md format, so third-party skills can be installed.
+- **Isolated workspaces**: each task gets its own sub-directory with no interference; employee profiles can be exported/imported for team reuse.
+- **Built-in and plugin employees**: the host ships built-in employees such as the "Knowledge Search Assistant", and plugins can declare their own digital employees. Built-in/plugin employees are grouped and read-only, and can be personalized after saving a copy.
+
+---
+
+## Local Knowledge Base (KMS)
+
+<div align="center">
+  <img src="images/kms-search.gif" alt="Local knowledge base hybrid search" width="88%" />
+</div>
+
+Hand your local folders over to the knowledge base for personal and team document retrieval:
+
+- **Ready on add**: adding a directory builds a keyword index first, so you can search without waiting for full vectorization. File additions, changes, and deletions sync to the index automatically, and you can also rebuild incrementally from a given node.
+- **Hybrid retrieval**: full-text keywords (SQLite FTS5 + Chinese tokenization), semantic vectors, and file names are retrieved in three parallel paths and fused with RRF ranking — exact matching as the baseline, semantic search for recall, balancing precision and coverage.
+- **Progressive refinement (hot/cold tiers)**: cold data stores only a lightweight index; frequently accessed files are automatically promoted to hot data, gaining chapter summaries, semantic vectors, and knowledge cards, improving over time with use. Long-unused content is automatically demoted to control resource usage.
+- **Collections**: hand-pick files into topical collections with automatically generated global summaries and table-of-contents structures, making them easy to search by topic or feed to digital employees.
+- **Format coverage**: PDF, Word, Excel, PPT, Markdown, TXT, HTML, and images (OCR). When the LLM is unavailable, it falls back to basic retrieval.
+
+> Data handling: document parsing, index building, and retrieval are performed locally. Embedding and model inference are executed by the model service you configure (local or cloud), so whether data leaves your device depends on that configuration. The knowledge base retrieval capability can also be exposed to other local agent tools via a built-in MCP service (listening on 127.0.0.1 only).
+
+---
+
+## Plugin-Based Extensibility
+
+<div align="center">
+  <img src="images/plugins.gif" alt="Plugin management" width="88%" />
+</div>
+
+WorkAvatar does not hard-wire features into the main program: **navigation-page features (notes, calendar, voice recognition, automation, data model, and more) are all delivered as plugins**, using exactly the same loading logic as third-party plugins. Plugins use a **manifest declaration + dual-entry plugin package + host extension points** architecture, and open up data access, a unified execution entry, an event bus, and UI injection through **capability authorization**, maximizing extensibility within a controlled boundary.
+
+- **Independent distribution**: plugins are packaged as `.wap` (a zip archive) and can be imported, enabled/disabled, deleted, and upgraded in place via **Settings → Plugins** — all taking effect immediately without a restart.
+- **Independent storage**: each plugin uses its own SQLite database (`userData/plugin-data/<id>/`), isolated from one another and from the main database.
+- **UI injection**: plugins can register navigation pages, settings-page tabs, conversation-page toolbars, and other views; the renderer shares the host's React/antd singletons and automatically inherits light/dark themes and i18n.
+- **AI-assisted development**: a built-in plugin-dev Skill lets digital employees help develop plugins straight from the installed app — scaffolding, coding, building, and installing, end to end.
+- **Plugin digital employees**: plugins can declare their own digital employees in the manifest (e.g., a "Calendar Assistant"), grouped with built-in employees and personalized after saving a copy.
+
+| Plugins shipped with the app | Description |
 |------|------|
-| **笔记** | `.md` 文件存储的 Markdown 笔记，仓库可被外部工具与同步盘直接访问；文件树/编辑器/大纲三栏，分屏预览、全文搜索 |
-| **日历与待办** | 月/周/日视图日程 + 零负担 TODO 速记，重复规则与提醒，支持 Outlook 单向同步；数字员工可代为创建修改 |
-| **语音识别** | 本地离线语音识别（sherpa-onnx），录音转写实时字幕、悬浮窗投屏，结束后生成结构化会议纪要 |
-| **自动化** | 定时调度数字员工执行固定任务，每日/每周/每月等重复规则，失败重试与完成通知，执行历史可回溯对话 |
-| **数据模型** | 画布式表结构设计，DBML 导入导出；对话式 AI 建模，编辑实时反映到画布 |
-| **AI 助手集** | 单栏/双栏/标签页打开豆包、DeepSeek 等 AI 网页版，各站点独立持久化登录态，便于多模型对照 |
+| **Notes** | Markdown notes stored as `.md` files, with repositories directly accessible to external tools and sync drives; a three-pane file tree / editor / outline layout with split preview and full-text search |
+| **Calendar & To-dos** | Month/week/day schedule views plus quick to-do capture, with recurrence rules and reminders, and optional one-way sync with Outlook; digital employees can create and modify items on your behalf |
+| **Voice Recognition** | Local offline speech recognition (sherpa-onnx), real-time subtitles from recording transcription, floating-window screen display, and structured meeting minutes generated on completion |
+| **Automation** | Schedule digital employees to run recurring tasks on daily/weekly/monthly rules, with failure retries, completion notifications, and a traceable execution history back to conversations |
+| **Data Model** | Canvas-based schema design with DBML import/export; conversational AI modeling with edits reflected on the canvas in real time |
+| **Document Editor** | A full-featured document editor: `.docx` import/export and PDF export, rich-text layout, an AI assistant that edits directly (read structure / read body / rewrite paragraphs / replace / insert-delete-reorder / apply styles), version snapshots; the editor UI is localized to Chinese |
+| **AI Assistants** | Open third-party AI web apps (such as Doubao and DeepSeek) in single-pane / dual-pane / tabbed layouts, with independent login state stored per site for easy multi-model comparison; use of each site is subject to its own terms of service |
 
 <div align="center">
   <table><tr>
-    <td><img src="images/notes.png" alt="笔记" width="100%" /></td>
-    <td><img src="images/calendar.png" alt="日历与待办" width="100%" /></td>
+    <td><img src="images/notes.png" alt="Notes" width="100%" /></td>
+    <td><img src="images/calendar.png" alt="Calendar & To-dos" width="100%" /></td>
   </tr><tr>
-    <td><img src="images/voice.png" alt="语音识别" width="100%" /></td>
-    <td><img src="images/automation.png" alt="自动化" width="100%" /></td>
+    <td><img src="images/voice.png" alt="Voice Recognition" width="100%" /></td>
+    <td><img src="images/automation.png" alt="Automation" width="100%" /></td>
   </tr></table>
 </div>
 
-插件协议规范与开发资料：
+Plugin protocol specs and development resources:
 
-- 插件协议规范：[plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
-- 插件 API 参考：[plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
-- 插件能力矩阵：[plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
-- 插件开发与打包教程：[plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
-- 插件示例工程：[plugins/examples/](plugins/examples/)
-
----
-
-## 快速上手
-
-1. **添加资料目录**：打开左侧导航「资料库」→「文档管理」→ 添加目录，索引自动构建、增量同步
-2. **搜索资料**：顶部搜索框输入关键词即得结果，支持混合/关键词/语义/文件四种模式，可按文件类型与时间范围筛选
-3. **组建合集**：在文档管理中挑选文件组成专题合集，自动生成全局摘要与目录
-4. **派发任务**：切换到「数字员工」，选择或新建员工开始对话；它会自动检索资料库、调用工具、生成 Word/Excel/PPT 等交付物
+- Plugin protocol spec: [plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
+- Plugin API reference: [plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
+- Plugin capability matrix: [plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
+- Plugin development & packaging tutorial: [plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
+- Plugin example project: [plugins/examples/](plugins/examples/)
 
 ---
 
-## 主要特点
+## Quick Tour
 
-| 特点 | 说明 |
+On first launch, an **onboarding wizard** starts automatically: connect a model service → create your first digital employee → learn how to use the knowledge base (skippable; you can re-run it later in **Settings → General**). You can also configure things manually as follows:
+
+1. **Add a document directory**: open **Knowledge Base** → **Document Management** in the left navigation → add a directory; the index builds and syncs incrementally.
+2. **Search documents**: enter keywords in the top search box for results, with four modes (hybrid / keyword / semantic / file name) and filters by file type and time range.
+3. **Build collections**: pick files in Document Management to form topical collections with automatically generated global summaries and tables of contents.
+4. **Dispatch tasks**: switch to **Digital Employees**, choose or create an employee, and start chatting; it will automatically search the knowledge base, call tools, and generate Word/Excel/PPT deliverables.
+
+---
+
+## Key Features
+
+| Feature | Description |
 |------|------|
-| **轻量起步** | 关键词索引即可用，无需等待全量向量化 |
-| **混合检索** | 关键词 + 语义 + 文件名三路检索，RRF 融合排序 |
-| **渐进精准** | 冷热分层自动晋升/降级，频繁查阅的内容深度加工，越用越顺手 |
-| **全本地运行** | 解析、索引、推理在本机完成，数据不出本地 |
-| **插件化扩展** | 核心功能即插件，能力域授权，独立启停与二次开发 |
-| **多智能体协作** | 员工间任务委托与并行派发，子任务隔离执行 |
-| **LLM 容错** | LLM 不可用时自动降级基础检索，保证基本可用 |
+| **Lightweight start** | Keyword indexing is enough to get going — no waiting for full vectorization |
+| **Hybrid retrieval** | Keyword + semantic + file name in three paths, fused with RRF ranking |
+| **Progressive precision** | Hot/cold tiering auto-promotes/demotes; frequently accessed content is deeply processed, improving as you use it |
+| **Local-first** | Parsing, indexing, and retrieval run on your machine; inference and embedding use the model service you configure |
+| **Plugin extensibility** | Core features are plugins, capability-domain authorized, with independent enable/disable and secondary development |
+| **Multi-agent collaboration** | Task delegation and parallel dispatch between employees, with isolated sub-task execution |
+| **File safety & rollback** | Unified permission gate with sensitive-file protection, diff preview before confirmation, and per-task file change rollback |
+| **LLM fault tolerance** | Falls back to basic retrieval when the LLM is unavailable |
 
-## 适用场景
+## Use Cases
 
-- **个人知识管理**：本地资料秒级定位，AI 辅助梳理、总结、生成文档
-- **敏感资料处理**：合同、报表、内部文档等不便上云的场景
-- **团队内部资料库**：私有化部署，支撑日常资料查询与业务分析
-- **智能体开发**：通过内置 MCP 服务为其他 Agent 提供稳定的本地文档检索能力
-- **专题研究**：用合集组织主题资料，渐进式深度加工
+- **Personal knowledge management**: quickly locate local documents, with AI-assisted organization, summarization, and document generation.
+- **Sensitive document handling**: contracts, reports, and internal documents — document parsing and retrieval stay on your machine; configure a local model service if you also need inference to stay on-device.
+- **Internal team knowledge base**: private deployment supporting daily document lookup and business analysis.
+- **Agent development**: provide other agents with local document retrieval through the built-in MCP service.
+- **Topical research**: organize subject materials with collections and process them progressively in depth.
 
 ---
 
-## 技术栈
+## Tech Stack
 
-| 类别 | 技术 |
+| Category | Technology |
 |------|------|
-| 运行时 | Electron 35 |
-| 前端 | React 19 + TypeScript 6 + Ant Design 6 |
-| 构建 | Vite 8 |
-| 状态管理 | Zustand |
-| 数据库 | better-sqlite3（FTS5 全文索引 + sqlite-vec 向量检索） |
-| 中文分词 | @node-rs/jieba |
-| 文件解析 | PDF / Word / Excel / PPT / OCR |
-| 语音识别 | sherpa-onnx |
-| 国际化 | i18next |
+| Runtime | Electron 35 |
+| Frontend | React 19 + TypeScript 6 + Ant Design 6 |
+| Build | Vite 8 |
+| State management | Zustand |
+| Database | better-sqlite3 (FTS5 full-text index + sqlite-vec vector search) |
+| Chinese tokenization | @node-rs/jieba |
+| File parsing | PDF / Word / Excel / PPT / OCR |
+| Speech recognition | sherpa-onnx |
+| Internationalization | i18next |
 
-> **仓库结构**：内置插件源码（笔记/日历/语音/自动化/数据模型）独立为 git 子仓库 `WorkAvatar-Plugins`，作为本仓库 `plugins/` 的 submodule 依赖；`plugin-sdk/`（插件协议类型契约）由本仓库持有。克隆后需执行 `git submodule update --init --recursive` 拉取插件源码。
+> **Repository structure**: the source of the built-in plugins (notes/calendar/voice/automation/data-model) lives in a separate git repository, `WorkAvatar-Plugins`, as the `plugins/` submodule of this repo; `plugin-sdk/` (the plugin protocol type contracts) is owned by this repo. After cloning, run `git submodule update --init --recursive` to fetch the plugin sources.
 
 ---
 
-## 快速开始
+## Getting Started
 
-### 环境要求
+### Requirements
 
 - Node.js >= 20.x
 - npm >= 10.x
 - Windows 10/11
 
-### 安装依赖
+### Install dependencies
 
 ```bash
-# 拉取插件子仓库（内置插件源码）
+# Fetch the plugin submodule (built-in plugin sources)
 git submodule update --init --recursive
 
 npm install
 ```
 
-### 开发模式启动
+### Development mode
 
 ```bash
 npm run dev
 ```
 
-### 生产构建
+### Production build
 
 ```bash
 npm run build
@@ -191,14 +213,16 @@ npm run build
 
 ---
 
-## 许可证
+## License
 
 [MIT](LICENSE)
+
+Third-party product names, logos, and trademarks mentioned in this document belong to their respective owners and are used for identification purposes only.
 
 ---
 
 <div align="center">
 
-**WorkAvatar - 让数字员工为您工作**
+**WorkAvatar — Let digital employees work for you**
 
 </div>

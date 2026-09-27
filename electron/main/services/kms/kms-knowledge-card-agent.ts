@@ -7,6 +7,7 @@ import type { KmsLLMConfig } from './kms-config-helpers'
 import LLMClientService from '../llm-client.service'
 import type { LLMMessage } from '../agent/llm/types'
 import type { SearchTraceStep } from './kms-search-agent-types'
+import { parseJSON } from './kms-paragraph-processor'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-UnifiedAgent')
@@ -444,18 +445,13 @@ export async function generateCardViaAgentLoop(
     return { success: false, error: agentResult.error }
   }
 
-  // 解析 JSON 输出：先尝试提取首个自闭合的 JSON 对象，避免贪婪正则吞入多余内容
-  let summary = ''
-  try {
-    const obj = JSON.parse(extractBalancedJson(agentResult.result.content))
-    summary = typeof obj?.summary === 'string' ? obj.summary : ''
-  } catch {
-    // 纯文本回退：整段作为 summary
-    const plain = (agentResult.result.content || '').replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
-    summary = plain
-  }
+  // 解析 JSON 输出：复用 KMS 通用容错解析（剥离代码围栏 + 修复字符串内换行）
+  const content = agentResult.result.content || ''
+  const parsed = parseJSON<{ summary?: unknown }>(content, {})
+  let summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : ''
+  if (!summary) summary = extractSummaryValue(content)
 
-  if (!summary || !summary.trim()) {
+  if (!summary) {
     return { success: false, error: 'LLM_GENERATION_FAILED' }
   }
 
@@ -470,29 +466,16 @@ export async function generateCardViaAgentLoop(
   }
 }
 
-/** 从文本中提取首个前后括号平衡的 JSON 对象子串 */
-function extractBalancedJson(text: string): string {
-  const start = text.indexOf('{')
-  if (start < 0) return text
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
-    if (inString) {
-      if (escaped) { escaped = false }
-      else if (ch === '\\') { escaped = true }
-      else if (ch === '"') { inString = false }
-      continue
-    }
-    if (ch === '"') { inString = true; continue }
-    if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0) return text.slice(start, i + 1)
-    }
-  }
-  return text.slice(start)
+/** 从解析失败的 LLM 输出中提取 summary 字段值；非 JSON 的纯文本原样返回 */
+function extractSummaryValue(content: string): string {
+  const text = content.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim()
+  const match = text.match(/"summary"\s*:\s*"([\s\S]*)/)
+  if (!match) return text.startsWith('{') ? '' : text
+  return match[1]
+    .replace(/"\s*[}\]]*\s*$/, '')
+    .replace(/\\n/g, '\n')
+    .replace(/\\"/g, '"')
+    .trim()
 }
 
 /** 从 kms_search 的输出中解析文件信息并跟踪 */

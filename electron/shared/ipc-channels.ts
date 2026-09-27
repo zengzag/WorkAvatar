@@ -31,6 +31,7 @@ export type {
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
   EmployeeMemoryExtractConversationParams,
+  MemoryScope,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,
@@ -113,3 +114,10 @@ export type {
 export type {
   AttachmentSaveResult,
 } from './channels/attachment'
+export type {
+  FileChangeKind,
+  SnapshotListParams,
+  SnapshotRevertParams,
+  FileChangeItem,
+  SnapshotRevertResult,
+} from './channels/snapshot'

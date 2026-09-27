@@ -1,16 +1,23 @@
 import type {
   EmployeeMemoryCreateParams,
   EmployeeMemoryUpdateParams,
+  MemoryScope,
 } from '../../shared/channels/employee'
 
 export type { EmployeeMemoryCreateParams }
+export type { MemoryScope }
 
 /** 更新记忆时传入的字段（不含 id，id 作为独立参数传递） */
 export type EmployeeMemoryUpdateData = Omit<EmployeeMemoryUpdateParams, 'id'>
 
+export const MEMORY_SCOPE_EMPLOYEE: MemoryScope = 'employee'
+export const MEMORY_SCOPE_GLOBAL: MemoryScope = 'global'
+
 export interface EmployeeMemory {
   id: string
-  employee_id: string
+  /** 归属员工；全局记忆为 null */
+  employee_id: string | null
+  scope: MemoryScope
   key: string
   topic: string
   content: string
@@ -27,12 +34,14 @@ export interface ExtractedMemory {
   key: string
   topic: string
   content: string
+  /** 提取器判定的作用域；缺省按 employee 处理 */
+  scope?: MemoryScope
 }
 
 export interface ExtractionResult {
   memories: ExtractedMemory[]
   delete_keys: string[]
-  update_memories: Array<{ key: string; content: string; topic?: string }>
+  update_memories: Array<{ key: string; content: string; topic?: string; scope?: MemoryScope }>
   summary: string
 }
 
@@ -53,6 +62,13 @@ export interface MemoryStats {
   staleCount: number
 }
 
+/** 记忆桶：标识一次读写操作的目标作用域 */
+export interface MemoryBucket {
+  scope: MemoryScope
+  /** employee 作用域必填；global 作用域忽略 */
+  employeeId?: string
+}
+
 /** 跨任务记忆注入 prompt 的总字符上限（含分隔符与主题标签），与 Hermes MEMORY.md 上限对齐 */
 export const MEMORY_MAX_CHARS = 3000
 /** 记忆条数上限，假设单条精炼后约 60 字符，约 50 条可达上限 */
@@ -66,3 +82,33 @@ export const CONSOLIDATION_COOLDOWN_SECONDS = 3600
 /** 现有记忆减少，提示 LLM 更聚焦精炼而非穷举 */
 export const EXTRACTION_MAX_EXISTING_MEMORIES = 12
 export const CONSOLIDATION_CANDIDATE_MAX = 15
+/** 单次提取连续失败多少次后放弃并推进指针，避免永久重试同一对话 */
+export const EXTRACTION_MAX_ATTEMPTS = 3
+
+/** 常驻注入的记忆条数上限（pinned + critical） */
+export const MEMORY_ALWAYS_ON_MAX_COUNT = 12
+/** 常驻注入的记忆字符上限（pinned 不受该上限约束） */
+export const MEMORY_ALWAYS_ON_MAX_CHARS = 1500
+/** 记忆检索工具默认返回条数 */
+export const MEMORY_SEARCH_DEFAULT_LIMIT = 5
+/** 记忆检索工具最大返回条数 */
+export const MEMORY_SEARCH_MAX_LIMIT = 20
+/** 检索相对分数下限：保留得分 ≥ top*floor 的结果（0 表示不过滤） */
+export const MEMORY_SEARCH_SCORE_FLOOR = 0.15
+/** MATCH 表达式最多使用的词元数，避免超长查询拖慢 FTS */
+export const MEMORY_SEARCH_MAX_TERMS = 12
+
+/**
+ * 与「跨任务记忆」开关绑定的工具 id（即「对话记忆」分类的 4 个工具）。
+ * 开关关闭时：工具列表整类不可见，运行时也强制 off（不注册）。
+ */
+export const MEMORY_BOUND_TOOL_IDS: readonly string[] = [
+  'search_conversations',
+  'list_conversations',
+  'get_conversation_detail',
+  'search_memories',
+]
+
+export function isGlobalScope(scope: MemoryScope | undefined): boolean {
+  return scope === MEMORY_SCOPE_GLOBAL
+}

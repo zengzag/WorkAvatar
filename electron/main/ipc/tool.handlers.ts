@@ -14,6 +14,7 @@ import { allBuiltinTools, createKMSTools, createKMSCollectionTools, javascriptEx
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
 import EmployeeAgentService from '../services/employee-agent.service'
+import { hideMemoryBoundCategories } from '../services/employee-memory-helpers'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import { safeHandle } from './_shared'
 
@@ -80,12 +81,13 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     id: 'conversation_memory',
     name: 'conversation_memory',
     title: '对话记忆',
-    description: '历史对话搜索、列表查询和对话详情查看',
+    description: '历史对话搜索、列表查询、对话详情查看与长期记忆检索',
     icon: 'message',
     toolIds: [
       'search_conversations',
       'list_conversations',
       'get_conversation_detail',
+      'search_memories',
     ],
   },
   {
@@ -214,11 +216,12 @@ function getUnifiedBuiltinToolCatalog() {
 /** 根据工具ID → 工具详情的查找表（含 category 字段） */
 function getToolLookupMap(): Map<string, { id: string; name: string; title: string; description: string; category: string; onDemand: boolean }> {
   const catalog = getUnifiedBuiltinToolCatalog()
-  // 对话记忆工具：补充不在 catalog 但在分类中，需要单独补齐
+  // 对话记忆工具：工厂函数创建、不在 catalog 中，需单独补齐（默认常驻，与运行时一致）
   const extra: Array<{ id: string; name: string; title: string; description: string; category: string; onDemand: boolean }> = [
-    { id: 'search_conversations', name: 'search_conversations', title: '搜索历史对话', description: '在该数字员工的历史任务中搜索内容', category: 'conversation', onDemand: true },
-    { id: 'list_conversations', name: 'list_conversations', title: '列出对话', description: '列出该数字员工的任务列表', category: 'conversation', onDemand: true },
-    { id: 'get_conversation_detail', name: 'get_conversation_detail', title: '查看对话详情', description: '获取指定任务的完整消息历史', category: 'conversation', onDemand: true },
+    { id: 'search_conversations', name: 'search_conversations', title: '搜索历史对话', description: '在该数字员工的历史任务中搜索内容', category: 'conversation', onDemand: false },
+    { id: 'list_conversations', name: 'list_conversations', title: '列出对话', description: '列出该数字员工的任务列表', category: 'conversation', onDemand: false },
+    { id: 'get_conversation_detail', name: 'get_conversation_detail', title: '查看对话详情', description: '获取指定任务的完整消息历史', category: 'conversation', onDemand: false },
+    { id: 'search_memories', name: 'search_memories', title: '搜索长期记忆', description: '检索跨任务长期记忆（偏好、约束、踩坑、结论）', category: 'conversation', onDemand: false },
   ]
   const map = new Map<string, { id: string; name: string; title: string; description: string; category: string; onDemand: boolean }>()
   for (const t of catalog) map.set(t.id, t)
@@ -291,7 +294,9 @@ export function registerToolHandlers(
     // 注册员工（内置/插件）defaultTools 覆盖（仅展示，不落库）
     const registryDefaults = EmployeeRegistryService.getInstance().getDefaultToolModes(params.employee_id)
 
-    return buildToolCategoryDefs().map(categoryDef => {
+    const memoryEnabled = EmployeeAgentService.getInstance().isMemoryEnabled(params.employee_id)
+
+    const categories = buildToolCategoryDefs().map(categoryDef => {
       const tools = categoryDef.toolIds
         .map(tid => toolLookup.get(tid))
         .filter((t): t is NonNullable<typeof t> => !!t)
@@ -331,6 +336,9 @@ export function registerToolHandlers(
         total_count: totalCount,
       }
     })
+
+    // 记忆关闭：与记忆绑定的工具整类不可见（运行时同样不注册）
+    return hideMemoryBoundCategories(categories, memoryEnabled)
   })
 
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (params: ToolAssignParams) => {

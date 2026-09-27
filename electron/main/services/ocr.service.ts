@@ -106,6 +106,9 @@ class OCRService {
   }>()
   private msgIdCounter = 0
 
+  /** 识别任务串行队列：同一时刻只跑一张图，避免并发推理争抢 CPU 拖慢彼此 */
+  private taskQueue: Promise<unknown> = Promise.resolve()
+
   private constructor() {}
 
   static getInstance(): OCRService {
@@ -259,6 +262,35 @@ class OCRService {
     return `ocr_${++this.msgIdCounter}`
   }
 
+  /**
+   * 请求超时说明 Worker 内的原生推理已卡死（onnxruntime 不保证一定返回）。
+   * 直接终止并重建 Worker，避免后续请求继续排在一个已卡死的线程上导致连续超时。
+   */
+  private resetStuckWorker(): void {
+    const worker = this.ocrWorker
+    if (!worker) return
+
+    // 先置空引用：Worker 的 exit/error 回调据此判断为主动重建，不再重复弹窗
+    this.ocrWorker = null
+    this.workerReady = false
+    this.initPromise = null
+
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(new Error('OCR Worker terminated after request timeout'))
+    }
+    this.pendingRequests.clear()
+
+    worker.terminate().catch(() => { /* ignore */ })
+    logger.warn('OCR Worker 已因请求超时被重建')
+  }
+
+  /** 串行执行识别任务：排队等待不计入超时，超时只衡量本次请求真正执行的时间 */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.taskQueue.then(task, task)
+    this.taskQueue = run.catch(() => { /* 单次失败不阻断队列 */ })
+    return run
+  }
+
   private sendToWorker<T = WorkerInMessage>(msg: WorkerOutMessage, timeoutMs = 60_000): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!this.ocrWorker || !this.workerReady) {
@@ -270,6 +302,7 @@ class OCRService {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(id)
         reject(new Error(`OCR Worker request timeout (${timeoutMs}ms)`))
+        this.resetStuckWorker()
       }, timeoutMs)
 
       this.pendingRequests.set(id, {
@@ -310,17 +343,19 @@ class OCRService {
       throw new Error(`Image file not found: ${imagePath}`)
     }
 
-    // 确保 PaddleOCR 已尝试初始化（首次调用是异步加载的）
-    await this.initialize()
+    return this.enqueue(async () => {
+      // 确保 PaddleOCR 已尝试初始化（Worker 超时被重建后，这里会重新拉起）
+      await this.initialize()
 
-    try {
-      return await this.runPaddleOcrViaWorker(imagePath)
-    } catch (err) {
-      const msg = mainUiI18n.t('ocrRecognizeFailed')
-      logger.error(msg, { imagePath, error: err })
-      this.showError(mainUiI18n.t('ocrRecognizeFailedTitle'), `${msg}\n${mainUiI18n.t('ocrImageLabel')}: ${path.basename(imagePath)}\n${err instanceof Error ? err.message : String(err)}`)
-      throw err instanceof Error ? err : new Error(String(err))
-    }
+      try {
+        return await this.runPaddleOcrViaWorker(imagePath)
+      } catch (err) {
+        const msg = mainUiI18n.t('ocrRecognizeFailed')
+        logger.error(msg, { imagePath, error: err })
+        this.showError(mainUiI18n.t('ocrRecognizeFailedTitle'), `${msg}\n${mainUiI18n.t('ocrImageLabel')}: ${path.basename(imagePath)}\n${err instanceof Error ? err.message : String(err)}`)
+        throw err instanceof Error ? err : new Error(String(err))
+      }
+    })
   }
 
   async recognizeBuffer(imageBuffer: Buffer, options?: OCROptions): Promise<OCRResult> {

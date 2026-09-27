@@ -189,12 +189,22 @@ export interface EmployeeImportPackageParams {
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
 }
 
+/**
+ * 记忆作用域：
+ * - employee：归属单个数字员工（需提供 employee_id）
+ * - global：跨员工共享的用户级事实（忽略 employee_id）
+ */
+export type MemoryScope = 'employee' | 'global'
+
 export interface EmployeeMemoryListParams {
-  employee_id: string
+  /** 员工作用域必填；global 作用域可省略 */
+  employee_id?: string
+  scope?: MemoryScope
 }
 
 export interface EmployeeMemoryCreateParams {
-  employee_id: string
+  employee_id?: string
+  scope?: MemoryScope
   key: string
   topic: string
   content: string
@@ -213,7 +223,8 @@ export interface EmployeeMemoryUpdateParams {
 }
 
 export interface EmployeeMemorySearchParams {
-  employee_id: string
+  employee_id?: string
+  scope?: MemoryScope
   query: string
   limit?: number
 }
@@ -227,13 +238,15 @@ export interface EmployeeMemoryExtractParams {
 }
 
 export interface EmployeeMemoryConsolidateParams {
-  employee_id: string
+  employee_id?: string
+  scope?: MemoryScope
   provider_id: string
   model_id?: string
 }
 
 export interface EmployeeMemoryStatsParams {
-  employee_id: string
+  employee_id?: string
+  scope?: MemoryScope
 }
 
 export interface EmployeeMemoryExtractConversationParams {

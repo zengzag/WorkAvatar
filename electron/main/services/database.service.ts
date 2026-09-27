@@ -3,6 +3,7 @@ import fs from 'fs'
 import PathService from './path.service'
 import { createLogger } from './logger'
 import { extractMessagePreview } from './common-utils'
+import { migrateMemorySchema } from './employee-memory-migrations'
 
 const logger = createLogger('DB')
 
@@ -177,6 +178,8 @@ class DatabaseService {
         system_prompt TEXT DEFAULT '',
         memory_extracted_at INTEGER,
         memory_extracted_message_count INTEGER NOT NULL DEFAULT 0,
+        -- 自上次成功后连续提取失败次数：达到上限后放弃并推进指针，避免永久重试同一对话
+        memory_extract_attempts INTEGER NOT NULL DEFAULT 0,
         context_stats_json TEXT DEFAULT '{}',
         -- 对话绑定的默认模型（输入框模型按钮）：各任务独立，JSON 形如 {"providerId":"","modelId":""}
         default_model_json TEXT DEFAULT '',
@@ -298,7 +301,10 @@ class DatabaseService {
 
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
-        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        -- 归属员工：全局记忆（scope='global'）为空，故此处可为 NULL（NULL 不参与外键约束）
+        employee_id TEXT REFERENCES employees(id) ON DELETE CASCADE,
+        -- 作用域：employee=归属单个员工；global=跨员工共享的用户级事实
+        scope TEXT NOT NULL DEFAULT 'employee',
         key TEXT NOT NULL,
         topic TEXT NOT NULL,
         content TEXT NOT NULL DEFAULT '',
@@ -378,6 +384,25 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id);
 
+      -- 工作区文件改动快照：文件写入/编辑/删除前记录变更前状态，供任务内回滚（见 file-snapshot.service）
+      CREATE TABLE IF NOT EXISTS file_snapshots (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL DEFAULT '',
+        employee_id TEXT NOT NULL DEFAULT '',
+        tool_name TEXT NOT NULL DEFAULT '',
+        -- 改动类型：write / append / edit / delete
+        change_kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        -- 改动前文件是否存在（0 表示由本次操作新建，回滚即删除）
+        existed INTEGER NOT NULL DEFAULT 0,
+        -- 是否可在应用内还原（目录、超大文件为 0）
+        restorable INTEGER NOT NULL DEFAULT 1,
+        -- 改动前内容（仅可还原且已读取时记录）
+        before_content TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_file_snapshots_conv ON file_snapshots(conversation_id, created_at DESC);
+
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
         key,
         topic,
@@ -398,6 +423,14 @@ class DatabaseService {
         prefix='2,3'
       );
     `)
+
+    // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
+    migrateMemorySchema(this.db)
+
+    // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建
+    this.db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_employee_memories_scope ON employee_memories(scope, deleted_at)'
+    )
   }
 
   public getDb(): Database.Database {

@@ -614,8 +614,11 @@ function updateTrayMenu(): void {
 }
 
 function createTray() {
-  const iconPath = getResourcePath('resources', 'icons', 'icon.png')
-  const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
+  // Windows 上使用多尺寸 ICO 由系统选择最合适的清晰度，其他平台使用 PNG
+  const trayIcon =
+    process.platform === 'win32'
+      ? nativeImage.createFromPath(getResourcePath('resources', 'icons', 'icon.ico'))
+      : nativeImage.createFromPath(getResourcePath('resources', 'icons', 'icon.png'))
   tray = new Tray(trayIcon)
   updateTrayMenu()
   mainUiI18n.onLocaleChange(() => updateTrayMenu())

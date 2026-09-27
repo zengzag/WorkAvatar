@@ -24,7 +24,13 @@ export interface ToolDefinition {
   }
   handler: (args: Record<string, any>, context?: ToolHandlerContext) => Promise<any> | any
   source: 'builtin' | 'skill' | 'dynamic' | 'plugin'
+  /** 声明式权限级别（策略见 tool-permission.ts）：safe / requires_confirmation / dangerous */
   permission?: ToolPermission
+  /**
+   * 自授权标记：handler 内部已统一经 FilePermissionService 判定文件操作权限，
+   * 前置权限门不再重复弹窗（避免双重确认）。仅对需要文件授权的工具设置。
+   */
+  selfAuthorized?: boolean
   timeoutMs?: number
   /** 禁用 retry 中间件：适用于交互类工具（ask_user/fs 确认），超时或取消不应重试 */
   noRetry?: boolean

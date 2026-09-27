@@ -97,7 +97,7 @@ describe('chat-helpers / buildEnrichedHistory', () => {
     expect(out[0]).toMatchObject({ role: 'user', content: 'q1' })
   })
 
-  it('存在压缩分隔符：摘要前消息被裁剪，摘要以 system 注入', () => {
+  it('存在压缩分隔符：摘要前消息被裁剪，摘要以 user checkpoint 注入（不合并进 system prompt）', () => {
     const out = buildEnrichedHistory([
       msg({ id: 'old1', role: 'user', content: '被裁剪的问题' }),
       msg({ id: 'sep', role: 'assistant', content: '---以下为压缩后的历史---', isCompactSummary: true } as any),
@@ -105,8 +105,10 @@ describe('chat-helpers / buildEnrichedHistory', () => {
       msg({ id: 'new1', role: 'user', content: '最新问题' }),
     ])
     expect(out).toHaveLength(2)
-    expect(out[0].role).toBe('system')
+    expect(out[0].role).toBe('user')
+    expect(out[0].content).toContain('<compacted_checkpoint>')
     expect(out[0].content).toContain('这是摘要内容')
+    expect(out[0].content).toContain('not a user message')
     expect(out[1].content).toBe('最新问题')
     expect(JSON.stringify(out)).not.toContain('被裁剪的问题')
   })

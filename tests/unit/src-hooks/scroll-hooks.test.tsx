@@ -132,6 +132,51 @@ describe('useChatScroll', () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(2)
   })
 
+  it('用户上滚后发送新消息：新消息渲染使 scrollHeight 增大仍滚到底展示新内容', async () => {
+    await act(async () => { root.render(<ChatHarness items={[1]} />) })
+    await flush()
+    const el = scrollApi!.chatContainerRef.current!
+    // 用户上滚，距底 100px
+    setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 400 })
+    act(() => { scrollApi!.handleScroll() })
+    scrollIntoView.mockClear()
+
+    // 发送新消息：此时只滚到「已有内容」的底部
+    act(() => { scrollApi!.forceScrollToBottom('auto') })
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' })
+
+    // 新消息渲染使 scrollHeight 增大，程序化滚动触发的 scroll 事件把距离拉到 > 50
+    setMetrics(el, { scrollHeight: 1200, clientHeight: 500, scrollTop: 500 })
+    act(() => { scrollApi!.handleScroll() })
+
+    // 新消息渲染后仍应滚到底
+    scrollIntoView.mockClear()
+    await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
+    await flush()
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('强制跟随窗口结束后，用户上滚恢复暂停自动跟随', async () => {
+    await act(async () => { root.render(<ChatHarness items={[1]} />) })
+    await flush()
+    const el = scrollApi!.chatContainerRef.current!
+    const base = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(base)
+    try {
+      act(() => { scrollApi!.forceScrollToBottom('auto') })
+      nowSpy.mockReturnValue(base + 2000) // 越过强制跟随窗口
+      setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 400 }) // 距底 100
+      act(() => { scrollApi!.handleScroll() })
+      scrollIntoView.mockClear()
+
+      await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
+      await flush()
+      expect(scrollIntoView).not.toHaveBeenCalled()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
   it('卸载后 handleScroll 不抛错（容器 ref 已清空）', async () => {
     await act(async () => { root.render(<ChatHarness items={[1]} />) })
     const api = scrollApi!

@@ -1,10 +1,16 @@
 import { ToolRegistry } from './tool-registry'
 import { ToolCallResult, ToolHandlerContext } from './types'
 import { ToolMiddlewareChain } from './tool-middleware'
+import type { ToolPermissionGate } from './tool-permission'
 
 export class ToolDispatcher {
   private registry: ToolRegistry
   private middlewareChain: ToolMiddlewareChain
+  /**
+   * 前置权限门：在中间件链之前执行，先于所有中间件（含插件链首中间件），
+   * 保证任何工具调用都必须经过声明式权限判定，无法被中间件短路绕过。
+   */
+  private preExecuteGate?: ToolPermissionGate
 
   constructor(registry?: ToolRegistry) {
     this.registry = registry || new ToolRegistry()
@@ -13,6 +19,10 @@ export class ToolDispatcher {
 
   getMiddlewareChain(): ToolMiddlewareChain {
     return this.middlewareChain
+  }
+
+  setPreExecuteGate(gate: ToolPermissionGate): void {
+    this.preExecuteGate = gate
   }
 
   async dispatch(toolName: string, toolParams: Record<string, any>, context?: ToolHandlerContext): Promise<ToolCallResult> {
@@ -29,6 +39,13 @@ export class ToolDispatcher {
     const startTime = Date.now()
 
     try {
+      if (this.preExecuteGate) {
+        const denied = await this.preExecuteGate.check(tool, toolParams, context)
+        if (denied) {
+          return { ...denied, toolName: denied.toolName || toolName, latencyMs: Date.now() - startTime }
+        }
+      }
+
       const middlewareParams = { ...toolParams }
       if (tool.timeoutMs) {
         middlewareParams._timeoutMs = tool.timeoutMs

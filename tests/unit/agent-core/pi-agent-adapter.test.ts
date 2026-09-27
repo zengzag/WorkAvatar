@@ -188,7 +188,7 @@ describe('runPiAgentLoop / 消息转换', () => {
     expect(Array.isArray(parts)).toBe(true)
     expect(parts[0].type).toBe('text')
     expect(parts[0].text).toContain('看这两张')
-    expect(parts[0].text).toContain('1 张图片（HTTP 链接）未能随消息发送')
+    expect(parts[0].text).toContain('1 image(s) were referenced by HTTP links and could not be attached')
     expect(parts[0].text).toContain('https://x.com/a.png')
     expect(parts.filter((p: any) => p.type === 'image')).toEqual([
       { type: 'image', data: 'QUJD', mimeType: 'image/png' },
@@ -200,7 +200,7 @@ describe('runPiAgentLoop / 消息转换', () => {
     await runPiAgentLoop(params)
     const content = h.agentLoopCalls[0][0][0].content
     expect(typeof content).toBe('string')
-    expect(content).toContain('未能随消息发送')
+    expect(content).toContain('could not be attached')
     expect(content).not.toContain('data:')
   })
 
@@ -613,8 +613,8 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     const out = await config.transformContext(msgs)
 
     expect(out).not.toBe(msgs)
-    expect(out[0].content[0].text.startsWith('[已截断] ')).toBe(true)
-    expect(out[0].content[0].text).toContain('原 45000 字符，已截断以节省上下文')
+    expect(out[0].content[0].text.startsWith('[Truncated] ')).toBe(true)
+    expect(out[0].content[0].text).toContain('original 45000 chars, truncated to save context')
     expect(out[0].content[0].text.length).toBeLessThan(500)
     // 最近 6 条完整保留
     for (let i = 2; i < 8; i++) {
@@ -626,7 +626,7 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     const harness = makeHarness()
     await runPiAgentLoop(harness.params)
     const config = h.agentLoopCalls[0][2]
-    const already = '[已截断] ' + 'B'.repeat(900)
+    const already = '[Truncated] ' + 'B'.repeat(900)
     const msgs: any[] = [
       { role: 'toolResult', toolCallId: 'c0', toolName: '', isError: false, content: [{ type: 'text', text: already }] },
       { role: 'toolResult', toolCallId: 'c1', toolName: '', isError: false, content: [{ type: 'text', text: 'short' }] },
@@ -670,7 +670,7 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     ]
     const out = config.convertToLlm(withImages)
     expect(out).toHaveLength(2)
-    expect(out[1].content).toEqual([{ type: 'text', text: '已读取图片' }, { type: 'text', text: expect.stringContaining('当前模型不支持图片输入') }])
+    expect(out[1].content).toEqual([{ type: 'text', text: '已读取图片' }, { type: 'text', text: expect.stringContaining('This model does not support image input') }])
     expect(config.toolExecution).toBe('sequential')
     expect(config.shouldStopAfterTurn()).toBe(false)
     expect(config.shouldStopAfterTurn()).toBe(true)
@@ -710,6 +710,67 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(model.baseUrl).toBe('https://x/v1')
     expect(model.compat.sendSessionAffinityHeaders).toBe(true)
     expect(model.compat.sessionAffinityFormat).toBe('openai-nosession')
+  })
+})
+
+describe('runPiAgentLoop / 循环提醒注入（getLoopReminder）', () => {
+  it('未提供 getLoopReminder 时转换结果与入参相等，不追加任何消息', async () => {
+    const harness = makeHarness()
+    await runPiAgentLoop(harness.params)
+    const config = h.agentLoopCalls[0][2]
+    const msgs = [{ role: 'user', content: 'x' }]
+    const out1 = config.convertToLlm(msgs)
+    const out2 = config.convertToLlm(msgs)
+    expect(out1).toEqual(msgs)
+    expect(out2).toEqual(msgs)
+  })
+
+  it('提醒按请求序号查询，作为合成 user 消息 append 在尾部且不回写入参数组', async () => {
+    const reminderByTurn = vi.fn((turn: number) => turn === 2 ? '<system-reminder>R</system-reminder>' : undefined)
+    const harness = makeHarness({ getLoopReminder: reminderByTurn, maxIterations: 5 })
+    await runPiAgentLoop(harness.params)
+    const config = h.agentLoopCalls[0][2]
+
+    const msgs = [{ role: 'user', content: 'q' }, { role: 'assistant', content: [{ type: 'text', text: 'working' }] }]
+    const first = config.convertToLlm(msgs)
+    expect(first).toHaveLength(2)
+    expect(first[first.length - 1]).toMatchObject({ role: 'assistant' })
+
+    const second = config.convertToLlm(msgs)
+    expect(second).toHaveLength(3)
+    expect(second[second.length - 1]).toMatchObject({ role: 'user' })
+    expect(second[second.length - 1].content).toBe('<system-reminder>R</system-reminder>')
+    // 入参数组不被修改（提醒仅存在于派生结果）
+    expect(msgs).toHaveLength(2)
+
+    const third = config.convertToLlm(msgs)
+    expect(third).toHaveLength(2)
+    expect(reminderByTurn.mock.calls.map(c => c[0])).toEqual([1, 2, 3])
+    // maxIterations 透传给提醒回调
+    expect(reminderByTurn.mock.calls[0][1]).toBe(5)
+  })
+
+  it('提醒追加在图片注入之后（仍为最后一条消息）', async () => {
+    const harness = makeHarness({
+      getLoopReminder: () => '<system-reminder>R</system-reminder>',
+      config: { model: 'gpt-x', providerType: 'openai', supportsImageInput: true },
+    })
+    await runPiAgentLoop(harness.params)
+    const config = h.agentLoopCalls[0][2]
+    const msgs: any[] = [
+      { role: 'user', content: 'q' },
+      {
+        role: 'toolResult', toolCallId: 'tc1', toolName: 'read_image', isError: false,
+        content: [
+          { type: 'text', text: 'img result' },
+          { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        ],
+      },
+    ]
+    const out = config.convertToLlm(msgs)
+    // toolResult 图片被抽成紧随批次的 user 消息，提醒再追加其后
+    expect(out[out.length - 1].content).toBe('<system-reminder>R</system-reminder>')
+    expect(out[out.length - 2].content.some((c: any) => c.type === 'image')).toBe(true)
   })
 })
 

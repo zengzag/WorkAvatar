@@ -72,15 +72,18 @@ export function buildAllBuiltinToolDefinitions(): ToolDefinition[] {
   const kmsCollTools = (agentTools.createKMSCollectionTools || (() => []))(emptyScope) as ToolDefinition[]
   for (const t of kmsCollTools) result.push(t)
 
-  // 3. 对话记忆工具（对外场景下无 employeeId，仅空实现兜底，类别关闭时不会出现）
+  // 3. 对话记忆工具（对外场景下无 employeeId：员工范围天然命不中，外部调用方只能检索
+  //    全局记忆（scope=global，或 scope=all 时员工条件落空），无法读到某个员工的私有记忆）
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const convSearch = require('../agent/tools/conversation-search.tool')
     const convList = require('../agent/tools/conversation-list.tool')
+    const memorySearch = require('../agent/tools/memory-search.tool')
     const dummyEmpId = ''
     const searchTools = (convSearch.createConversationSearchTool || (() => []))(dummyEmpId) as ToolDefinition[]
     const listTools = (convList.createConversationListTool || (() => []))(dummyEmpId) as ToolDefinition[]
-    for (const t of [...searchTools, ...listTools]) {
+    const memoryTools = (memorySearch.createMemorySearchTool || (() => []))(dummyEmpId) as ToolDefinition[]
+    for (const t of [...searchTools, ...listTools, ...memoryTools]) {
       if (isToolIncluded(t)) result.push(t)
     }
   } catch {

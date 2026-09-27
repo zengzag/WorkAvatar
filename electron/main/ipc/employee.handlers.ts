@@ -27,14 +27,17 @@ import type {
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
   EmployeeMemoryExtractConversationParams,
+  MemoryScope,
 } from '../../shared/ipc-channels'
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
+import type { MemoryBucket } from '../services/employee-memory-types'
 import EmployeeRegistryService from '../services/employee-registry.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import FilePermissionService from '../services/file-permission.service'
+import FileSnapshotService from '../services/file-snapshot.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
@@ -49,9 +52,16 @@ function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerServ
     for (const cid of allConvIds) {
       UnifiedInteractionService.getInstance().clearAllowedSources(cid)
       FilePermissionService.getInstance().clearAuthorizations(cid)
+      FileSnapshotService.getInstance().clearForConversation(cid)
     }
     try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
   }
+}
+
+/** 将 IPC 参数解析为记忆桶：scope='global' 走向全局桶，其余走向指定员工桶 */
+function memoryBucket(params: { employee_id?: string; scope?: MemoryScope }): MemoryBucket {
+  if (params.scope === 'global') return { scope: 'global' }
+  return { scope: 'employee', employeeId: params.employee_id ?? '' }
 }
 
 export function registerEmployeeHandlers(
@@ -172,6 +182,7 @@ export function registerEmployeeHandlers(
       for (const cid of allConvIds) {
         UnifiedInteractionService.getInstance().clearAllowedSources(cid)
         FilePermissionService.getInstance().clearAuthorizations(cid)
+        FileSnapshotService.getInstance().clearForConversation(cid)
       }
       try { AttachmentService.getInstance().pruneRefs(attachmentCandidates) } catch { /* ignore */ }
       // 同步通知插件清理关联数据（如自动化执行历史：conversation 删除 → run 记录删除）
@@ -294,7 +305,8 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, (params: EmployeeMemoryListParams) => {
-    return memoryService.listMemories(params.employee_id)
+    const bucket = memoryBucket(params)
+    return bucket.scope === 'global' ? memoryService.listGlobalMemories() : memoryService.listMemories(bucket.employeeId ?? '')
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_CREATE, (params: EmployeeMemoryCreateParams) => {
@@ -315,7 +327,7 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_SEARCH, (params: EmployeeMemorySearchParams) => {
-    return memoryService.searchMemories(params.employee_id, params.query, params.limit)
+    return memoryService.searchScopeMemories(memoryBucket(params), params.query, params.limit)
   })
 
   // 业务语义错误返回 { success: false, error }，与 safeHandle 的 { error } 不同，保留原 try-catch
@@ -362,7 +374,7 @@ export function registerEmployeeHandlers(
         modelId = resolved.modelId
       }
       const result = await memoryService.consolidateMemories(
-        params.employee_id,
+        params.scope === 'global' ? { scope: 'global' } : (params.employee_id ?? ''),
         providerId,
         modelId
       )
@@ -376,11 +388,11 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, (params: EmployeeMemoryStatsParams) => {
-    return memoryService.getMemoryStats(params.employee_id)
+    return memoryService.getMemoryStats(memoryBucket(params))
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST_TRASH, (params: EmployeeMemoryListParams) => {
-    return memoryService.listTrashedMemories(params.employee_id)
+    return memoryService.listTrashedMemories(memoryBucket(params))
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_RESTORE, (id: string) => {
@@ -392,7 +404,7 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_EMPTY_TRASH, (params: EmployeeMemoryListParams) => {
-    return memoryService.emptyTrash(params.employee_id)
+    return memoryService.emptyTrash(memoryBucket(params))
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT_CONVERSATION, async (_, params: EmployeeMemoryExtractConversationParams) => {

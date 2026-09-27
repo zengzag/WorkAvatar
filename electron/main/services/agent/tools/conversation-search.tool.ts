@@ -31,7 +31,15 @@ export function createConversationSearchTool(employeeId: string): ToolDefinition
     name: 'search_conversations',
     title: '搜索历史对话',
     summary: '搜索与当前用户的历史对话记录。回忆之前讨论过的内容时使用。',
-    description: '搜索与当前用户的历史对话记录。可检索之前讨论过的主题、决策和上下文。返回匹配的对话标题、摘要和相关内容片段。当需要回忆之前讨论过的内容时使用此工具。',
+    description: [
+      '搜索与当前用户的历史对话记录。可检索之前讨论过的主题、决策和上下文。返回匹配的对话标题、摘要和相关内容片段。',
+      '当需要回忆之前讨论过的内容时使用此工具。',
+      '',
+      '注意：本工具返回的是片段（截断预览），不是原文。若需要某条对话的完整原文（精确命令、原始表述等），',
+      '用 get_conversation_detail 按返回的 conversationId 取正文（支持 max_chars + cursor 增量续取）。',
+      '',
+      '与 search_memories 的区别：本工具面向原始历史对话；已沉淀的跨任务长期记忆（偏好/约束/踩坑/结论）用 search_memories。',
+    ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
@@ -142,7 +150,7 @@ export function createConversationSearchTool(employeeId: string): ToolDefinition
       }
     },
     source: 'builtin',
-    onDemand: true,
+    onDemand: false,
     permission: 'safe',
   }
 

@@ -5,10 +5,12 @@ import type { IMemoryManager, MemoryConfig, MemoryStats } from '../memory/types'
 import { ToolRegistry } from '../tools/tool-registry'
 import { ToolDispatcher } from '../tools/tool-dispatcher'
 import { ToolMiddlewareChain, createTimeoutMiddleware, createRetryMiddleware, createLoggingMiddleware, createResultSizeMiddleware, type ToolMiddleware } from '../tools/tool-middleware'
+import { createToolPermissionGate } from '../tools/tool-permission'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
 import { runPiAgentLoop } from './pi-agent-adapter'
+import { COMPACTION_INSTRUCTION } from './compaction-prompt'
 import { generateId } from '../../common-utils'
 import { createLogger } from '../../logger'
 import type {
@@ -27,17 +29,8 @@ const DEFAULT_MAX_ITERATIONS = 100
 const DEFAULT_TOOL_TIMEOUT_MS = 30000
 const DEFAULT_MAX_RESULT_SIZE = 50000
 const DEFAULT_TOOL_MAX_RETRIES = 2
-
-const SUMMARY_SYSTEM_PROMPT = `你是对话摘要助手。请将给定的对话历史压缩为结构化摘要，用词精炼而内容完整，重点保留待办事项与尚未完成的计划。
-
-保留以下信息：
-1. 用户的核心请求和目标（包括所有具体的需求细节）
-2. 已完成的关键操作及其结果（包括文件路径、配置值等关键参数）
-3. 进行中的任务和待办事项（标注当前进度和阻塞点）
-4. 重要的决策结论和上下文事实（包括用户偏好、技术选型理由等）
-5. 未解决的问题和下一步计划（包括具体方案和优先级）
-
-删除冗余的工具调用中间过程，但保留结论性信息。摘要长度不超过1万token。`
+/** 压缩输入中单条消息的最大字符数：保护摘要调用体积，同时保留路径/错误串等关键细节 */
+const SUMMARY_MESSAGE_MAX_CHARS = 4000
 
 export interface BaseAgentOptions {
   memoryConfig?: Partial<MemoryConfig>
@@ -78,6 +71,8 @@ export abstract class BaseAgent {
     this.llmProvider = this.createLLMProvider()
     this.toolRegistry = new ToolRegistry()
     this.toolDispatcher = new ToolDispatcher(this.toolRegistry)
+    // 前置权限门：先于全部中间件（含插件链首中间件）执行，保证权限判定不可绕过
+    this.toolDispatcher.setPreExecuteGate(createToolPermissionGate())
     this.memoryManager = this.createMemoryManager()
     this.middlewareChain = this.toolDispatcher.getMiddlewareChain()
 
@@ -170,6 +165,7 @@ export abstract class BaseAgent {
 
     this.context.reset()
     this.context.setState('running')
+    this.onRunStart()
 
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
@@ -177,12 +173,17 @@ export abstract class BaseAgent {
       // 每次 run 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
       this._lastKnownPromptTokens = undefined
 
-      const systemPrompt = this.buildSystemPrompt(options)
+      // run 级覆盖优先：插件注入的 system 只作用于本轮，不写 agent 缓存（避免污染后续会话）
+      const systemPrompt = options.systemPromptOverride ?? this.buildSystemPrompt(options)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
         options.query,
-        { lastKnownPromptTokens: this._lastKnownPromptTokens }
+        {
+          lastKnownPromptTokens: this._lastKnownPromptTokens,
+          headAnchors: options.contextHead,
+          tailContext: options.contextTail,
+        }
       )
 
       const queryImages = options.metadata?.queryImages as string[] | undefined
@@ -258,6 +259,7 @@ export abstract class BaseAgent {
 
     this.context.reset()
     this.context.setState('running')
+    this.onRunStart()
 
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
@@ -265,12 +267,17 @@ export abstract class BaseAgent {
       // 每次 runStream 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
       this._lastKnownPromptTokens = undefined
 
-      const systemPrompt = this.buildSystemPrompt(options)
+      // run 级覆盖优先：插件注入的 system 只作用于本轮，不写 agent 缓存（避免污染后续会话）
+      const systemPrompt = options.systemPromptOverride ?? this.buildSystemPrompt(options)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
         options.query,
-        { lastKnownPromptTokens: this._lastKnownPromptTokens }
+        {
+          lastKnownPromptTokens: this._lastKnownPromptTokens,
+          headAnchors: options.contextHead,
+          tailContext: options.contextTail,
+        }
       )
 
       const queryImages = options.metadata?.queryImages as string[] | undefined
@@ -334,6 +341,17 @@ export abstract class BaseAgent {
 
   protected abstract buildSystemPrompt(options: AgentRunOptions): string
 
+  /** 每次 run/runStream 启动时回调（context.reset 之后）：子类用于重置每轮易变状态 */
+  protected onRunStart(): void {}
+
+  /**
+   * 每轮模型请求前的节流提醒（如任务清单提醒、收尾窗口警告）。
+   * 返回的文本作为合成 user 消息追加在当次请求尾部，不回写历史；返回 undefined 表示本轮不提醒。
+   */
+  protected buildLoopReminder(_turn: number, _maxIterations: number): string | undefined {
+    return undefined
+  }
+
   protected async resolveActiveTools(runtimeToolNames?: string[]): Promise<OpenAIToolDefinition[]> {
     if (runtimeToolNames) {
       return this.toolRegistry.getOpenAISchemasByNames(runtimeToolNames)
@@ -362,14 +380,23 @@ export abstract class BaseAgent {
 
   protected createMemoryManager(): IMemoryManager {
     const config = { ...this.agentOptions.memoryConfig }
-    config.summarizeFn = async (messages: Message[]): Promise<string> => {
+    // 压缩指令作为最后一条 user 消息追加在待压缩对话之后，
+    // system 使用主会话系统提示词，使摘要调用复用主前缀的 KV cache。
+    config.summarizeFn = async (
+      messages: Message[],
+      context?: { systemPrompt?: string }
+    ): Promise<string> => {
       const llmMessages = [
-        { role: 'system' as const, content: SUMMARY_SYSTEM_PROMPT },
-        { role: 'user' as const, content: this.formatMessagesForSummary(messages) },
+        { role: 'system' as const, content: context?.systemPrompt || '' },
+        {
+          role: 'user' as const,
+          content: `${this.formatMessagesForSummary(messages)}\n\n${COMPACTION_INSTRUCTION}`,
+        },
       ]
       const response = await this.llmProvider.chat(llmMessages, [], {
         temperature: 0.3,
         maxTokens: 10000,
+        logSource: 'compact_summary',
       })
       return response.content || this.generateFallbackSummary(messages)
     }
@@ -425,6 +452,7 @@ export abstract class BaseAgent {
       eventEmitter: this.eventEmitter,
       agentContext: this.context,
       sessionId: this.config.sessionId,
+      getLoopReminder: (turn: number) => this.buildLoopReminder(turn, maxIterations),
       onToolCallExecuted: async (toolName, args, result) => {
         usedToolCalls.push({
           name: toolName,
@@ -471,6 +499,7 @@ export abstract class BaseAgent {
       agentContext: this.context,
       signal,
       sessionId: this.config.sessionId,
+      getLoopReminder: (turn: number) => this.buildLoopReminder(turn, maxIterations),
       onToolCallExecuted: this.onToolCallExecuted.bind(this),
       onPromptTokens: (tokens) => {
         this._lastKnownPromptTokens = tokens
@@ -519,8 +548,8 @@ export abstract class BaseAgent {
     for (const msg of messages) {
       const roleLabel = msg.role === 'user' ? '用户' : msg.role === 'assistant' ? '助手' : msg.role === 'tool' ? '工具' : '系统'
       let content = msg.content || ''
-      if (content.length > 2000) {
-        content = content.slice(0, 2000) + '...'
+      if (content.length > SUMMARY_MESSAGE_MAX_CHARS) {
+        content = content.slice(0, SUMMARY_MESSAGE_MAX_CHARS) + '...'
       }
       parts.push(`[${roleLabel}] ${content}`)
     }
@@ -552,10 +581,14 @@ export abstract class BaseAgent {
   private async summarizeForCompact(history: Message[]): Promise<string> {
     if (history.length < 2) return ''
 
-    const summaryContent = this.formatMessagesForSummary(history)
+    // 与自动压缩保持同一协议：主 system prompt + （对话 + 压缩指令）作为最后一条 user 消息
+    const systemPrompt = this.buildSystemPrompt({ query: '' })
     const llmMessages = [
-      { role: 'system' as const, content: SUMMARY_SYSTEM_PROMPT },
-      { role: 'user' as const, content: summaryContent },
+      { role: 'system' as const, content: systemPrompt },
+      {
+        role: 'user' as const,
+        content: `${this.formatMessagesForSummary(history)}\n\n${COMPACTION_INSTRUCTION}`,
+      },
     ]
 
     try {

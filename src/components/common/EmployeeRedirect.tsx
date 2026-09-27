@@ -12,6 +12,13 @@ const EmployeeRedirect: React.FC = () => {
   useEffect(() => {
     const resolveTarget = async () => {
       try {
+        // 首次启动：未完成新用户引导时先进入引导页
+        const onboardingCompleted = await window.electronAPI.settings.get({ key: 'onboarding_completed' })
+        if (onboardingCompleted !== 'true') {
+          setTargetPath('/onboarding')
+          setLoading(false)
+          return
+        }
         const employees = await window.electronAPI.employee.list()
         if (employees && employees.length > 0) {
           setTargetPath('/tasks')

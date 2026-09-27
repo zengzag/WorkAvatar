@@ -1,5 +1,10 @@
 import type { MessageSegment, MessageWithThought } from '../components/workbench'
 import { LRUCache } from '../utils/lru-cache'
+import {
+  CHECKPOINT_PREAMBLE,
+  COMPACTED_CHECKPOINT_OPEN,
+  COMPACTED_CHECKPOINT_CLOSE,
+} from '../../electron/shared/checkpoint-format'
 
 export const MESSAGES_CACHE_MAX_SIZE = 60
 export const MIN_LOADING_DISPLAY_MS = 120
@@ -215,9 +220,17 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
   for (const m of sourceMsgs) pushMsg(m)
 
   if (compactSummary) {
+    // 手动压缩摘要以 user 角色的 checkpoint 注入历史头部（而非 system）：
+    // 后端会合并所有 system 消息进系统提示词，role=system 会击穿字节稳定的前缀缓存。
+    // 格式常量与后端自动压缩（agent/memory/checkpoint.ts）共用 shared 定义，保证字节级一致。
     subResult.unshift({
-      role: 'system',
-      content: `[对话历史摘要]\n${compactSummary}`,
+      role: 'user',
+      content: [
+        CHECKPOINT_PREAMBLE,
+        COMPACTED_CHECKPOINT_OPEN,
+        compactSummary.trim(),
+        COMPACTED_CHECKPOINT_CLOSE,
+      ].join('\n'),
     })
   }
   return subResult

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { MemoryManager } from '../../../electron/main/services/agent/memory/memory-manager'
 import { DEFAULT_MEMORY_CONFIG } from '../../../electron/main/services/agent/memory/types'
+import { COMPACTED_CHECKPOINT_OPEN } from '../../../electron/main/services/agent/memory/checkpoint'
 import type { Message } from '../../../electron/main/services/agent/core/types'
 
 const msg = (role: Message['role'], content: string, extra: Partial<Message> = {}): Message =>
@@ -189,8 +190,9 @@ describe('memory-manager / summary 策略', () => {
 
     expect(stats.wasCompressed).toBe(true)
     expect(messages[0].role).toBe('system')
-    const summaryMsg = messages.find(m => m.content.startsWith('[对话历史摘要]'))
-    expect(summaryMsg?.content).toBe('[对话历史摘要]\nSUM')
+    const summaryMsg = messages.find(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))
+    expect(summaryMsg?.role).toBe('user')
+    expect(summaryMsg?.content).toContain('SUM')
     expect(messages.slice(-5, -1).map(m => m.content)).toEqual(history.slice(-4).map(m => m.content))
     expect(summarizeFn).toHaveBeenCalledTimes(1)
     expect(summarizeFn.mock.calls[0][0]).toHaveLength(6) // 前 6 条（10 - 4）
@@ -201,15 +203,37 @@ describe('memory-manager / summary 策略', () => {
     const mgr = new MemoryManager({ strategy: 'summary', summarizeFn, maxTokens: 300, reservedResponseTokens: 0 })
     const history = makeHistory(10)
     const { messages } = await mgr.manageContext('S', history, 'Q', force)
-    expect(messages.some(m => m.content.startsWith('[对话历史摘要]'))).toBe(false)
+    expect(messages.some(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))).toBe(false)
     expect(messages.length).toBeGreaterThan(0)
+  })
+
+  it('summary 窗口首条为孤儿 tool 消息（owner 已被摘要）→ 修复配对，不产生 [user, tool] 序列', async () => {
+    const summarizeFn = vi.fn(async () => 'SUM')
+    const mgr = new MemoryManager({ strategy: 'summary', summarizeFn, maxTokens: 100000, reservedResponseTokens: 0 })
+    const history: Message[] = [
+      msg('user', 'u0'),
+      // owner assistant(toolCalls) 落入摘要区（前 4 条），其 tool 结果落在最近窗口首条
+      msg('assistant', 'a1', { toolCalls: [{ id: 'call_1', type: 'function', function: { name: 't', arguments: '{}' } }] }),
+      msg('tool', 'tool result', { toolCallId: 'call_1' }),
+      msg('assistant', 'a3'),
+      msg('user', 'u4'),
+      msg('assistant', 'a5'),
+      msg('user', 'u6'),
+      msg('assistant', 'a7'),
+    ]
+    const { messages } = await mgr.manageContext('S', history, 'Q', force)
+    const checkpointIdx = messages.findIndex(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))
+    expect(checkpointIdx).toBeGreaterThanOrEqual(0)
+    // checkpoint（user）之后紧跟的第一条非空消息不能是 tool（否则违反 API 配对协议）
+    const after = messages.slice(checkpointIdx + 1)
+    expect(after.some(m => m.role === 'tool')).toBe(false)
   })
 
   it('summarizeFn 抛错 → 回退简单摘要', async () => {
     const summarizeFn = vi.fn(async () => { throw new Error('LLM down') })
     const mgr = new MemoryManager({ strategy: 'summary', summarizeFn, maxTokens: 100000, reservedResponseTokens: 0 })
     const { messages } = await mgr.manageContext('S', makeHistory(8), 'Q', force)
-    const summaryMsg = messages.find(m => m.content.startsWith('[对话历史摘要]'))
+    const summaryMsg = messages.find(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))
     // 摘要输入为前 4 条（u0/a1/u2/a3）→ 2 条 user、2 条 assistant
     expect(summaryMsg?.content).toContain('共 2 条用户消息，2 条助手回复。')
   })
@@ -283,7 +307,9 @@ describe('memory-manager / sliding_window_with_summary 策略', () => {
       maxTokens: 100000, reservedResponseTokens: 0, recentTurnsToKeep: 2,
     })
     const { messages } = await mgr.manageContext('S', makeHistory(10), 'Q', force)
-    expect(messages[1].content).toBe('[对话历史摘要]\nSUM') // [system, summary, ...recent]
+    expect(messages[1].role).toBe('user') // [system, checkpoint, ...recent]
+    expect(messages[1].content).toContain(COMPACTED_CHECKPOINT_OPEN)
+    expect(messages[1].content).toContain('SUM')
     expect(summarizeFn).toHaveBeenCalledTimes(1)
     expect(messages.length).toBeGreaterThanOrEqual(3)
   })
@@ -296,7 +322,7 @@ describe('memory-manager / sliding_window_with_summary 策略', () => {
     })
     const { messages } = await mgr.manageContext('S', makeHistory(6), 'Q', force)
     expect(summarizeFn).not.toHaveBeenCalled()
-    expect(messages.some(m => m.content.startsWith('[对话历史摘要]'))).toBe(false)
+    expect(messages.some(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))).toBe(false)
   })
 
   it('最近 N 轮已超预算 → 直接截断，不生成摘要', async () => {
@@ -309,7 +335,7 @@ describe('memory-manager / sliding_window_with_summary 策略', () => {
       i % 2 === 0 ? msg('user', `u${i}` + 'x'.repeat(200)) : msg('assistant', `a${i}` + 'y'.repeat(200)))
     const { messages } = await mgr.manageContext('S', history, 'Q', force)
     expect(summarizeFn).not.toHaveBeenCalled()
-    expect(messages.some(m => m.content.startsWith('[对话历史摘要]'))).toBe(false)
+    expect(messages.some(m => m.content.includes(COMPACTED_CHECKPOINT_OPEN))).toBe(false)
   })
 })
 

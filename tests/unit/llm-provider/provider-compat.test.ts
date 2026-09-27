@@ -60,8 +60,10 @@ describe('provider-compat', () => {
   it('getProviderExtraRequestHeaders：@sessionId 占位符按需替换', () => {
     const withSession = getProviderExtraRequestHeaders('opencode-go', undefined, 'conv-123')
     expect(withSession).toEqual({ 'x-opencode-client': 'workavatar', 'x-opencode-session': 'conv-123' })
-    // 无会话 ID 时跳过该头，仍保留客户端标识
-    expect(getProviderExtraRequestHeaders('opencode-go', undefined)).toEqual({ 'x-opencode-client': 'workavatar' })
+    // 强制路由头 provider 无会话 ID 时注入随机兜底值，避免被上游直接拒绝（400 MissingSessionID）
+    const fallback = getProviderExtraRequestHeaders('opencode-go', undefined)!
+    expect(fallback['x-opencode-client']).toBe('workavatar')
+    expect(fallback['x-opencode-session']).toMatch(/^[0-9a-f-]{36}$/)
     // 无额外头的 provider 返回 undefined
     expect(getProviderExtraRequestHeaders('openai', undefined, 'x')).toBeUndefined()
   })

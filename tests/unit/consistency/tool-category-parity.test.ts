@@ -24,6 +24,7 @@ const TOOLS_SECTION = path.join(ROOT, 'src', 'components', 'employee-settings', 
 const TOOL_CHECKBOXES = path.join(ROOT, 'src', 'pages', 'creation-wizard', 'ToolCheckboxes.tsx')
 const TOOL_CATEGORY_ICONS = path.join(ROOT, 'src', 'components', 'common', 'tool-category-icons.tsx')
 const AGENT_TOOLS_DIR = path.join(ROOT, 'electron', 'main', 'services', 'agent', 'tools')
+const MEMORY_TYPES = path.join(ROOT, 'electron', 'main', 'services', 'employee-memory-types.ts')
 const GENERIC_AGENT = path.join(ROOT, 'electron', 'main', 'services', 'agent', 'business', 'generic-agent.ts')
 
 /** 文档（.trae/rules/实现方案.md §1）声明的内置分类顺序 */
@@ -179,6 +180,17 @@ describe('工具分类：前后端一致性', () => {
       }
     }
     expect(violations, violations.join('\n')).toEqual([])
+  })
+
+  it('MEMORY_BOUND_TOOL_IDS 与 conversation_memory 分类 toolIds 一致（记忆开关绑定的单源真相）', () => {
+    const init = declInit(readSource(MEMORY_TYPES), 'MEMORY_BOUND_TOOL_IDS')
+    if (!init || !ts.isArrayLiteralExpression(init)) {
+      throw new Error('未找到 MEMORY_BOUND_TOOL_IDS 数组定义')
+    }
+    const boundIds = init.elements.filter(ts.isStringLiteral).map((e) => e.text)
+    const category = defs.find((d) => d.id === 'conversation_memory')
+    expect(category, '未找到 conversation_memory 分类').toBeTruthy()
+    expect(boundIds).toEqual(category!.toolIds)
   })
 })
 

@@ -1,4 +1,5 @@
 import { ToolDefinition, OpenAIToolDefinition } from './types'
+import { warnUndeclaredPermission } from './tool-permission'
 
 export class ToolRegistry {
   private functionMappings: Map<string, ToolDefinition> = new Map()
@@ -10,6 +11,7 @@ export class ToolRegistry {
     }
 
     this.functionMappings.set(tool.name, tool)
+    warnUndeclaredPermission(tool)
 
     // 按需工具不加入 LLM API 的 tools 数组，通过 list_available_tools + invoke_tool 发现和调用
     if (!tool.onDemand) {

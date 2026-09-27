@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Typography, Switch, App } from 'antd'
+import { Typography, Switch, Button, App } from 'antd'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 
 const { Title, Text } = Typography
 
 const GeneralSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [preventSleep, setPreventSleep] = useState(true)
   const [loading, setLoading] = useState(true)
 
@@ -40,6 +42,16 @@ const GeneralSettings: React.FC = () => {
     <div>
       <Title level={5}>{t('settings.generalTitle')}</Title>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ flex: 1, marginRight: 16 }}>
+            <Text strong>{t('settings.rerunOnboarding')}</Text>
+            <br />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('settings.rerunOnboardingDesc')}
+            </Text>
+          </div>
+          <Button onClick={() => navigate('/onboarding')}>{t('settings.rerunOnboardingAction')}</Button>
+        </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ flex: 1, marginRight: 16 }}>
             <Text strong>{t('settings.preventSleep')}</Text>

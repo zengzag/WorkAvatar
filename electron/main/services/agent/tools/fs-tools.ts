@@ -3,8 +3,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
+import FileSnapshotService, { MAX_SNAPSHOT_FILE_BYTES, type FileChangeKind } from '../../file-snapshot.service'
 import { moveToTrash } from '../../common-utils'
 import { isFsRoot, isWithinPath, normalizePath } from '../../path-normalize'
+import { buildUnifiedDiff } from './text-diff'
+import { isIrreversibleTool } from './tool-permission'
+import type { DiffDisclosure } from '../../../../shared/types'
 
 /**
  * 文件操作工具（仅保留核心读写编辑与成品声明/删除）：
@@ -45,6 +49,53 @@ const MAX_LENGTH_LIMIT = 50000
 
 // ====== 常驻工具 ======
 
+// ====== 改动快照与 diff 预览（file_write / file_edit / file_delete 共用） ======
+
+const fileSnapshot = FileSnapshotService.getInstance()
+
+/** 读取文件改动前状态：内容超上限/二进制/非 UTF-8 时只登记存在性（不可还原），避免回滚损坏原文件 */
+function readFileState(filePath: string): { exists: boolean; content: string; restorable: boolean } {
+  try {
+    const stat = fs.statSync(filePath)
+    if (!stat.isFile()) return { exists: true, content: '', restorable: false }
+    if (stat.size > MAX_SNAPSHOT_FILE_BYTES) return { exists: true, content: '', restorable: false }
+    const buf = fs.readFileSync(filePath)
+    // NUL 字节 → 二进制文件；无效 UTF-8（如 GBK）→ 无法无损还原，均不做快照内容记录
+    if (buf.includes(0)) return { exists: true, content: '', restorable: false }
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+      return { exists: true, content: text, restorable: true }
+    } catch {
+      return { exists: true, content: '', restorable: false }
+    }
+  } catch {
+    return { exists: false, content: '', restorable: true }
+  }
+}
+
+/** 授权通过后登记快照（被拒绝的操作不产生回滚记录） */
+function recordSnapshot(
+  toolName: string,
+  changeKind: FileChangeKind,
+  filePath: string,
+  before: { exists: boolean; content: string; restorable: boolean },
+): void {
+  fileSnapshot.recordChange({
+    toolName,
+    changeKind,
+    path: filePath,
+    existed: before.exists,
+    beforeContent: before.restorable ? before.content : null,
+    restorable: before.restorable,
+  })
+}
+
+/** 工具结果中的 diff 展示块（无改动时返回空串；截断提示由 buildUnifiedDiff 内嵌，不重复追加） */
+function diffSuffix(diff: DiffDisclosure): string {
+  if (!diff.content) return ''
+  return `\n\n\`\`\`diff\n${diff.content}\n\`\`\``
+}
+
 // ====== file_read：读取文件内容 ======
 
 export const fileReadTool: ToolDefinition = {
@@ -71,6 +122,7 @@ export const fileReadTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  permission: 'safe',
 }
 
 // ====== file_write：写入文件（覆盖/追加） ======
@@ -97,6 +149,8 @@ export const fileWriteTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  permission: 'requires_confirmation',
+  selfAuthorized: true,
   noRetry: true,
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
@@ -147,6 +201,8 @@ export const fileEditTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  permission: 'requires_confirmation',
+  selfAuthorized: true,
   noRetry: true,
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
@@ -185,6 +241,9 @@ export const fileDeleteTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  // 不可逆（isIrreversibleTool）：确认不可被"始终允许/本轮不再提醒"绕过，由 FilePermissionService 强制
+  permission: 'requires_confirmation',
+  selfAuthorized: true,
   noRetry: true,
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
@@ -377,23 +436,28 @@ async function writeFile(args: any) {
 
   const resolved = resolveToolPath(filePath)
   const append = args.append === true
+  const content = String(args.content || '')
 
-  const confirm = await filePermission.authorizeFileOperation(append ? '追加' : '写入', [resolved])
+  const before = readFileState(resolved)
+  const after = append ? before.content + content : content
+  const diff = buildUnifiedDiff(before.exists ? before.content : '', after)
+
+  const confirm = await filePermission.authorizeFileOperation(append ? '追加' : '写入', [resolved], { diff })
   if (!confirm.allowed) return { success: false, error: confirm.error }
 
   const dir = path.dirname(resolved)
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-
-  const content = String(args.content || '')
 
   if (append) {
     fs.appendFileSync(resolved, content, 'utf-8')
   } else {
     fs.writeFileSync(resolved, content, 'utf-8')
   }
+  // 写盘成功后登记快照（写失败时不产生"从未发生"的回滚记录）
+  recordSnapshot('file_write', append ? 'append' : 'write', resolved, before)
 
   const mode = append ? '追加' : '写入'
-  return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符` }
+  return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符${diffSuffix(diff)}` }
 }
 
 // ====== file_delete 实现 ======
@@ -554,15 +618,28 @@ async function deleteFile(args: any) {
     return { success: false, error: reasons.length > 0 ? `没有可删除的目标:\n${reasons.join('\n')}` : '没有可删除的目标' }
   }
 
-  // 权限判定使用展开后的全部真实绝对路径，一次确认批量授权
-  const confirm = await filePermission.authorizeFileOperation('删除', deletable.map(t => t.resolved))
+  // 权限判定使用展开后的全部真实绝对路径，一次确认批量授权。
+  // 删除不可逆：传 irreversible 使确认不可被"始终允许 / 本轮不再提醒"绕过
+  const confirm = await filePermission.authorizeFileOperation('删除', deletable.map(t => t.resolved), {
+    irreversible: isIrreversibleTool(fileDeleteTool.id),
+  })
   if (!confirm.allowed) return { success: false, error: confirm.error || '删除操作已取消' }
+
+  // 删除前读取改动前状态（目录不可还原，仅登记路径供展示），删除成功后登记快照
+  const beforeStates = new Map(deletable.map(t => [t.resolved, t.isDir ? null : readFileState(t.resolved)]))
 
   const results: string[] = []
   const failures: string[] = []
   for (const t of deletable) {
     try {
       const via = await moveToTrash(t.resolved)
+      if (t.isDir) {
+        fileSnapshot.recordChange({
+          toolName: 'file_delete', changeKind: 'delete', path: t.resolved, existed: true, beforeContent: null, restorable: false,
+        })
+      } else {
+        recordSnapshot('file_delete', 'delete', t.resolved, beforeStates.get(t.resolved)!)
+      }
       const kind = t.isDir ? '目录' : '文件'
       results.push(via === 'trash'
         ? `✓ 已删除${kind}（移入回收站，可恢复）: ${t.resolved}`
@@ -586,8 +663,8 @@ async function deleteFile(args: any) {
 
 // ====== file_edit 各操作实现 ======
 
-/** 读取目标文件内容并校验，返回 { content, resolved } 或错误对象 */
-async function readEditTarget(args: any): Promise<{ content: string; resolved: string } | { success: false; error: string }> {
+/** 读取目标文件内容并校验，返回 { content, resolved } 或错误对象（授权在计算改动后统一进行） */
+async function loadEditTarget(args: any): Promise<{ content: string; resolved: string } | { success: false; error: string }> {
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
@@ -595,11 +672,43 @@ async function readEditTarget(args: any): Promise<{ content: string; resolved: s
   if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
   if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
-  const confirm = await filePermission.authorizeFileOperation('编辑', [resolved])
-  if (!confirm.allowed) return { success: false, error: confirm.error || '编辑操作已取消' }
+  // 非 UTF-8（如 GBK）或二进制文件无法安全做文本编辑（写回会静默损坏），显式拒绝
+  const buf = fs.readFileSync(resolved)
+  if (buf.includes(0)) return { success: false, error: `文件是二进制文件，无法进行文本编辑: ${filePath}` }
+  let content: string
+  try {
+    content = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+  } catch {
+    return { success: false, error: `文件不是有效的 UTF-8 文本，无法进行文本编辑（请用 shell 命令处理编码转换后重试）: ${filePath}` }
+  }
+  return { content: content.replace(/\r\n/g, '\n'), resolved }
+}
 
-  const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
-  return { content, resolved }
+/**
+ * 编辑收尾：按改动生成 diff → 权限确认（弹窗内展示 diff）→ 落盘 → 登记快照。
+ * 授权发生在计算改动之后，使确认弹窗能展示真实 diff。
+ */
+async function commitEdit(
+  resolved: string,
+  before: string,
+  after: string,
+): Promise<{ ok: true; diff: DiffDisclosure } | { ok: false; error: string }> {
+  const diff = buildUnifiedDiff(before, after)
+  const confirm = await filePermission.authorizeFileOperation('编辑', [resolved], { diff })
+  if (!confirm.allowed) return { ok: false, error: confirm.error || '编辑操作已取消' }
+
+  fs.writeFileSync(resolved, after, 'utf-8')
+  // 写盘成功后登记快照（写失败时不产生"从未发生"的回滚记录）；按字节而非字符数判断上限
+  const restorable = Buffer.byteLength(before, 'utf-8') <= MAX_SNAPSHOT_FILE_BYTES
+  fileSnapshot.recordChange({
+    toolName: 'file_edit',
+    changeKind: 'edit',
+    path: resolved,
+    existed: true,
+    beforeContent: restorable ? before : null,
+    restorable,
+  })
+  return { ok: true, diff }
 }
 
 /** replace: 精确字符串替换 */
@@ -609,7 +718,7 @@ async function editReplace(args: any) {
   if (!oldString) return { success: false, error: 'old_string 不能为空' }
   if (oldString === newString) return { success: false, error: 'old_string 与 new_string 相同，无需替换' }
 
-  const target = await readEditTarget(args)
+  const target = await loadEditTarget(args)
   if (!('content' in target)) return target
 
   const replaceAll = args.replace_all === true
@@ -633,12 +742,13 @@ async function editReplace(args: any) {
         return target.content.slice(0, idx) + newString + target.content.slice(idx + oldString.length)
       })()
 
-  fs.writeFileSync(target.resolved, newContent, 'utf-8')
+  const commit = await commitEdit(target.resolved, target.content, newContent)
+  if (!commit.ok) return { success: false, error: commit.error }
 
   const count = replaceAll ? occurrences : 1
   return {
     success: true,
-    output: `✓ replace: 替换 ${count} 处（${oldString.length} 字符 → ${newString.length} 字符）\n文件: ${target.resolved}`,
+    output: `✓ replace: 替换 ${count} 处（${oldString.length} 字符 → ${newString.length} 字符）\n文件: ${target.resolved}${diffSuffix(commit.diff)}`,
   }
 }
 
@@ -647,7 +757,7 @@ async function editInsert(args: any) {
   const content = String(args.content ?? '')
   if (!content) return { success: false, error: 'content 不能为空' }
 
-  const target = await readEditTarget(args)
+  const target = await loadEditTarget(args)
   if (!('content' in target)) return target
 
   const afterString = args.after_string != null ? String(args.after_string) : ''
@@ -682,18 +792,19 @@ async function editInsert(args: any) {
     positionDesc = `在文件末尾`
   }
 
-  fs.writeFileSync(target.resolved, newContent, 'utf-8')
+  const commit = await commitEdit(target.resolved, target.content, newContent)
+  if (!commit.ok) return { success: false, error: commit.error }
 
   const insertLines = content.split('\n').length
   return {
     success: true,
-    output: `✓ insert: ${positionDesc}插入 ${insertLines} 行内容\n文件: ${target.resolved}`,
+    output: `✓ insert: ${positionDesc}插入 ${insertLines} 行内容\n文件: ${target.resolved}${diffSuffix(commit.diff)}`,
   }
 }
 
 /** delete: 删除内容 */
 async function editDelete(args: any) {
-  const target = await readEditTarget(args)
+  const target = await loadEditTarget(args)
   if (!('content' in target)) return target
 
   const oldString = args.old_string != null ? String(args.old_string) : ''
@@ -738,10 +849,11 @@ async function editDelete(args: any) {
     return { success: false, error: '请提供 old_string 或 start_line+end_line 来指定删除范围' }
   }
 
-  fs.writeFileSync(target.resolved, newContent, 'utf-8')
+  const commit = await commitEdit(target.resolved, target.content, newContent)
+  if (!commit.ok) return { success: false, error: commit.error }
 
   return {
     success: true,
-    output: `✓ delete: ${desc}\n文件: ${target.resolved}`,
+    output: `✓ delete: ${desc}\n文件: ${target.resolved}${diffSuffix(commit.diff)}`,
   }
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { ThinkingLevel } from '../../../../shared/types'
 
 /**
@@ -38,6 +39,11 @@ export interface ProviderCompatConfig {
   extraRequestHeaders?: Record<string, string>
   /** ZAI/GLM 的工具调用流式增量格式（对应 pi-ai compat.zaiToolStream） */
   zaiToolStream?: boolean
+  /**
+   * 会话路由头为上游强制项：未提供 sessionId 时注入随机兜底值，
+   * 否则请求会被直接拒绝（如 OpenCode Go 缺 x-opencode-session 返回 400 MissingSessionID）。
+   */
+  requireSessionId?: boolean
   /** 逐模型覆盖 provider 级 compat。
    * pi-ai 目录是「逐模型」的，同一 provider 下不同模型常需不同 compat
    * （如 deepseek-chat 与 deepseek 推理模型、Kimi K2.x 与 K3），
@@ -258,7 +264,8 @@ const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
   // - 不支持 store / developer role；聚合网关不做严格 schema，保守关闭 strict mode
   // - deepseek-v4 / kimi 系模型多轮工具调用需回传 reasoning_content
   // - 要求客户端携带会话路由头 x-opencode-session + 客户端标识 x-opencode-client，
-  //   以便把同一会话固定到同一上游实例、提升 prompt cache 命中（官方公告：缺失该头的请求可能被逐步拒绝）
+  //   以便把同一会话固定到同一上游实例、提升 prompt cache 命中；缺失 x-opencode-session
+  //   的请求会被上游直接拒绝（400 MissingSessionID），故标记 requireSessionId 注入兜底值
   'opencode-go': {
     ...DEFAULT,
     supportsDeveloperRole: false,
@@ -272,6 +279,7 @@ const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
     // 使用 openai-nosession：只发送亲和头，不发送 OpenAI 专用的 session_id 头
     sessionAffinityFormat: 'openai-nosession',
     requiresReasoningContentOnAssistantMessages: true,
+    requireSessionId: true,
     extraRequestHeaders: {
       'x-opencode-client': 'workavatar',
       'x-opencode-session': SESSION_ID_PLACEHOLDER,
@@ -329,19 +337,22 @@ export function resolveImageSupport(
 
 /**
  * 构建 provider 的附加请求头（会话路由等）。
- * 仅含 extraRequestHeaders 的 provider 才返回；@sessionId 占位符在无会话 ID 时跳过该头。
+ * 仅含 extraRequestHeaders 的 provider 才返回；@sessionId 占位符在无会话 ID 时跳过该头，
+ * 但 provider 标记 requireSessionId（强制路由头）时改用随机值兜底，避免请求被上游拒绝。
  */
 export function getProviderExtraRequestHeaders(
   providerType: string | undefined,
   modelId: string | undefined,
   sessionId?: string,
 ): Record<string, string> | undefined {
-  const template = getProviderCompat(providerType, modelId).extraRequestHeaders
+  const compat = getProviderCompat(providerType, modelId)
+  const template = compat.extraRequestHeaders
   if (!template) return undefined
   const headers: Record<string, string> = {}
   for (const [name, value] of Object.entries(template)) {
     if (value === SESSION_ID_PLACEHOLDER) {
-      if (sessionId) headers[name] = sessionId
+      const resolved = sessionId || (compat.requireSessionId ? randomUUID() : undefined)
+      if (resolved) headers[name] = resolved
     } else {
       headers[name] = value
     }

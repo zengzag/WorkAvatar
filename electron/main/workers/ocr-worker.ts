@@ -69,6 +69,16 @@ interface OCRResult {
 
 let paddleocr: PaddleOcrLike | null = null
 
+/**
+ * OCR 输入长边上限。检测模型内部已把长边缩到 960，喂原图只会成倍增加耗时与内存：
+ * 实测 1200dpi 页面（9920x14032）识别 7.8s、外部内存 462MB，降采样到 2000 后为 1.6s / 93MB，
+ * 识别文本一致。超过 2000 的输入在低配机器上极易触发主线程 120s 请求超时。
+ */
+const MAX_OCR_LONG_SIDE = 2000
+
+/** 单张图片耗时超过该阈值时打 warn 日志，便于定位异常大图 */
+const SLOW_RECOGNIZE_WARN_MS = 15_000
+
 // ── PaddleOCR 初始化 ──────────────────────────────────────────
 
 async function initialize(): Promise<void> {
@@ -119,11 +129,19 @@ async function recognize(imagePath: string): Promise<OCRResult> {
     throw new Error('PaddleOCR not initialized')
   }
 
-  // 使用 sharp 解码图片为 RGB 像素
+  const startedAt = Date.now()
+
+  // 使用 sharp 解码图片为 RGB 像素，超大图先按长边降采样（小图不放大）
   const sharpMod = await import('sharp')
   const sharp = (sharpMod as unknown as { default: (input: string | Buffer) => any }).default
   const decoded = await sharp(imagePath)
     .removeAlpha()
+    .resize({
+      width: MAX_OCR_LONG_SIDE,
+      height: MAX_OCR_LONG_SIDE,
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
     .raw({ resolveWithObject: true })
     .toBuffer({ resolveWithObject: true }) as { data: Buffer; info: { width: number; height: number; channels: number } }
 
@@ -154,6 +172,19 @@ async function recognize(imagePath: string): Promise<OCRResult> {
   const confidence = blocks.length > 0
     ? blocks.reduce((sum, b) => sum + b.confidence, 0) / blocks.length
     : 0
+
+  const elapsedMs = Date.now() - startedAt
+  const detail = {
+    image: path.basename(imagePath),
+    size: `${decoded.info.width}x${decoded.info.height}`,
+    blocks: blocks.length,
+    elapsedMs,
+  }
+  if (elapsedMs >= SLOW_RECOGNIZE_WARN_MS) {
+    logger.warn('OCR 识别耗时异常', detail)
+  } else {
+    logger.debug('OCR 识别完成', detail)
+  }
 
   return {
     text,
@@ -239,12 +270,20 @@ async function handleMessage(msg: WorkerMessage): Promise<void> {
   }
 }
 
+// 消息串行执行：onnxruntime 的 InferenceSession 不支持并发推理，
+// 并发进入会互相争抢 CPU，甚至让原生推理卡死（表现为主线程侧请求超时）。
+let messageChain: Promise<void> = Promise.resolve()
+
 parentPort?.on('message', (msg: WorkerMessage) => {
-  handleMessage(msg).catch(err => {
-    logger.error('Unhandled error in message handler:', err)
+  messageChain = messageChain.then(async () => {
     try {
-      parentPort?.postMessage({ type: 'error', id: msg.id, error: 'Internal worker error' })
-    } catch { /* Worker may be exiting */ }
+      await handleMessage(msg)
+    } catch (err) {
+      logger.error('Unhandled error in message handler:', err)
+      try {
+        parentPort?.postMessage({ type: 'error', id: msg.id, error: 'Internal worker error' })
+      } catch { /* Worker may be exiting */ }
+    }
   })
 })
 

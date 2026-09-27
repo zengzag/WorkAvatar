@@ -51,8 +51,8 @@ export const readImageTool: ToolDefinition = {
       const ref = AttachmentService.getInstance().saveDataUrl(dataUrl)
       // 模型不支持视觉时输出与实际一致的降级文案，避免"已提供给你"与"看不到图"的矛盾
       const output = context?.imageSupport === false
-        ? `已读取图片文件: ${resolved}\n但当前模型不支持图片输入，图片未随请求发送。请改用 ocr_image 提取图中文字。`
-        : `已读取图片文件: ${resolved}\n图片内容已随消息提供给模型查看。如需提取图中文字，可继续调用 ocr_image。`
+        ? `Image file read: ${resolved}\nThis model does not support image input, so the image was not sent with the request. Use ocr_image to extract text from it.`
+        : `Image file read: ${resolved}\nThe image has been attached for the model to inspect. Call ocr_image if you need to extract text from it.`
       return {
         success: true,
         images: [ref || dataUrl],

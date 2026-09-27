@@ -9,6 +9,7 @@ import { STALE_MEMORY_DAYS } from './employee-memory-types'
  * - 声明式（偏好）vs 命令式（硬约束/踩坑）分场景区分——硬约束存在的意义就是覆盖用户请求
  * - 记忆 vs Skills 路由：流程归 Skills，事实归记忆
  * - 强"Nothing to save"允许，避免为写而写污染记忆库
+ * - 作用域：employee（默认，仅当前员工）vs global（跨员工共享的用户级事实）
  */
 export function buildExtractionPrompt(contextParts: string[]): string {
   return `你是数字员工的跨任务记忆提取器。从对话中提取"未来仍重要"的持久事实，而非一次性任务细节。
@@ -38,6 +39,14 @@ export function buildExtractionPrompt(contextParts: string[]): string {
 ✗ LLM 已具备的通用办公知识
 ✗ 具体操作步骤/工作流——应沉淀为 Skill，而非记忆（记忆存事实，Skill 存流程）
 
+## 激活范围（scope）
+每条记忆需判定作用域，取值二选一：
+- "employee"（默认）：仅对当前数字员工成立的偏好、约束、踩坑、结论。
+- "global"：**跨所有数字员工都成立的用户级事实**——用户的角色/职业、通用偏好、通用硬约束/禁忌。
+判断标准：换一个数字员工执行同类任务时，这条信息是否仍然应当生效？是则可用 global，否则一律 employee。
+涉及具体业务、项目、资料库、某个员工职责范围的内容，必须留 employee，不得标记 global。
+不确定时一律用 employee（宁可局部生效，也不要错误地全局生效）。
+
 ## 写法规范
 - 用户偏好用声明式："用户偏好简洁回复" ✓，而非 "总是简洁回复" ✗
   声明式描述事实；命令式会在后续会话被当指令，可能覆盖用户当前需求。
@@ -55,15 +64,16 @@ export function buildExtractionPrompt(contextParts: string[]): string {
 - 同一类别多个相似偏好合并为一条，不要拆碎。
 
 ## 审查现有记忆
-- 新信息与已有记忆矛盾 → 把过时 key 放入 delete_keys。
+- 新信息与已有记忆矛盾 → 把过时 key 放入 delete_keys（仅删除本员工作用域的记忆）。
 - 新信息是对已有记忆的补充/更新 → 放入 update_memories（写完整更新后内容）。
+  更新全局记忆时需同时回填该条目的 scope（见【现有记忆】中的 [global] 标记）。
 - 偏好/规则变更属于"更新"，不要新增为独立条目。
 
 ## 上下文结构
 上下文按以下顺序给出，用 --- 分隔：
 1. 【历史摘要】（可能不存在）：之前已提取对话的运行式压缩，提供背景。**不要从中提取记忆**——那些对话已处理过。
 2. 【本轮新对话】：自上次提取以来的新消息（仅 content，已剥离工具调用与思考过程）。**只从这里提取记忆**。
-3. 【现有记忆】：当前记忆库内容，用于判断去重、更新或删除。
+3. 【现有记忆】：当前记忆库内容，用于判断去重、更新或删除。以 \`[global]\` 前缀标记的条目为全局记忆。
 
 ## 输出
 若本轮无值得记录的内容，返回 {"memories":[],"delete_keys":[],"update_memories":[],"summary":"..."}。
@@ -73,13 +83,14 @@ summary 是**运行式摘要**：若上下文含【历史摘要】，需整合�
 ${contextParts.join('\n---\n')}
 
 输出 JSON：
-{"memories":[{"key":"唯一标识","topic":"分类标签","content":"≤150字精炼事实"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容（≤150字）","topic":"可选新topic"}],"summary":"运行式摘要（中文，<150字，覆盖历史摘要+本轮新对话）"}`
+{"memories":[{"key":"唯一标识","topic":"分类标签","content":"≤150字精炼事实","scope":"employee|global"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容（≤150字）","topic":"可选新topic","scope":"employee|global"}],"summary":"运行式摘要（中文，<150字，覆盖历史摘要+本轮新对话）"}`
 }
 
 /** 构建记忆合并整理 prompt
  *
  * 融合 Hermes 思想：一周后是否仍有用作为删除判定；简化时强制保留关键细节；
  * 声明式/命令式分场景规范；价值排序指导重要性评估。
+ * 调用方按作用域分桶传入（员工桶或全局桶），本 prompt 不跨桶整理。
  */
 export function buildConsolidationPrompt(memoriesText: string): string {
   return `你是跨任务记忆合并整理器。对记忆库去重、合并、清理，保持精简有用。
@@ -106,17 +117,4 @@ export function buildConsolidationPrompt(memoriesText: string): string {
 ${memoriesText}
 
 JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":"≤150字"}}],"simplify_updates":[{"key":"","content":"≤150字精炼版本"}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
-}
-
-/** 构建对话摘要 prompt */
-export function buildSummaryPrompt(conversationText: string): string {
-  return `请对以下对话历史生成结构化摘要，保留语义完整性。按以下格式输出：
-
-主题：（用一句话概括对话主题）
-要点：
-- （列出3-5个关键讨论点）
-结论：（如有明确结论则写出，否则写"无明确结论"）
-
-对话内容：
-${conversationText}`
 }

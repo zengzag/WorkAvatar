@@ -9,8 +9,10 @@ import {
   FileOutlined,
   DownloadOutlined,
   ReloadOutlined,
+  EditOutlined,
 } from '@ant-design/icons'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { GeneratedFileInfo } from '../../types'
 import { pathToAppFileUrl } from '../../utils/file-url'
@@ -56,6 +58,7 @@ interface FileViewerModalProps {
 const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, open, onClose }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
 
@@ -206,6 +209,17 @@ const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, open, onClose }
                       onClick={handleDownload}
                       title={t('workbench.openInExplorer')}
                     />
+                    {file?.ext === 'docx' && (
+                      <Button
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => {
+                          onClose()
+                          navigate(`/plugin/word-editor?import=${encodeURIComponent(file.path)}`)
+                        }}
+                        title={t('workbench.editInWordEditor')}
+                      />
+                    )}
                   </Space>
                 </div>
               </>

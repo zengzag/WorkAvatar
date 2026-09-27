@@ -350,6 +350,9 @@ export const shellExecTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  permission: 'requires_confirmation',
+  // 文件写入/删除的授权在 handler 内经 FilePermissionService 统一判定（含区外与敏感路径弹窗）
+  selfAuthorized: true,
   // shell_exec 从按需工具提升为常驻工具：直接加入 LLM tools 数组
   onDemand: false,
 }

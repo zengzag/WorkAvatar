@@ -9,6 +9,7 @@ import { MCP_CHANNELS } from './mcp'
 import { PLUGIN_CHANNELS } from './plugin'
 import { NOTIFY_CHANNELS } from './notification'
 import { ATTACHMENT_CHANNELS } from './attachment'
+import { SNAPSHOT_CHANNELS } from './snapshot'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -22,6 +23,7 @@ export const IPC_CHANNELS = {
   ...PLUGIN_CHANNELS,
   ...NOTIFY_CHANNELS,
   ...ATTACHMENT_CHANNELS,
+  ...SNAPSHOT_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -35,3 +37,4 @@ export * from './mcp'
 export * from './plugin'
 export * from './notification'
 export * from './attachment'
+export * from './snapshot'
