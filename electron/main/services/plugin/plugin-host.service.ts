@@ -53,6 +53,9 @@ import { createEventBus } from './plugin-events'
 
 const logger = createLogger('PluginHost')
 
+/** 内核事件名：模板任务运行事件（services.workflow.onRunEvent 的订阅键，非插件命名空间） */
+export const WORKFLOW_EVENT_NAME = 'workflow:run-event'
+
 /** 宿主插件协议版本（manifest.engine 与此比对，破坏性变更升 major） */
 export const PLUGIN_PROTOCOL_VERSION = '0.2.0'
 
@@ -1114,6 +1117,37 @@ class PluginHostService {
           return accumulated
         },
       })
+    }
+
+    // ====== 模板任务运行层（services.workflow，需 capabilities.workflow 授权） ======
+    if (getCapability(record.manifest.capabilities, 'workflow')) {
+      const { default: WorkflowRuntimeService } = require('../workflow-runtime.service')
+      if (!record.disposers) record.disposers = new Set()
+      const disposers = record.disposers
+      services.workflow = {
+        run: async (params: any) => WorkflowRuntimeService.getInstance().startRun(params),
+        getRun: async (runId: string) => WorkflowRuntimeService.getInstance().getRun(runId) ?? null,
+        listRuns: async (filter?: any) => WorkflowRuntimeService.getInstance().listRuns(filter),
+        abortRun: async (runId: string) => WorkflowRuntimeService.getInstance().abortRun(runId),
+        deleteRun: async (runId: string) => WorkflowRuntimeService.getInstance().deleteRun(runId),
+        onRunEvent: (runId: string | undefined, callback: (event: any) => void) => {
+          const listener = (event: any) => {
+            if (runId && event?.runId !== runId) return
+            callback(event)
+          }
+          const set = this.kernelEventListeners.get(WORKFLOW_EVENT_NAME) ?? new Set()
+          set.add(listener)
+          this.kernelEventListeners.set(WORKFLOW_EVENT_NAME, set)
+          const cleanup = () => {
+            disposers.delete(cleanup)
+            const current = this.kernelEventListeners.get(WORKFLOW_EVENT_NAME)
+            current?.delete(listener)
+            if (current && current.size === 0) this.kernelEventListeners.delete(WORKFLOW_EVENT_NAME)
+          }
+          disposers.add(cleanup)
+          return cleanup
+        },
+      }
     }
 
     // ====== 系统集成层（services.events，需 capabilities.events 授权） ======

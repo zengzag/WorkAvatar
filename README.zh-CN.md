@@ -109,6 +109,7 @@ WorkAvatar 不把功能焊死在主程序里：**导航页功能（笔记、日�
 | **数据模型** | 画布式表结构设计，DBML 导入导出；对话式 AI 建模，编辑实时反映到画布 |
 | **文档编辑** | 功能完整的文档编辑器：`.docx` 导入导出与 PDF 导出、富文本排版、AI 助手直接改稿（读结构/读正文/改写段落/替换/增删调序/套用样式）、版本快照，编辑器界面已中文化 |
 | **AI 助手集** | 在应用内以单栏/双栏/标签页方式打开第三方 AI 网页（如豆包、DeepSeek），各站点登录态独立保存，便于多模型对照；使用时请遵守各站点服务条款 |
+| **模板任务** | 在可视化画布上搭建复杂任务流程（输入 / 智能体 / 评审 / 条件 / 循环 / 并行 / 人工 / 工具 / 结束），节点可编排数字员工或仅在本模板生效的临时角色；评审节点给出 PASS/FAIL 结论，流程据此自动多轮迭代直至通过（或达到轮次上限），回写时引擎自动把评审意见与该节点上一轮产出注入被回写的执行节点，无需手工引用评审节点即可按意见修订。运行入参支持提示说明与默认值（运行时自动预填、可留空），画布支持撤销/重做（Ctrl+Z / Ctrl+Shift+Z）、快捷键删除与右键新建/删除。一次运行会在「任务」页生成一条任务，各智能体节点作为其子会话执行，产物与运行历史可追溯。内置「模板设计助手」数字员工，可直接把一段自然语言需求或既有 SOP 转成可运行模板，并支持通过 `workflow_run_template` 由 LLM 直接带参启动运行。 |
 
 <div align="center">
   <table><tr>
@@ -117,6 +118,8 @@ WorkAvatar 不把功能焊死在主程序里：**导航页功能（笔记、日�
   </tr><tr>
     <td><img src="images/voice.png" alt="语音识别" width="100%" /></td>
     <td><img src="images/automation.png" alt="自动化" width="100%" /></td>
+  </tr><tr>
+    <td colspan="2"><img src="images/workflow.png" alt="模板任务画布" width="100%" /></td>
   </tr></table>
 </div>
 
@@ -178,7 +181,7 @@ WorkAvatar 不把功能焊死在主程序里：**导航页功能（笔记、日�
 | 语音识别 | sherpa-onnx |
 | 国际化 | i18next |
 
-> **仓库结构**：内置插件源码（笔记/日历/语音/自动化/数据模型）独立为 git 子仓库 `WorkAvatar-Plugins`，作为本仓库 `plugins/` 的 submodule 依赖；`plugin-sdk/`（插件协议类型契约）由本仓库持有。克隆后需执行 `git submodule update --init --recursive` 拉取插件源码。
+> **仓库结构**：内置插件源码（笔记/日历/语音/自动化/数据模型/模板任务）独立为 git 子仓库 `WorkAvatar-Plugins`，作为本仓库 `plugins/` 的 submodule 依赖；`plugin-sdk/`（插件协议类型契约）由本仓库持有。克隆后需执行 `git submodule update --init --recursive` 拉取插件源码。
 
 ---
 

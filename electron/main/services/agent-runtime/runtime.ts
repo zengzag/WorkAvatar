@@ -74,6 +74,8 @@ interface RunEntry {
   parentAbortSignal?: AbortSignal
   /** 主管（发起方）的员工 id，用于嵌套委托链记录 */
   parentEmployeeId: string
+  /** 执行事件实时回调（launch 方传入，如模板任务引擎采集节点 transcript） */
+  onEvent?: (eventType: string, data: any) => void
   /** 平级协作邮箱：send_message 写、read_messages 读 */
   inbox: Array<{ id: string; fromEmployeeName: string; content: string; sentAt: number }>
 }
@@ -360,6 +362,10 @@ class SubAgentRuntime {
       entry.eventLog.splice(0, entry.eventLog.length - EVENT_LOG_CAP)
     }
     broadcastRunEvent(entry.run.parentSessionId, runId, eventType, data, entry.run.parentConversationId)
+    // launch 方事件回调（如模板任务引擎）：透传未经合并的原始事件，异常隔离不影响执行
+    if (entry.onEvent) {
+      try { entry.onEvent(eventType, data) } catch { /* ignore */ }
+    }
   }
 
   private beginRun(runId: string, data: Record<string, any>): void {
@@ -501,6 +507,8 @@ class SubAgentRuntime {
       status: 'queued',
       instruction: input.instruction,
       contextFiles: input.contextFiles,
+      // 调用方指定复用的子会话（如评审节点预建会话）；executeRun 据此跳过新建
+      conversationId: input.conversationId,
       generatedFiles: [],
       autoDetectedFiles: [],
     }
@@ -510,6 +518,10 @@ class SubAgentRuntime {
 
   /** 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托 */
   private validateDelegationSettings(parentEmployeeId: string, targetEmployeeId: string, targetName: string): string | undefined {
+    // 内联员工（模板任务编排）无委托设置也无 UI 可配置，不走用户侧委托校验
+    if (parentEmployeeId.startsWith('inline:') || targetEmployeeId.startsWith('inline:')) {
+      return undefined
+    }
     const db = DatabaseService.getInstance().getDb()
     const delegationRows = db.prepare(
       'SELECT id, delegation_json FROM employees WHERE id IN (?, ?)'
@@ -614,7 +626,7 @@ class SubAgentRuntime {
   }
 
   /** 创建 run 条目入队执行（launch 与 followup 共用） */
-  private enqueueRun(run: AgentRun, input: Pick<LaunchSubAgentInput, 'delegationDepth' | 'delegationChain' | 'enableThinking' | 'highPermission' | 'parentAbortSignal' | 'parentEmployeeId'>): void {
+  private enqueueRun(run: AgentRun, input: Pick<LaunchSubAgentInput, 'delegationDepth' | 'delegationChain' | 'enableThinking' | 'highPermission' | 'parentAbortSignal' | 'parentEmployeeId' | 'onEvent'>): void {
     let resolveSettled: () => void = () => {}
     const settled = new Promise<void>((resolve) => { resolveSettled = resolve })
     const entry: RunEntry = {
@@ -629,6 +641,7 @@ class SubAgentRuntime {
       highPermission: input.highPermission === true,
       parentAbortSignal: input.parentAbortSignal,
       parentEmployeeId: input.parentEmployeeId,
+      onEvent: input.onEvent,
       inbox: [],
     }
     this.entries.set(run.runId, entry)
@@ -681,6 +694,7 @@ class SubAgentRuntime {
         success: true,
         output: formatRunOutput(run),
         tokenUsage: run.tokenUsage,
+        conversationId: run.conversationId,
         result: {
           summary: run.summary || '',
           generatedFiles: run.generatedFiles,
@@ -690,9 +704,9 @@ class SubAgentRuntime {
       }
     }
     if (run.status === 'cancelled') {
-      return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '已取消' }
+      return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '已取消', conversationId: run.conversationId }
     }
-    return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '执行失败' }
+    return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '执行失败', conversationId: run.conversationId }
   }
 
   /** 取消单个 run 及其子树 */

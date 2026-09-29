@@ -428,6 +428,7 @@ const MessageBubble: React.FC<{
                     isError={!!displayIsError}
                     onToggleSegment={onToggleSegment}
                     getToolDisplayName={getToolDisplayName}
+                    isStreaming={displayIsStreaming}
                   />
                 )}
 

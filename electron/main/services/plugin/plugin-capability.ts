@@ -215,6 +215,14 @@ export function canCallPlugin(
   return { ok: true }
 }
 
+/** 校验模板任务运行能力域（services.workflow，无附加参数） */
+export function canRunWorkflow(
+  capabilities: PluginCapability[] | undefined
+): boolean {
+  const cap = getCapability(capabilities, 'workflow')
+  return !!cap && cap.domain === 'workflow'
+}
+
 /** 校验 manifest 的 capabilities 结构合法性（schema 校验） */
 export function validateCapabilities(
   capabilities: PluginCapability[] | undefined
@@ -305,6 +313,9 @@ export function validateCapabilities(
         }
         break
       }
+      case 'workflow':
+        // 模板任务运行能力域无可配置参数
+        break
       case 'collaboration': {
         const c = cap as { shared?: unknown; call?: unknown }
         if (c.shared !== undefined) {

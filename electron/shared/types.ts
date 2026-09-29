@@ -1,5 +1,5 @@
-/** 员工来源：user=用户创建（DB 落库） / builtin=宿主内置（运行时注册） / plugin=插件声明（运行时注册） */
-export type EmployeeSource = 'user' | 'builtin' | 'plugin'
+/** 员工来源：user=用户创建（DB 落库） / builtin=宿主内置（运行时注册） / plugin=插件声明（运行时注册） / inline=模板任务内联角色（仅运行期） */
+export type EmployeeSource = 'user' | 'builtin' | 'plugin' | 'inline'
 
 export interface Employee {
   id: string

@@ -109,6 +109,7 @@ WorkAvatar does not hard-wire features into the main program: **navigation-page 
 | **Data Model** | Canvas-based schema design with DBML import/export; conversational AI modeling with edits reflected on the canvas in real time |
 | **Document Editor** | A full-featured document editor: `.docx` import/export and PDF export, rich-text layout, an AI assistant that edits directly (read structure / read body / rewrite paragraphs / replace / insert-delete-reorder / apply styles), version snapshots; the editor UI is localized to Chinese |
 | **AI Assistants** | Open third-party AI web apps (such as Doubao and DeepSeek) in single-pane / dual-pane / tabbed layouts, with independent login state stored per site for easy multi-model comparison; use of each site is subject to its own terms of service |
+| **Task Templates** | Build complex workflows on a visual canvas (input / agent / review / condition / loop / parallel / manual / tool / end), composing digital employees or template-scoped ephemeral roles; review nodes return a PASS/FAIL verdict so the flow iterates automatically until it passes (or a round limit is hit), and on a rework loop the engine automatically injects the review feedback plus the node's previous output into the re-executed node, so it can revise by the comments without hand-wiring the review node. Run inputs support hints and default values (prefilled at run time and optional), and the canvas supports undo/redo (Ctrl+Z / Ctrl+Shift+Z), keyboard delete, and right-click create/delete. Runs create a task on the Tasks page whose agent nodes execute as sub-sessions, with artifacts and history tracked. A built-in **Template Designer** employee can turn a plain-language requirement or an existing SOP into a ready-to-run template on its own, and can start a run with inputs via `workflow_run_template`. |
 
 <div align="center">
   <table><tr>
@@ -117,6 +118,8 @@ WorkAvatar does not hard-wire features into the main program: **navigation-page 
   </tr><tr>
     <td><img src="images/voice.png" alt="Voice Recognition" width="100%" /></td>
     <td><img src="images/automation.png" alt="Automation" width="100%" /></td>
+  </tr><tr>
+    <td colspan="2"><img src="images/workflow.png" alt="Task Templates canvas" width="100%" /></td>
   </tr></table>
 </div>
 
@@ -178,7 +181,7 @@ On first launch, an **onboarding wizard** starts automatically: connect a model 
 | Speech recognition | sherpa-onnx |
 | Internationalization | i18next |
 
-> **Repository structure**: the source of the built-in plugins (notes/calendar/voice/automation/data-model) lives in a separate git repository, `WorkAvatar-Plugins`, as the `plugins/` submodule of this repo; `plugin-sdk/` (the plugin protocol type contracts) is owned by this repo. After cloning, run `git submodule update --init --recursive` to fetch the plugin sources.
+> **Repository structure**: the source of the built-in plugins (notes/calendar/voice/automation/data-model/workflow) lives in a separate git repository, `WorkAvatar-Plugins`, as the `plugins/` submodule of this repo; `plugin-sdk/` (the plugin protocol type contracts) is owned by this repo. After cloning, run `git submodule update --init --recursive` to fetch the plugin sources.
 
 ---
 

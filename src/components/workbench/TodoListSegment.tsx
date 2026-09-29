@@ -70,15 +70,17 @@ const TodoListSegmentInner: React.FC<{
   getToolDisplayName: (name: string) => string
   /** 同一消息存在多次清单更新时，仅最后一次默认展开 */
   defaultCollapsed?: boolean
-}> = ({ seg, onToggle, getToolDisplayName, defaultCollapsed = false }) => {
+  /** 当前是否为流式中的最新快照（仅此时 in_progress 项转圈，历史快照/已结束消息静态展示） */
+  isActive?: boolean
+}> = ({ seg, onToggle, getToolDisplayName, defaultCollapsed = false, isActive = false }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   // 默认跟随 defaultCollapsed；用户点击后固定覆盖（新卡片追加时旧卡自动收起）
   const [override, setOverride] = useState<boolean | null>(null)
   const collapsed = override !== null ? override : defaultCollapsed
 
-  // 参数流式生成阶段：清单尚未就绪，轻量加载行替代原始 JSON 流
-  if (seg.isToolArgsStreaming) {
+  // 参数流式生成阶段：清单尚未就绪，轻量加载行替代原始 JSON 流（消息已结束则不转圈）
+  if (seg.isToolArgsStreaming && isActive) {
     return (
       <div style={{ marginBottom: 2, padding: '5px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
         <LoadingOutlined spin style={{ fontSize: 12, color: token.colorTextTertiary }} />
@@ -101,7 +103,21 @@ const TodoListSegmentInner: React.FC<{
       case 'completed':
         return <CheckCircleFilled style={{ fontSize: 13, marginTop: 4, flexShrink: 0, color: token.colorSuccess }} />
       case 'in_progress':
-        return <LoadingOutlined spin style={{ fontSize: 13, marginTop: 4, flexShrink: 0, color: token.colorPrimary }} />
+        // 仅流式中的最新快照转圈；历史快照与已结束消息用静态实心点，避免误导任务仍在进行
+        if (isActive) {
+          return <LoadingOutlined spin style={{ fontSize: 13, marginTop: 4, flexShrink: 0, color: token.colorPrimary }} />
+        }
+        return (
+          <span style={{
+            width: 8,
+            height: 8,
+            marginTop: 7,
+            marginLeft: 2,
+            flexShrink: 0,
+            borderRadius: '50%',
+            background: token.colorPrimary,
+          }} />
+        )
       default:
         return (
           <span style={{
@@ -218,7 +234,8 @@ const TodoListSegment = memo(TodoListSegmentInner, (prev, next) =>
   prev.seg === next.seg &&
   prev.onToggle === next.onToggle &&
   prev.getToolDisplayName === next.getToolDisplayName &&
-  prev.defaultCollapsed === next.defaultCollapsed
+  prev.defaultCollapsed === next.defaultCollapsed &&
+  prev.isActive === next.isActive
 )
 
 export default TodoListSegment

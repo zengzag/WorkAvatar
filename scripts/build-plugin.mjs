@@ -138,6 +138,37 @@ function resolveSource(pluginDir, entry, kind) {
   return path.join(pluginDir, rel + (kind === 'main' ? '.ts' : '.tsx'))
 }
 
+/**
+ * SDK 类型别名插件：@workavatar/plugin-sdk 为「类型契约 + 常量」，不随插件分发。
+ * 仓库内插件经 tsconfig paths 解析；这里在构建期把裸模块标识符解析到主仓库 plugin-sdk/src
+ * （从插件目录向上逐级查找），从而无需为插件安装 SDK 依赖。
+ */
+function pluginSdkAliasPlugin(pluginDir) {
+  const resolveSdkRoot = () => {
+    let dir = path.resolve(pluginDir)
+    while (true) {
+      const candidate = path.join(dir, 'plugin-sdk', 'src')
+      if (fs.existsSync(candidate)) return candidate
+      const parent = path.dirname(dir)
+      if (parent === dir) return null
+      dir = parent
+    }
+  }
+  const sdkRoot = resolveSdkRoot()
+  const entry = (sub) => (sdkRoot ? path.join(sdkRoot, sub) : null)
+  return {
+    name: 'wa-plugin-sdk-alias',
+    setup(build) {
+      build.onResolve({ filter: /^@workavatar\/plugin-sdk(\/.*)?$/ }, (args) => {
+        const sub = args.path.replace(/^@workavatar\/plugin-sdk\/?/, '')
+        const target = sub ? entry(`${sub}.ts`) ?? entry(path.join(sub, 'index.ts')) : entry('index.ts')
+        if (!target || !fs.existsSync(target)) return null
+        return { path: target }
+      })
+    },
+  }
+}
+
 async function buildMain(pluginDir, entry, nativeDeps = []) {
   const outfile = path.join(pluginDir, entry)
   await esbuild.build({
@@ -149,6 +180,7 @@ async function buildMain(pluginDir, entry, nativeDeps = []) {
     format: 'cjs',
     // electron / node 内置 / 插件声明的宿主原生依赖（package.json.nativeDependencies）不打包
     external: ['electron', ...NODE_BUILTINS, ...nativeDeps],
+    plugins: [pluginSdkAliasPlugin(pluginDir)],
   })
   return outfile
 }
@@ -202,7 +234,7 @@ async function buildRenderer(pluginDir, entry) {
     format: 'esm',
     jsx: 'automatic',
     define: { 'import.meta.env.DEV': 'false' },
-    plugins: [createHostExternalsPlugin(), inlineCssPlugin(pluginDir)],
+    plugins: [createHostExternalsPlugin(), inlineCssPlugin(pluginDir), pluginSdkAliasPlugin(pluginDir)],
   })
   return outfile
 }

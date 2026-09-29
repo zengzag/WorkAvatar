@@ -9,6 +9,7 @@ import { useNavConfigStore } from '../stores/nav.store'
 import { useAppearanceStore, getEffectiveTheme } from '../stores/appearance.store'
 import { registerPluginViews, unregisterPluginViews } from './view-slot'
 import { GenericChatView } from '../components/workbench'
+import { PageVisibleContext } from '../components/common/page-visibility'
 import type {
   PluginBridge,
   PluginRendererEntry,
@@ -42,10 +43,12 @@ export interface LoadedPlugin {
   dispose?: () => void
 }
 
-/** 共享库单例注入：插件构建时 external 并 shim 到 __WA_HOST__，避免双 React */
+/** 共享库单例注入：插件构建时 external 并 shim 到 __WA_HOST__，避免双 React。
+ * PageVisibleContext 一并注入：插件 SDK（打包进各插件 bundle）借此读取宿主同一个
+ * Context 实例，使插件页面也能感知 KeepAlive 页内切换 / 窗口可见性。 */
 export function injectHostGlobals(): void {
   const g = globalThis as Record<string, unknown>
-  g.__WA_HOST__ = { React, ReactDOM, jsxRuntime, antd, icons, i18n, reactI18n }
+  g.__WA_HOST__ = { React, ReactDOM, jsxRuntime, antd, icons, i18n, reactI18n, PageVisibleContext }
 }
 
 // ====== 外部文件打开能力（系统"打开方式"传入 .md 等） ======

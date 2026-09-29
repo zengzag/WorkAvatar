@@ -403,6 +403,26 @@ class DatabaseService {
       );
       CREATE INDEX IF NOT EXISTS idx_file_snapshots_conv ON file_snapshots(conversation_id, created_at DESC);
 
+      -- 模板任务运行记录：模板与画布由 workflow 插件持有，内核记录运行实例（节点状态与产物）
+      CREATE TABLE IF NOT EXISTS workflow_runs (
+        run_id TEXT PRIMARY KEY,
+        template_id TEXT DEFAULT '',
+        template_name TEXT DEFAULT '',
+        conversation_id TEXT DEFAULT '',
+        employee_id TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'running',
+        graph_json TEXT DEFAULT '{}',
+        nodes_json TEXT DEFAULT '[]',
+        artifacts_json TEXT DEFAULT '[]',
+        variables_json TEXT DEFAULT '{}',
+        error TEXT,
+        started_at INTEGER,
+        ended_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_conv ON workflow_runs(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_template ON workflow_runs(template_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_started ON workflow_runs(started_at DESC);
+
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
         key,
         topic,
@@ -426,6 +446,13 @@ class DatabaseService {
 
     // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
     migrateMemorySchema(this.db)
+
+    // 模板任务运行记录增量列：运行实际入参（幂等）
+    const workflowRunColumns = this.db.prepare('PRAGMA table_info(workflow_runs)').all() as Array<{ name: string }>
+    if (workflowRunColumns.length > 0 && !workflowRunColumns.some(c => c.name === 'variables_json')) {
+      this.db.exec("ALTER TABLE workflow_runs ADD COLUMN variables_json TEXT DEFAULT '{}'")
+      logger.info('迁移：workflow_runs 增加 variables_json 列')
+    }
 
     // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建
     this.db.exec(

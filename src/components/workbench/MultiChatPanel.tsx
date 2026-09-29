@@ -156,6 +156,7 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
             isError={!!msg.isError}
             onToggleSegment={onToggleSegment}
             getToolDisplayName={getToolDisplayName}
+            isStreaming={displayMsg.isStreaming}
           />
         )}
 
