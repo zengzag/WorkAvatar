@@ -118,6 +118,8 @@ WorkAvatar 不把功能焊死在主程序里：**导航页功能（笔记、日�
   </tr><tr>
     <td><img src="images/voice.png" alt="语音识别" width="100%" /></td>
     <td><img src="images/automation.png" alt="自动化" width="100%" /></td>
+  </tr><tr>
+    <td colspan="2"><img src="images/workflow.png" alt="模板任务画布" width="100%" /></td>
   </tr></table>
 </div>
 

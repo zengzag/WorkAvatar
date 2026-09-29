@@ -118,6 +118,8 @@ WorkAvatar does not hard-wire features into the main program: **navigation-page 
   </tr><tr>
     <td><img src="images/voice.png" alt="Voice Recognition" width="100%" /></td>
     <td><img src="images/automation.png" alt="Automation" width="100%" /></td>
+  </tr><tr>
+    <td colspan="2"><img src="images/workflow.png" alt="Task Templates canvas" width="100%" /></td>
   </tr></table>
 </div>
 
