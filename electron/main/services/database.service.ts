@@ -414,6 +414,7 @@ class DatabaseService {
         graph_json TEXT DEFAULT '{}',
         nodes_json TEXT DEFAULT '[]',
         artifacts_json TEXT DEFAULT '[]',
+        variables_json TEXT DEFAULT '{}',
         error TEXT,
         started_at INTEGER,
         ended_at INTEGER
@@ -445,6 +446,13 @@ class DatabaseService {
 
     // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
     migrateMemorySchema(this.db)
+
+    // 模板任务运行记录增量列：运行实际入参（幂等）
+    const workflowRunColumns = this.db.prepare('PRAGMA table_info(workflow_runs)').all() as Array<{ name: string }>
+    if (workflowRunColumns.length > 0 && !workflowRunColumns.some(c => c.name === 'variables_json')) {
+      this.db.exec("ALTER TABLE workflow_runs ADD COLUMN variables_json TEXT DEFAULT '{}'")
+      logger.info('迁移：workflow_runs 增加 variables_json 列')
+    }
 
     // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建
     this.db.exec(

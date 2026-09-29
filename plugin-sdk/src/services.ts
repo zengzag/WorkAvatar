@@ -365,16 +365,61 @@ export interface PluginWorkflowArtifact {
   kind: 'file' | 'text'
 }
 
+/** Token 用量（与宿主 AgentRunTokenUsage 同构） */
+export interface PluginWorkflowTokenUsage {
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+  cachedTokens?: number
+}
+
+/** 节点执行过程中的单条结构化事件（LLM 对话/工具调用 transcript） */
+export type PluginWorkflowNodeEventType = 'prompt' | 'thinking' | 'text' | 'tool' | 'error'
+
+export interface PluginWorkflowNodeEvent {
+  type: PluginWorkflowNodeEventType
+  /**
+   * 事件在节点 events 数组中的稳定下标：
+   * node:event 增量事件按此下标整体替换对应事件（流式文本/思考均为整槽位更新）。
+   */
+  index: number
+  /** 所属循环轮次（loop 回流导致节点重复执行时区分各轮，首轮为 1） */
+  round?: number
+  /** prompt/thinking/text 的文本内容（已按上限截断） */
+  text?: string
+  /** tool：工具名 */
+  name?: string
+  /** tool：入参（JSON 字符串，已截断） */
+  input?: string
+  /** tool：输出文本（已截断） */
+  output?: string
+  /** tool：调用状态 */
+  status?: 'running' | 'success' | 'failed'
+  error?: string
+  /** 毫秒时间戳（事件级耗时精度，区别于节点级 Unix 秒） */
+  startedAt?: number
+  endedAt?: number
+}
+
 export interface PluginWorkflowNodeRun {
   nodeId: string
   label: string
   type: PluginWorkflowNodeType
   status: PluginWorkflowNodeStatus
+  /** 执行者展示名（数字员工 / 临时角色），供运行过程 UI 展示 */
+  executor?: string
   round?: number
   verdict?: string
   output?: string
   error?: string
+  /** 智能体节点对应的子会话 id（普通任务页可查的同构会话） */
   conversationId?: string
+  /** 智能体节点对应的子运行 id（SubAgentRuntime runId） */
+  childRunId?: string
+  /** 本节点 LLM token 用量 */
+  tokenUsage?: PluginWorkflowTokenUsage
+  /** 执行过程 transcript：任务指令 / 思考 / 正文 / 工具调用 / 错误，按时间顺序 */
+  events?: PluginWorkflowNodeEvent[]
   startedAt?: number
   endedAt?: number
 }
@@ -388,14 +433,21 @@ export interface PluginWorkflowRun {
   status: PluginWorkflowRunStatus
   nodes: PluginWorkflowNodeRun[]
   artifacts: PluginWorkflowArtifact[]
+  /** 本次运行的实际入参（变量名 → 值） */
+  variables?: Record<string, string>
   error?: string
   startedAt?: number
   endedAt?: number
 }
 
+/** node:event 的载荷：按下标整体替换节点 events 中的对应事件 */
+export interface PluginWorkflowNodeEventPayload {
+  event: PluginWorkflowNodeEvent
+}
+
 export interface PluginWorkflowRunEvent {
   runId: string
-  eventType: 'run:start' | 'node:start' | 'node:end' | 'artifact' | 'run:end'
+  eventType: 'run:start' | 'node:start' | 'node:event' | 'node:end' | 'artifact' | 'run:end'
   nodeId?: string
   conversationId?: string
   data?: unknown
@@ -411,6 +463,8 @@ export interface PluginWorkflowService {
   listRuns(filter?: { conversationId?: string; templateId?: string; limit?: number }): Promise<PluginWorkflowRun[]>
   /** 中止运行（级联中止其子会话） */
   abortRun(runId: string): Promise<boolean>
+  /** 删除运行记录（运行中的记录拒绝删除），返回是否实际删除 */
+  deleteRun(runId: string): Promise<boolean>
   /**
    * 订阅运行事件。
    * 不传 runId 时订阅全部运行（插件自行按 event.runId 过滤）。

@@ -23,6 +23,7 @@ import type {
   PluginWorkflowArtifact,
   PluginWorkflowEdgeSpec,
   PluginWorkflowGraphSpec,
+  PluginWorkflowNodeEvent,
   PluginWorkflowNodeRun,
   PluginWorkflowNodeSpec,
   PluginWorkflowEphemeralRole,
@@ -30,6 +31,7 @@ import type {
   PluginWorkflowRunParams,
   PluginWorkflowRunStatus,
   PluginWorkflowRunEvent,
+  PluginWorkflowTokenUsage,
   PluginWorkflowVerdictRules,
 } from '../../../plugin-sdk/src'
 
@@ -41,6 +43,16 @@ const MAX_NODE_EXECUTIONS = 50
 const NODE_WAIT_TIMEOUT_MS = 280_000
 /** 单个节点输出注入下游的最大字符数 */
 const MAX_OUTPUT_INJECT_CHARS = 8000
+/** transcript 文本上限：任务指令 / LLM 正文 */
+const MAX_TRANSCRIPT_TEXT_CHARS = 20_000
+/** transcript 思考过程上限 */
+const MAX_TRANSCRIPT_THINKING_CHARS = 8_000
+/** transcript 单次工具入参/输出上限 */
+const MAX_TOOL_IO_CHARS = 3_000
+/** 流式事件（text/thought）广播合并间隔 */
+const TRANSCRIPT_EVENT_THROTTLE_MS = 200
+/** 流式事件落库节流间隔 */
+const TRANSCRIPT_PERSIST_THROTTLE_MS = 1_000
 /**
  * 主任务会话（模板任务）的归属「运行宿主」员工 id。
  * 它不是员工库里的可见员工，而是运行期注册的**内联员工**——仅用于承载
@@ -61,6 +73,20 @@ interface RunEntry {
   ephemeralIds: string[]
   /** loop 节点累计轮次（nodeId → 轮次），回边上限判定用 */
   loopRounds: Map<string, number>
+  /** 当前迭代轮次（loop 每执行一次自增），供节点轮次标注与 transcript 分轮 */
+  currentRound: number
+  /** 待注入的迭代反馈：回边携带的上一轮评审结论，供被回写节点承接返工 */
+  pendingFeedback: IterationFeedback | null
+}
+
+/** 回边携带的迭代反馈：上一轮触发回写的评审/条件节点结论与意见 */
+interface IterationFeedback {
+  /** 触发回写的节点 id（评审/条件节点） */
+  fromNodeId: string
+  fromLabel: string
+  verdict: string
+  /** 该节点的产出文本（评审意见正文） */
+  output: string
 }
 
 export class WorkflowRuntimeService {
@@ -109,6 +135,8 @@ export class WorkflowRuntimeService {
         .get(conversationId) as { employee_id?: string } | undefined
       if (row?.employee_id) employeeId = row.employee_id
     }
+    // 写入启动消息：任务页仅列出 message_count > 0 的顶层会话，空会话不会出现在任务列表
+    this.appendConversationMessages(conversationId, 'user', this.buildStartMessage(params))
 
     const runId = generateId()
     const run: PluginWorkflowRun = {
@@ -120,9 +148,13 @@ export class WorkflowRuntimeService {
       status: 'running',
       nodes: graph.nodes.map(n => this.initNodeRun(n)),
       artifacts: [],
+      variables: params.variables || {},
       startedAt: Math.floor(Date.now() / 1000),
     }
-    const entry: RunEntry = { run, controller: new AbortController(), nodeRuns: new Map(), ephemeralIds, loopRounds: new Map() }
+    const entry: RunEntry = {
+      run, controller: new AbortController(), nodeRuns: new Map(), ephemeralIds,
+      loopRounds: new Map(), currentRound: 1, pendingFeedback: null,
+    }
     for (const node of run.nodes) entry.nodeRuns.set(node.nodeId, node)
     this.entries.set(runId, entry)
     this.persistRun(run)
@@ -144,13 +176,26 @@ export class WorkflowRuntimeService {
     return true
   }
 
+  /** 删除运行记录；运行中的记录拒绝删除（避免执行循环继续回写） */
+  deleteRun(runId: string): boolean {
+    const entry = this.entries.get(runId || '')
+    if (entry && entry.run.status === 'running') return false
+    const info = DatabaseService.getInstance().getDb()
+      .prepare('DELETE FROM workflow_runs WHERE run_id = ?')
+      .run(runId)
+    this.entries.delete(runId)
+    return info.changes > 0
+  }
+
   getRun(runId: string): PluginWorkflowRun | undefined {
+    this.recoverStaleRuns()
     const entry = this.entries.get(runId)
     if (entry) return entry.run
     return this.loadRunFromDb(runId)
   }
 
   listRuns(filter?: { conversationId?: string; templateId?: string; limit?: number }): PluginWorkflowRun[] {
+    this.recoverStaleRuns()
     const db = DatabaseService.getInstance().getDb()
     const where: string[] = []
     const args: unknown[] = []
@@ -164,6 +209,40 @@ export class WorkflowRuntimeService {
   }
 
   // ====== 执行主循环 ======
+
+  /**
+   * 进程重启后残留的 running 记录已无执行主体：标记为已中止、把执行中的节点置为失败，
+   * 否则永远显示「运行中」且无法删除（一次性恢复，跳过本进程仍在执行的运行）。
+   */
+  private recovered = false
+  private recoverStaleRuns(): void {
+    if (this.recovered) return
+    this.recovered = true
+    try {
+      const db = DatabaseService.getInstance().getDb()
+      const rows = db.prepare("SELECT run_id, nodes_json, conversation_id FROM workflow_runs WHERE status = 'running'").all() as { run_id: string; nodes_json?: string; conversation_id?: string }[]
+      const reason = '应用重启，运行已中断'
+      const now = Math.floor(Date.now() / 1000)
+      for (const row of rows) {
+        if (this.entries.has(row.run_id)) continue
+        const nodes = safeParseArray<PluginWorkflowNodeRun>(row.nodes_json)
+        for (const node of nodes) {
+          if (node.status === 'running') {
+            node.status = 'failed'
+            node.error = reason
+            node.endedAt = node.endedAt || now
+          }
+        }
+        db.prepare(
+          "UPDATE workflow_runs SET status = 'aborted', nodes_json = ?, error = ?, ended_at = COALESCE(ended_at, ?) WHERE run_id = ?"
+        ).run(JSON.stringify(nodes), reason, now, row.run_id)
+        this.appendConversationMessages(row.conversation_id, 'assistant', `${reason}。`)
+        logger.info(`Recovered stale workflow run ${row.run_id}`)
+      }
+    } catch (err: unknown) {
+      logger.warn('Failed to recover stale workflow runs:', err instanceof Error ? err.message : String(err))
+    }
+  }
 
   private async executeRun(
     entry: RunEntry,
@@ -188,8 +267,14 @@ export class WorkflowRuntimeService {
         return
       }
       const nodeRun = entry.nodeRuns.get(current.id)!
-      const loopRound = current.type === 'loop' ? entry.loopRounds.get(current.id) : undefined
-      this.updateNode(entry, nodeRun, { status: 'running', round: loopRound, startedAt: Math.floor(Date.now() / 1000) })
+      // 循环节点即迭代计数点：每次经过即进入新一轮，供节点轮次标注与 transcript 分轮
+      if (current.type === 'loop') {
+        entry.currentRound = (entry.loopRounds.get(current.id) || 0) + 1
+        entry.loopRounds.set(current.id, entry.currentRound)
+      }
+      // 首轮不标注轮次（避免非迭代流程出现「第 1 轮」噪声），仅回写轮次 > 1 时展示
+      const roundTag = entry.currentRound > 1 ? entry.currentRound : undefined
+      this.updateNode(entry, nodeRun, { status: 'running', round: roundTag, startedAt: Math.floor(Date.now() / 1000) })
       this.broadcast(entry.run.runId, 'node:start', current.id, { label: current.label, type: current.type })
 
       let verdict: string | undefined
@@ -202,7 +287,8 @@ export class WorkflowRuntimeService {
           verdict,
           output: result.output?.slice(0, MAX_OUTPUT_INJECT_CHARS),
           conversationId: result.conversationId,
-          round: current.type === 'loop' ? entry.loopRounds.get(current.id) : nodeRun.round,
+          tokenUsage: result.tokenUsage,
+          round: roundTag,
           endedAt: Math.floor(Date.now() / 1000),
         })
       } catch (err: unknown) {
@@ -218,7 +304,7 @@ export class WorkflowRuntimeService {
       }
 
       this.broadcast(entry.run.runId, 'node:end', current.id, { status: 'completed', verdict })
-      current = this.nextNode(entry, graph, current, verdict, nodeMap)
+      current = this.nextNode(entry, graph, current, verdict, nodeMap, outputs)
     }
 
     this.finishRun(entry, 'completed')
@@ -230,7 +316,7 @@ export class WorkflowRuntimeService {
     node: PluginWorkflowNodeSpec,
     params: PluginWorkflowRunParams,
     outputs: Map<string, string>,
-  ): Promise<{ output?: string; verdict?: string; conversationId?: string }> {
+  ): Promise<{ output?: string; verdict?: string; conversationId?: string; tokenUsage?: PluginWorkflowTokenUsage }> {
     switch (node.type) {
       case 'input':
         // 输入节点只做变量标注：入参由运行发起方传入，此处直接产出可引用的文本
@@ -239,16 +325,12 @@ export class WorkflowRuntimeService {
         return { output: this.renderInstruction(node.instruction || '', params.variables, outputs, true) }
       case 'condition':
         return { verdict: this.resolveConditionVerdict(node, params.variables, outputs) }
-      case 'loop': {
-        // 循环节点：本节点即「循环体每次经过的计数点」，回边（下游 → 循环体起点）经过此处累加轮次。
-        // 次数超过上限时，nextNode 会忽略带轮次上限的回边，流程自然退出循环。
-        const count = (entry.loopRounds.get(node.id) || 0) + 1
-        entry.loopRounds.set(node.id, count)
+      case 'loop':
+        // 循环节点无产出：轮次计数在主循环进入节点时统一累加（见 executeRun）
         return {}
-      }
       default: {
-        const prompt = this.renderInstruction(node.instruction || '', params.variables, outputs, true)
-        return this.runAgentNode(entry, node, prompt)
+        const prompt = this.buildNodePrompt(entry, node, params.variables, outputs)
+        return this.runAgentNode(entry, entry.nodeRuns.get(node.id)!, node, prompt)
       }
     }
   }
@@ -256,19 +338,28 @@ export class WorkflowRuntimeService {
   /** 通过 SubAgentRuntime 以子会话方式执行一个智能体节点 */
   private async runAgentNode(
     entry: RunEntry,
+    nodeRun: PluginWorkflowNodeRun,
     node: PluginWorkflowNodeSpec,
     prompt: string,
-  ): Promise<{ output?: string; verdict?: string; conversationId?: string }> {
+  ): Promise<{ output?: string; verdict?: string; conversationId?: string; tokenUsage?: PluginWorkflowTokenUsage }> {
     const run = entry.run
     const targetEmployeeId = this.resolveNodeEmployeeId(node)
     // 评审节点的结构化结论契约文案由调用方经 spec 注入（模板语义不进内核）
     const instruction = node.review?.contractSuffix ? `${prompt}\n${node.review.contractSuffix}` : prompt
-    // 评审节点使用独立的子会话，保证多轮评审上下文隔离
-    const conversationId = node.type === 'review'
+    // 评审节点每次执行预建独立子会话并传入复用，保证多轮评审上下文隔离、且不留空会话
+    const reviewConversationId = node.type === 'review'
       ? WorkspaceManagerService.getInstance().createConversation(
         targetEmployeeId, undefined, `评审: ${node.label}`, true, run.conversationId,
       ).id
-      : run.conversationId!
+      : undefined
+
+    // transcript 采集：指令/思考/正文/工具调用实时进节点事件，供运行详情时间线展示
+    const recorder = new NodeTranscriptRecorder(nodeRun.events || [], nodeRun.round || 1, {
+      broadcast: (event) => this.broadcast(run.runId, 'node:event', node.id, { event }),
+      persist: () => this.persistRun(run),
+    })
+    nodeRun.events = recorder.events
+    recorder.addPrompt(instruction)
 
     const parentEmployeeId = this.resolveParentEmployeeId(entry)
     const launch = SubAgentRuntime.getInstance().launchSubAgent({
@@ -277,21 +368,27 @@ export class WorkflowRuntimeService {
       parentConversationId: run.conversationId!,
       targetEmployeeId,
       instruction,
+      conversationId: reviewConversationId,
       delegationDepth: 0,
       delegationChain: [],
       parentAbortSignal: entry.controller.signal,
       highPermission: true,
+      onEvent: (eventType, data) => recorder.handle(eventType, data),
     })
     if (!launch.success || !launch.runId) {
+      recorder.finalize()
       throw new Error(launch.error || '子会话派发失败')
     }
+    this.updateNode(entry, nodeRun, { childRunId: launch.runId })
     this.broadcast(run.runId, 'node:start', node.id, { childRunId: launch.runId, targetEmployeeName: launch.targetEmployeeName })
 
     const [outcome] = await SubAgentRuntime.getInstance().awaitRuns([launch.runId], NODE_WAIT_TIMEOUT_MS)
     const output = this.outcomeText(outcome)
     if (!outcome?.success && !output) {
+      recorder.finalize()
       throw new Error(outcome?.error || '子会话执行失败')
     }
+    recorder.finalize()
 
     // 采集产物
     const files = [...(outcome?.result?.generatedFiles || []), ...(outcome?.result?.autoDetectedFiles || [])]
@@ -304,7 +401,8 @@ export class WorkflowRuntimeService {
     return {
       output,
       verdict: node.review ? this.parseVerdict(node.review, output) : undefined,
-      conversationId,
+      conversationId: outcome?.conversationId || reviewConversationId,
+      tokenUsage: outcome?.tokenUsage,
     }
   }
 
@@ -330,29 +428,36 @@ export class WorkflowRuntimeService {
     current: PluginWorkflowNodeSpec,
     verdict: string | undefined,
     nodeMap: Map<string, PluginWorkflowNodeSpec>,
+    outputs: Map<string, string>,
   ): PluginWorkflowNodeSpec | undefined {
     const outgoing = graph.edges.filter(e => e.from === current.id)
     if (outgoing.length === 0) return undefined
 
+    // 选边：并行节点取首条主干；否则优先按判定结论匹配分支标签，其次默认分支
+    let chosen: PluginWorkflowEdgeSpec | undefined
     if (current.type === 'parallel') {
-      // 并行节点：取第一条出边作为主干（并行派发由节点自身在上游聚合）
-      return nodeMap.get(outgoing[0].to)
+      chosen = outgoing[0]
+    } else {
+      if (verdict) chosen = outgoing.find(e => this.edgeMatchesVerdict(e, verdict))
+      if (!chosen) chosen = outgoing.find(e => !e.when)
     }
-    if (verdict) {
-      const matched = outgoing.find(e => this.edgeMatchesVerdict(e, verdict))
-      if (matched) return nodeMap.get(matched.to)
-    }
-    const fallback = outgoing.find(e => !e.when)
-    if (!fallback) return undefined
+    if (!chosen) return undefined
 
-    const target = nodeMap.get(fallback.to)
-    // loop 回边上限：回边指向的循环节点轮次用尽后，忽略该回边让流程继续向下
+    let target = nodeMap.get(chosen.to)
+    // loop 回边上限：回到循环节点且轮次用尽时改走后续非回边分支，让流程继续向下（含带 fail 标签的回边）
     if (target?.type === 'loop' && target.maxRounds && target.maxRounds > 0) {
       const used = entry.loopRounds.get(target.id) || 0
-      if (used > target.maxRounds) {
-        const forward = outgoing.find(e => e !== fallback && e.when !== 'loop')
-        return forward ? nodeMap.get(forward.to) : undefined
+      if (used >= target.maxRounds) {
+        const forward = outgoing.find(e => e !== chosen && e.when !== 'loop' && !(verdict && this.edgeMatchesVerdict(e, verdict)))
+        target = forward ? nodeMap.get(forward.to) : undefined
       }
+    }
+    // 评审节点结论更新迭代反馈：fail → 记录本轮评审意见供下游返工节点承接；
+    // pass → 清空历史反馈，避免陈旧意见泄漏到后续无关节点
+    if (target && current.type === 'review') {
+      entry.pendingFeedback = verdict === 'fail'
+        ? { fromNodeId: current.id, fromLabel: current.label, verdict, output: outputs.get(current.id) || '' }
+        : null
     }
     return target
   }
@@ -379,8 +484,38 @@ export class WorkflowRuntimeService {
   // ====== 变量插值 ======
 
   /**
+   * 组装节点提示词：在指令插值基础上，若处于迭代回写路径，则前置上一轮评审意见与自身上一轮产出，
+   * 让被回写的执行节点能「按意见修订」而不是从头重写（回写触发节点自身不再注入，并在此消费掉反馈）。
+   */
+  private buildNodePrompt(
+    entry: RunEntry,
+    node: PluginWorkflowNodeSpec,
+    variables: Record<string, string> | undefined,
+    outputs: Map<string, string>,
+  ): string {
+    const base = this.renderInstruction(node.instruction || '', variables, outputs, true)
+    const feedback = entry.pendingFeedback
+    if (!feedback) return base
+    // 回写触发节点（评审/条件）再次执行：反馈已送达被回写节点，消费完毕
+    if (node.id === feedback.fromNodeId) {
+      entry.pendingFeedback = null
+      return base
+    }
+    // 仅注入执行类节点：评审/条件节点只针对新产出复核，不承接返工上下文
+    if (node.type === 'review' || node.type === 'condition') return base
+
+    const sections: string[] = ['【迭代返工】流程回到本节点重新执行，请结合下列上一轮反馈修订产出，不要从头重写。']
+    const verdict = feedback.verdict ? `（结论：${feedback.verdict}）` : ''
+    sections.push(`— 来自「${feedback.fromLabel}」的上一轮反馈${verdict}：\n${feedback.output.trim().slice(0, MAX_OUTPUT_INJECT_CHARS) || '(未给出文字意见)'}`)
+    const previous = entry.nodeRuns.get(node.id)?.output
+    if (previous) sections.push(`— 你上一轮的产出（供修订参考）：\n${previous}`)
+    return `${sections.join('\n\n')}\n\n————\n\n${base}`
+  }
+
+  /**
    * 指令模板插值：支持 {{var}} 运行入参、{{nodeId}} 节点输出。
-   * strict=true 时对未解析变量保留原文（便于用户发现拼写问题）。
+   * 变量名不限 ASCII（中文参数名常见），除花括号外任意字符均可；strict=true 时
+   * 对未解析变量保留原文（便于用户发现拼写问题）。
    */
   private renderInstruction(
     template: string,
@@ -388,9 +523,10 @@ export class WorkflowRuntimeService {
     outputs: Map<string, string>,
     strict = false,
   ): string {
-    return String(template || '').replace(/\{\{\s*([\w.:-]+)\s*\}\}/g, (raw, key: string) => {
-      if (variables && key in variables) return String(variables[key] ?? '')
-      const output = outputs.get(key)
+    return String(template || '').replace(/\{\{([^{}]+)\}\}/g, (raw, key: string) => {
+      const name = key.trim()
+      if (variables && name in variables) return String(variables[name] ?? '')
+      const output = outputs.get(name)
       if (output !== undefined) return output.slice(0, MAX_OUTPUT_INJECT_CHARS)
       return strict ? raw : ''
     })
@@ -481,7 +617,17 @@ export class WorkflowRuntimeService {
   // ====== 运行状态维护 ======
 
   private initNodeRun(node: PluginWorkflowNodeSpec): PluginWorkflowNodeRun {
-    return { nodeId: node.id, label: node.label || node.id, type: node.type, status: 'pending' }
+    return { nodeId: node.id, label: node.label || node.id, type: node.type, status: 'pending', executor: this.resolveNodeExecutor(node) }
+  }
+
+  /** 节点执行者展示名：数字员工名 > 临时角色名（未知名时回退 id） */
+  private resolveNodeExecutor(node: PluginWorkflowNodeSpec): string | undefined {
+    if (node.employeeId) {
+      const registered = EmployeeRegistryService.getInstance().getRegistered(node.employeeId)
+      if (registered) return registered.name
+      return WorkspaceManagerService.getInstance().getEmployee(node.employeeId)?.name || node.employeeId
+    }
+    return node.ephemeralRole?.name || undefined
   }
 
   private updateNode(entry: RunEntry, node: PluginWorkflowNodeRun, patch: Partial<PluginWorkflowNodeRun>): void {
@@ -495,8 +641,11 @@ export class WorkflowRuntimeService {
     run.error = error
     run.endedAt = Math.floor(Date.now() / 1000)
     this.persistRun(run)
+    this.appendConversationMessages(run.conversationId, 'assistant', this.buildFinishMessage(run))
     this.broadcast(run.runId, 'run:end', undefined, { status, error })
     this.unregisterEphemeralRoles(entry)
+    // 终态后释放内存条目（getRun 随后回落 DB），避免已完成运行常驻内存
+    this.entries.delete(run.runId)
   }
 
   private unregisterEphemeralRoles(entry: RunEntry): void {
@@ -539,15 +688,67 @@ export class WorkflowRuntimeService {
     return graph.nodes.find(n => !targets.has(n.id)) || graph.nodes[0]
   }
 
+  // ====== 任务会话消息（任务页仅列出有消息的顶层会话） ======
+
+  /** 向任务会话追加一条消息并同步 message_count / last_message_at */
+  private appendConversationMessages(conversationId: string | undefined, role: 'user' | 'assistant', content: string): void {
+    if (!conversationId || !content) return
+    try {
+      const row = DatabaseService.getInstance().getDb()
+        .prepare('SELECT messages_json FROM conversations WHERE id = ?')
+        .get(conversationId) as { messages_json?: string } | undefined
+      if (!row) return
+      const existing = safeParseArray<Record<string, unknown>>(row.messages_json)
+      const now = Date.now()
+      const next = [...existing, { id: `msg_${generateId()}`, role, content, timestamp: now }]
+      WorkspaceManagerService.getInstance().updateConversation(conversationId, {
+        messages_json: JSON.stringify(next),
+        message_count: next.length,
+        last_message_at: Math.floor(now / 1000),
+      })
+    } catch (err: unknown) {
+      logger.warn(`Failed to append message to conversation ${conversationId}:`, err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /** 启动消息：模板任务发起记录 + 运行入参 */
+  private buildStartMessage(params: PluginWorkflowRunParams): string {
+    const lines = [`模板任务「${params.templateName || '未命名模板'}」已启动。`]
+    const variables = Object.entries(params.variables || {}).filter(([, v]) => String(v ?? '').trim())
+    if (variables.length > 0) {
+      lines.push('', '运行入参：')
+      for (const [name, value] of variables) lines.push(`${name}：${String(value).slice(0, 500)}`)
+    }
+    return lines.join('\n')
+  }
+
+  /** 结束消息：状态 / 节点进度 / 耗时 / 失败原因 / 产出文件 */
+  private buildFinishMessage(run: PluginWorkflowRun): string {
+    const done = run.nodes.filter(n => n.status === 'completed').length
+    const head = run.status === 'completed' ? '模板任务执行完成'
+      : run.status === 'failed' ? '模板任务执行失败'
+      : run.status === 'aborted' ? '模板任务已中止'
+      : '模板任务结束'
+    const duration = formatRunDuration(run.startedAt, run.endedAt)
+    const lines = [`${head}（节点进度 ${done}/${run.nodes.length}${duration ? `，耗时 ${duration}` : ''}）。`]
+    if (run.status === 'failed' && run.error) lines.push(`失败原因：${run.error.slice(0, 1000)}`)
+    if (run.artifacts.length > 0) {
+      lines.push('', '产出文件：')
+      for (const artifact of run.artifacts.slice(0, 20)) lines.push(`- ${artifact.path}`)
+    }
+    return lines.join('\n')
+  }
+
   // ====== 持久化 ======
 
   private persistRun(run: PluginWorkflowRun): void {
     try {
       DatabaseService.getInstance().getDb().prepare(
-        `INSERT INTO workflow_runs (run_id, template_id, template_name, conversation_id, employee_id, status, graph_json, nodes_json, artifacts_json, error, started_at, ended_at)
-         VALUES (@run_id, @template_id, @template_name, @conversation_id, @employee_id, @status, @graph_json, @nodes_json, @artifacts_json, @error, @started_at, @ended_at)
+        `INSERT INTO workflow_runs (run_id, template_id, template_name, conversation_id, employee_id, status, graph_json, nodes_json, artifacts_json, variables_json, error, started_at, ended_at)
+         VALUES (@run_id, @template_id, @template_name, @conversation_id, @employee_id, @status, @graph_json, @nodes_json, @artifacts_json, @variables_json, @error, @started_at, @ended_at)
          ON CONFLICT(run_id) DO UPDATE SET
            status = excluded.status, nodes_json = excluded.nodes_json, artifacts_json = excluded.artifacts_json,
+           variables_json = excluded.variables_json,
            error = excluded.error, ended_at = excluded.ended_at`
       ).run({
         run_id: run.runId,
@@ -559,6 +760,7 @@ export class WorkflowRuntimeService {
         graph_json: '{}',
         nodes_json: JSON.stringify(run.nodes),
         artifacts_json: JSON.stringify(run.artifacts),
+        variables_json: JSON.stringify(run.variables || {}),
         error: run.error || '',
         started_at: run.startedAt || null,
         ended_at: run.endedAt || null,
@@ -576,6 +778,7 @@ export class WorkflowRuntimeService {
   }
 
   private rowToRun(row: WorkflowRunRow): PluginWorkflowRun {
+    const variables = safeParseRecord(row.variables_json)
     return {
       runId: row.run_id,
       templateId: row.template_id || undefined,
@@ -585,6 +788,7 @@ export class WorkflowRuntimeService {
       status: row.status as PluginWorkflowRunStatus,
       nodes: safeParseArray<PluginWorkflowNodeRun>(row.nodes_json),
       artifacts: safeParseArray<PluginWorkflowArtifact>(row.artifacts_json),
+      variables: Object.keys(variables).length > 0 ? variables : undefined,
       error: row.error || undefined,
       startedAt: row.started_at || undefined,
       endedAt: row.ended_at || undefined,
@@ -601,6 +805,7 @@ interface WorkflowRunRow {
   status: string
   nodes_json?: string
   artifacts_json?: string
+  variables_json?: string
   error?: string
   started_at?: number
   ended_at?: number
@@ -613,6 +818,205 @@ function safeParseArray<T>(json?: string): T[] {
   } catch {
     return []
   }
+}
+
+function safeParseRecord(json?: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(json || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, string>
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+/** 截断文本并在超限处标注省略 */
+function clipText(text: string, max: number): string {
+  const value = String(text || '')
+  return value.length > max ? `${value.slice(0, max)}…` : value
+}
+
+/** 工具入参/输出统一转展示文本（对象美化 JSON，字符串原样） */
+function stringifyToolIO(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+interface RecorderHooks {
+  /** 结构化事件增量广播（节流由记录器内部控制） */
+  broadcast: (event: PluginWorkflowNodeEvent) => void
+  /** 落库回调（节流由记录器内部控制） */
+  persist: () => void
+}
+
+/**
+ * 单个智能体节点执行 transcript 的采集器：
+ * 把 SubAgentRuntime 的流式事件（thought/chunk/tool_call/tool_result/error）归并为
+ * 有序的节点事件数组；思考/正文槽位按时间顺序追加、整槽位广播，工具按下发顺序匹配结果。
+ */
+class NodeTranscriptRecorder {
+  readonly events: PluginWorkflowNodeEvent[]
+  /** 待广播的脏事件下标（text/thinking 合并节流，工具类立即广播） */
+  private dirtyBroadcast = new Set<number>()
+  private broadcastTimer: NodeJS.Timeout | null = null
+  private persistTimer: NodeJS.Timeout | null = null
+  private finalized = false
+
+  constructor(initial: PluginWorkflowNodeEvent[], private readonly round: number, private readonly hooks: RecorderHooks) {
+    // 循环回流重复执行同一节点时，沿用历史各轮事件继续追加
+    this.events = initial.length ? initial.map(e => ({ ...e })) : []
+  }
+
+  /** 任务指令（每轮执行一条） */
+  addPrompt(text: string): void {
+    this.appendEvent({
+      type: 'prompt',
+      text: clipText(text, MAX_TRANSCRIPT_TEXT_CHARS),
+      startedAt: Date.now(),
+    }, true)
+  }
+
+  /** 处理 SubAgentRuntime 原始事件 */
+  handle(eventType: string, data: any): void {
+    if (this.finalized) return
+    switch (eventType) {
+      case 'thought':
+        this.appendStreaming('thinking', String(data || ''), MAX_TRANSCRIPT_THINKING_CHARS)
+        break
+      case 'chunk':
+        this.appendStreaming('text', String(data || ''), MAX_TRANSCRIPT_TEXT_CHARS)
+        break
+      case 'tool_call':
+        this.onToolCall(data)
+        break
+      case 'tool_result':
+        this.onToolResult(data)
+        break
+      case 'error':
+        this.appendEvent({
+          type: 'error',
+          text: typeof data?.error === 'string' ? data.error : stringifyToolIO(data),
+          startedAt: Date.now(),
+        }, true)
+        break
+      default:
+        break
+    }
+  }
+
+  /** 结束采集：冲刷待广播/落库的节流数据 */
+  finalize(): void {
+    if (this.finalized) return
+    this.finalized = true
+    if (this.broadcastTimer) { clearTimeout(this.broadcastTimer); this.broadcastTimer = null }
+    if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null }
+    this.flushBroadcast()
+    this.hooks.persist()
+  }
+
+  /** 思考/正文：紧接同类型事件则并入，否则新开一条（还原 思考→工具→正文 的多轮顺序） */
+  private appendStreaming(type: 'thinking' | 'text', delta: string, max: number): void {
+    if (!delta) return
+    const last = this.events[this.events.length - 1]
+    if (last && last.type === type && last.round === this.round) {
+      last.text = clipText(`${last.text || ''}${delta}`, max)
+      this.markDirty(last.index)
+    } else {
+      const event = this.appendEvent({ type, text: clipText(delta, max), startedAt: Date.now() }, false)
+      this.markDirty(event.index)
+    }
+  }
+
+  private onToolCall(data: any): void {
+    const event: Omit<PluginWorkflowNodeEvent, 'index' | 'round'> = {
+      type: 'tool',
+      name: String(data?.name || 'tool'),
+      input: clipText(stringifyToolIO(data?.args), MAX_TOOL_IO_CHARS),
+      status: 'running',
+      startedAt: Date.now(),
+    }
+    this.appendEvent(event, true)
+  }
+
+  /** 工具结果：onToolResult 不带 id，匹配同名最早未完成的工具调用；匹配不到补一条已完成事件 */
+  private onToolResult(data: any): void {
+    const name = String(data?.name || 'tool')
+    const target = this.events.find(e => e.type === 'tool' && e.name === name && e.status === 'running' && e.round === this.round)
+    const failed = data?.success === false
+    const output = clipText(stringifyToolIO(failed ? data?.error : data?.result), MAX_TOOL_IO_CHARS)
+    if (target) {
+      target.status = failed ? 'failed' : 'success'
+      target.output = output
+      target.endedAt = Date.now()
+      this.markDirty(target.index, true)
+    } else {
+      this.appendEvent({
+        type: 'tool',
+        name,
+        output,
+        status: failed ? 'failed' : 'success',
+        startedAt: Date.now(),
+        endedAt: Date.now(),
+      }, true)
+    }
+  }
+
+  private appendEvent(event: Omit<PluginWorkflowNodeEvent, 'index' | 'round'>, immediate: boolean): PluginWorkflowNodeEvent {
+    const full: PluginWorkflowNodeEvent = { ...event, index: this.events.length, round: this.round }
+    this.events.push(full)
+    if (immediate) this.hooks.broadcast(full)
+    this.schedulePersist()
+    return full
+  }
+
+  private markDirty(index: number, immediate = false): void {
+    this.dirtyBroadcast.add(index)
+    if (immediate) {
+      this.flushBroadcast()
+    } else {
+      this.scheduleBroadcast()
+    }
+    this.schedulePersist()
+  }
+
+  private scheduleBroadcast(): void {
+    if (this.broadcastTimer) return
+    this.broadcastTimer = setTimeout(() => {
+      this.broadcastTimer = null
+      this.flushBroadcast()
+    }, TRANSCRIPT_EVENT_THROTTLE_MS)
+  }
+
+  private flushBroadcast(): void {
+    if (this.dirtyBroadcast.size === 0) return
+    for (const index of this.dirtyBroadcast) {
+      const event = this.events[index]
+      if (event) this.hooks.broadcast(event)
+    }
+    this.dirtyBroadcast.clear()
+  }
+
+  private schedulePersist(): void {
+    if (this.persistTimer) return
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null
+      this.hooks.persist()
+    }, TRANSCRIPT_PERSIST_THROTTLE_MS)
+  }
+}
+
+/** 运行耗时文案（Unix 秒），未结束返回空串 */
+function formatRunDuration(startSec?: number, endSec?: number): string {
+  if (!startSec || !endSec) return ''
+  const secs = Math.max(endSec - startSec, 0)
+  if (secs < 60) return `${secs}s`
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
 }
 
 export default WorkflowRuntimeService

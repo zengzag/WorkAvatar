@@ -58,6 +58,10 @@ export type {
   PluginWorkflowRunParams,
   PluginWorkflowArtifact,
   PluginWorkflowNodeRun,
+  PluginWorkflowNodeEvent,
+  PluginWorkflowNodeEventType,
+  PluginWorkflowNodeEventPayload,
+  PluginWorkflowTokenUsage,
   PluginWorkflowRun,
   PluginWorkflowRunEvent,
 } from './services'

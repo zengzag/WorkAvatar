@@ -48,11 +48,15 @@ export interface LaunchSubAgentInput {
   targetEmployeeId: string
   instruction: string
   contextFiles?: string[]
+  /** 复用指定子会话（如评审节点预建的会话）；不传则新建子会话 */
+  conversationId?: string
   delegationDepth: number
   delegationChain: string[]
   parentAbortSignal?: AbortSignal
   enableThinking?: ThinkingLevel
   highPermission?: boolean
+  /** 执行事件实时回调（chunk/thought/tool_call/tool_result 等，未经 ring buffer 合并） */
+  onEvent?: (eventType: string, data: any) => void
 }
 
 /** 追问输入：针对已完成委托（run）继续同一子会话的多轮对话 */
@@ -94,4 +98,6 @@ export interface AgentRunOutcome {
   error?: string
   tokenUsage?: AgentRunTokenUsage
   result?: AgentRunResult
+  /** 本次执行实际使用的子会话 id（新建或复用） */
+  conversationId?: string
 }
