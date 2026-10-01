@@ -696,7 +696,7 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(model.compat.thinkingFormat).toBe('zai')
     expect(model.compat.zaiToolStream).toBe(true)
     expect(model.baseUrl).toBe('https://api.openai.com/v1')
-    expect(model.maxTokens).toBe(8192)
+    expect(model.maxTokens).toBe(48 * 1024)
   })
 
   it('createPiModel：opencode-go 的 alwaysReasoning 与会话亲和头', async () => {

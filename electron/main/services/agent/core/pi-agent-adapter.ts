@@ -62,8 +62,8 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
     // 视觉能力：用于 pi-ai 序列化校验与上下文注入判断（不支持图片时不注入工具返回的图片）
     input: config.supportsImageInput ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
+    contextWindow: 256 * 1024,
+    maxTokens: 48 * 1024,
     compat: {
       supportsUsageInStreaming: true,
       supportsFinishReason: true,

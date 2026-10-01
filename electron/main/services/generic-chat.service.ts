@@ -159,7 +159,7 @@ class GenericChatService {
 
     const agentOptions: BaseAgentOptions = {
       memoryConfig: {
-        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 128000),
+        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 256 * 1024),
         strategy: modelConfig?.memory_strategy ?? 'sliding_window_with_summary',
         recentTurnsToKeep: modelConfig?.recent_turns_to_keep ?? 10,
       },
