@@ -17,8 +17,10 @@ export interface EmployeeDelegationTarget {
 
 export interface EmployeeAgentConfig extends GenericAgentConfig {
   employeeId?: string
-  /** 可委托员工列表（委托能力开启时非空）：随稳定上下文消息注入 Delegation 段 */
+  /** 可委托员工列表：随稳定上下文消息注入 Delegation 段 */
   delegationTargets?: EmployeeDelegationTarget[]
+  /** 委托能力开关（targets 为空时仍注入临时角色/模板说明） */
+  delegationEnabled?: boolean
 }
 
 /**
@@ -74,7 +76,7 @@ export class EmployeeAgent extends GenericAgent {
       onDemandToolList: onDemandToolList || undefined,
       hasSkills: useSkills && !!this.skillsPrompt,
     })
-    const delegation = buildDelegationPrompt(this.employeeConfig.delegationTargets || [])
+    const delegation = buildDelegationPrompt(this.employeeConfig.delegationTargets || [], this.employeeConfig.delegationEnabled === true)
     return [capabilities, delegation].filter((x): x is string => !!x)
   }
 

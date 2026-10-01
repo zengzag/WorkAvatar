@@ -585,25 +585,18 @@ export class WorkflowRuntimeService {
   }
 
   private toRegisteredEmployee(role: PluginWorkflowEphemeralRole): RegisteredEmployee {
-    const key = role.key.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 63)
-    return {
-      id: `inline:${key}`,
-      source: 'inline',
-      source_key: key,
-      name: role.name || key,
+    // 字段构造复用注册表统一 helper（与委托临时子智能体同源），仅 description 沿用模板任务语义
+    return EmployeeRegistryService.getInstance().toInlineRegisteredEmployee(`inline:${this.slugifyKey(role.key)}`, {
+      name: role.name || this.slugifyKey(role.key),
       description: '模板任务内联角色（仅在模板运行期间存在）',
-      rules: role.systemPrompt,
-      profile_json: JSON.stringify({ roleName: role.name || key }),
-      avatar_type: 'default',
-      memory_enabled: false,
-      arch_version: 1,
-      total_tasks: 0,
-      total_approvals: 0,
-      created_at: 0,
-      updated_at: 0,
-      defaultTools: role.tools,
-      defaultSkills: role.skills,
-    }
+      systemPrompt: role.systemPrompt,
+      tools: role.tools,
+      skills: role.skills,
+    })
+  }
+
+  private slugifyKey(raw: string): string {
+    return raw.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 63)
   }
 
   private resolveNodeEmployeeId(node: PluginWorkflowNodeSpec): string {

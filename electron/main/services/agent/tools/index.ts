@@ -39,3 +39,14 @@ export { delegateTool } from './delegate.tool'
 export { followupTool } from './followup.tool'
 export { launchAgentsTool, awaitAgentsTool } from './launch-agents.tool'
 export { sendMessageTool, readMessagesTool } from './collab-messages.tool'
+export {
+  listSubagentsTool,
+  listSubagentProfilesTool,
+  getSubagentStatusTool,
+  cancelSubagentTool,
+  readRunNotificationsTool,
+  taskItemCreateTool,
+  taskItemUpdateTool,
+  taskItemListTool,
+  submitStructuredResultTool,
+} from './subagent-tools'

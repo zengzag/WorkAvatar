@@ -384,6 +384,21 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id);
 
+      -- 可复用子智能体模板（SubAgentProfile）：主管委托时可按 profile 指派
+      CREATE TABLE IF NOT EXISTS sub_agent_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        system_prompt TEXT NOT NULL DEFAULT '',
+        tools_json TEXT DEFAULT '[]',
+        skills_json TEXT DEFAULT '[]',
+        provider_id TEXT,
+        model_id TEXT,
+        source TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
+
       -- 工作区文件改动快照：文件写入/编辑/删除前记录变更前状态，供任务内回滚（见 file-snapshot.service）
       CREATE TABLE IF NOT EXISTS file_snapshots (
         id TEXT PRIMARY KEY,
@@ -452,6 +467,19 @@ class DatabaseService {
     if (workflowRunColumns.length > 0 && !workflowRunColumns.some(c => c.name === 'variables_json')) {
       this.db.exec("ALTER TABLE workflow_runs ADD COLUMN variables_json TEXT DEFAULT '{}'")
       logger.info('迁移：workflow_runs 增加 variables_json 列')
+    }
+
+    // 子会话运行记录增量列（幂等）：临时角色规格 / 生命周期 / 最近活动时间
+    const subAgentRunColumns = this.db.prepare('PRAGMA table_info(sub_agent_runs)').all() as Array<{ name: string }>
+    for (const [name, ddl] of [
+      ['ephemeral_json', 'TEXT'],
+      ['lifecycle', "TEXT DEFAULT ''"],
+      ['last_activity_at', 'INTEGER'],
+    ] as const) {
+      if (subAgentRunColumns.length > 0 && !subAgentRunColumns.some(c => c.name === name)) {
+        this.db.exec(`ALTER TABLE sub_agent_runs ADD COLUMN ${name} ${ddl}`)
+        logger.info(`迁移：sub_agent_runs 增加 ${name} 列`)
+      }
     }
 
     // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建

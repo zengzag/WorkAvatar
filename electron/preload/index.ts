@@ -77,6 +77,10 @@ import type {
   PluginMessageActionInfo,
   FileChangeItem,
   SnapshotRevertResult,
+  SubAgentProfile,
+  SubAgentProfileCreateParams,
+  SubAgentProfileUpdateParams,
+  SubAgentProfileResult,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -522,6 +526,17 @@ const electronAPI = {
     resolveFileOwner: (extension: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
+  },
+
+  // 子智能体模板（SubAgentProfile）管理
+  subagent: {
+    listProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_LIST) as Promise<SubAgentProfile[]>,
+    createProfile: (params: SubAgentProfileCreateParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_CREATE, params) as Promise<SubAgentProfileResult>,
+    updateProfile: (params: SubAgentProfileUpdateParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_UPDATE, params) as Promise<SubAgentProfileResult>,
+    deleteProfile: (id: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_DELETE, id) as Promise<SubAgentProfileResult>,
   },
 }
 
