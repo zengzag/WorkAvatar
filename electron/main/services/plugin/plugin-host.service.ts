@@ -1130,6 +1130,7 @@ class PluginHostService {
         listRuns: async (filter?: any) => WorkflowRuntimeService.getInstance().listRuns(filter),
         abortRun: async (runId: string) => WorkflowRuntimeService.getInstance().abortRun(runId),
         deleteRun: async (runId: string) => WorkflowRuntimeService.getInstance().deleteRun(runId),
+        deleteRunWorkspace: async (path: string) => WorkflowRuntimeService.getInstance().deleteRunWorkspace(path),
         onRunEvent: (runId: string | undefined, callback: (event: any) => void) => {
           const listener = (event: any) => {
             if (runId && event?.runId !== runId) return

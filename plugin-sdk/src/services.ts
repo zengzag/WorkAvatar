@@ -453,6 +453,15 @@ export interface PluginWorkflowRunEvent {
   data?: unknown
 }
 
+/** 删除运行记录的结果：ok=false 表示被拒绝（如运行中）；工作区非空时回传目录信息供渲染端询问是否一并删除 */
+export interface PluginWorkflowDeleteRunResult {
+  ok: boolean
+  /** 运行工作区目录（仅当目录非空时回传） */
+  taskDir?: string
+  /** 工作区目录是否非空（为空时内核已直接清理） */
+  taskDirNonEmpty?: boolean
+}
+
 /** 模板任务运行服务（需 capabilities.workflow 授权） */
 export interface PluginWorkflowService {
   /** 启动一次模板任务运行，立即返回 runId（后台执行） */
@@ -463,8 +472,13 @@ export interface PluginWorkflowService {
   listRuns(filter?: { conversationId?: string; templateId?: string; limit?: number }): Promise<PluginWorkflowRun[]>
   /** 中止运行（级联中止其子会话） */
   abortRun(runId: string): Promise<boolean>
-  /** 删除运行记录（运行中的记录拒绝删除），返回是否实际删除 */
-  deleteRun(runId: string): Promise<boolean>
+  /**
+   * 删除运行记录（运行中的记录拒绝删除）。
+   * 同时删除运行会话（级联其节点子会话），工作区目录非空时回传 taskDir 供渲染端二次确认。
+   */
+  deleteRun(runId: string): Promise<PluginWorkflowDeleteRunResult>
+  /** 删除运行工作区目录（移至回收站）；仅允许删除数据目录 employees/ 下的路径 */
+  deleteRunWorkspace(path: string): Promise<boolean>
   /**
    * 订阅运行事件。
    * 不传 runId 时订阅全部运行（插件自行按 event.runId 过滤）。

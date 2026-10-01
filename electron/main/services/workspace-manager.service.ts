@@ -636,6 +636,7 @@ class WorkspaceManagerService {
         WHERE conversations_fts MATCH ?
           AND c.status = 'active'
           AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
+          AND c.employee_id NOT LIKE 'inline:%'
           ${employeePlaceholders}
         ORDER BY title_score DESC, f.rank ASC
         LIMIT ?
@@ -679,6 +680,7 @@ class WorkspaceManagerService {
           JOIN employees e ON e.id = c.employee_id
           WHERE c.status = 'active'
             AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
+            AND c.employee_id NOT LIKE 'inline:%'
             ${employeePlaceholders}
             AND (${andClause})
           ORDER BY title_score DESC, content_hits DESC, COALESCE(c.last_message_at, c.created_at) DESC

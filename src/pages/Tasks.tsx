@@ -181,12 +181,9 @@ const Tasks: React.FC = () => {
       setNewTaskEmployeeId(null)
     }
     if (currentEmployeeId && !ids.has(currentEmployeeId)) {
-      // 模板任务的内联员工（inline:*）不进员工列表，但其会话是有效任务：
-      // 聊天模式下保留选中态以便打开会话；新建任务模式下重置回真实员工
-      const keepInline = taskMode === 'chat' && currentEmployeeId.startsWith('inline:')
-      if (!keepInline) setCurrentEmployeeId(undefined)
+      setCurrentEmployeeId(undefined)
     }
-  }, [employees, employeesLoaded, filterEmployeeId, newTaskEmployeeId, currentEmployeeId, taskMode])
+  }, [employees, employeesLoaded, filterEmployeeId, newTaskEmployeeId, currentEmployeeId])
 
   // 新任务模式下自动选择第一个员工，避免未选员工时发送消息无效
   useEffect(() => {

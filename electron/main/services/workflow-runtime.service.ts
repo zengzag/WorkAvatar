@@ -3,8 +3,8 @@
  *
  * 设计要点：
  * - 模板的持久化与画布 UI 由 workflow 插件持有；内核只负责「运行」这一段。
- * - 一次运行生成一条主任务会话（任务页可见），每个智能体节点作为其子会话执行，
- *   复用 SubAgentRuntime 的并发控制、级联中止、事件广播与产物采集。
+ * - 一次运行生成一条主任务会话（仅作运行工作区与子会话父级，**不写消息、不出现在任务页**），
+ *   每个智能体节点作为其子会话执行，复用 SubAgentRuntime 的并发控制、级联中止、事件广播与产物采集。
  * - 临时数字员工（EphemeralRole）经注册表注册为「模板内联」注册员工，
  *   不落 employees 表、不进员工库列表，运行结束即下线。
  */
@@ -21,6 +21,7 @@ import { broadcastWorkflowRunEvent } from './workflow-events'
 import type { AgentRunOutcome } from './agent-runtime/types'
 import type {
   PluginWorkflowArtifact,
+  PluginWorkflowDeleteRunResult,
   PluginWorkflowEdgeSpec,
   PluginWorkflowGraphSpec,
   PluginWorkflowNodeEvent,
@@ -122,6 +123,8 @@ export class WorkflowRuntimeService {
     let conversationId = params.conversationId || ''
     let employeeId = WORKFLOW_HOST_EMPLOYEE_ID
     if (!conversationId) {
+      // 会话仅承载运行工作区与节点子会话的父级，不写任何消息，
+      // 因此不会出现在任务页（任务列表只列 message_count > 0 的顶层会话）
       const conversation = WorkspaceManagerService.getInstance().createConversation(
         WORKFLOW_HOST_EMPLOYEE_ID,
         undefined,
@@ -135,8 +138,6 @@ export class WorkflowRuntimeService {
         .get(conversationId) as { employee_id?: string } | undefined
       if (row?.employee_id) employeeId = row.employee_id
     }
-    // 写入启动消息：任务页仅列出 message_count > 0 的顶层会话，空会话不会出现在任务列表
-    this.appendConversationMessages(conversationId, 'user', this.buildStartMessage(params))
 
     const runId = generateId()
     const run: PluginWorkflowRun = {
@@ -176,15 +177,29 @@ export class WorkflowRuntimeService {
     return true
   }
 
-  /** 删除运行记录；运行中的记录拒绝删除（避免执行循环继续回写） */
-  deleteRun(runId: string): boolean {
+  /**
+   * 删除运行记录；运行中的记录拒绝删除（避免执行循环继续回写）。
+   * 同时删除运行会话（级联其节点子会话），会话工作区非空时返回目录信息，
+   * 供渲染端询问是否一并删除（与普通任务删除体验一致）。
+   */
+  deleteRun(runId: string): PluginWorkflowDeleteRunResult {
     const entry = this.entries.get(runId || '')
-    if (entry && entry.run.status === 'running') return false
-    const info = DatabaseService.getInstance().getDb()
-      .prepare('DELETE FROM workflow_runs WHERE run_id = ?')
-      .run(runId)
+    if (entry && entry.run.status === 'running') return { ok: false }
+    const db = DatabaseService.getInstance().getDb()
+    const row = db.prepare('SELECT conversation_id FROM workflow_runs WHERE run_id = ?')
+      .get(runId) as { conversation_id?: string } | undefined
+    const info = db.prepare('DELETE FROM workflow_runs WHERE run_id = ?').run(runId)
     this.entries.delete(runId)
-    return info.changes > 0
+    if (info.changes === 0) return { ok: false }
+    const conversationId = row?.conversation_id
+    if (!conversationId) return { ok: true }
+    const deleted = WorkspaceManagerService.getInstance().deleteConversation(conversationId)
+    return { ok: true, taskDir: deleted.taskDir, taskDirNonEmpty: deleted.taskDirNonEmpty }
+  }
+
+  /** 删除运行工作区目录（移至回收站）；安全边界见 WorkspaceManagerService.deleteTaskWorkspace */
+  async deleteRunWorkspace(path: string): Promise<boolean> {
+    return WorkspaceManagerService.getInstance().deleteTaskWorkspace(path)
   }
 
   getRun(runId: string): PluginWorkflowRun | undefined {
@@ -220,7 +235,7 @@ export class WorkflowRuntimeService {
     this.recovered = true
     try {
       const db = DatabaseService.getInstance().getDb()
-      const rows = db.prepare("SELECT run_id, nodes_json, conversation_id FROM workflow_runs WHERE status = 'running'").all() as { run_id: string; nodes_json?: string; conversation_id?: string }[]
+      const rows = db.prepare("SELECT run_id, nodes_json FROM workflow_runs WHERE status = 'running'").all() as { run_id: string; nodes_json?: string }[]
       const reason = '应用重启，运行已中断'
       const now = Math.floor(Date.now() / 1000)
       for (const row of rows) {
@@ -236,7 +251,6 @@ export class WorkflowRuntimeService {
         db.prepare(
           "UPDATE workflow_runs SET status = 'aborted', nodes_json = ?, error = ?, ended_at = COALESCE(ended_at, ?) WHERE run_id = ?"
         ).run(JSON.stringify(nodes), reason, now, row.run_id)
-        this.appendConversationMessages(row.conversation_id, 'assistant', `${reason}。`)
         logger.info(`Recovered stale workflow run ${row.run_id}`)
       }
     } catch (err: unknown) {
@@ -641,7 +655,6 @@ export class WorkflowRuntimeService {
     run.error = error
     run.endedAt = Math.floor(Date.now() / 1000)
     this.persistRun(run)
-    this.appendConversationMessages(run.conversationId, 'assistant', this.buildFinishMessage(run))
     this.broadcast(run.runId, 'run:end', undefined, { status, error })
     this.unregisterEphemeralRoles(entry)
     // 终态后释放内存条目（getRun 随后回落 DB），避免已完成运行常驻内存
@@ -686,57 +699,6 @@ export class WorkflowRuntimeService {
     }
     const targets = new Set(graph.edges.map(e => e.to))
     return graph.nodes.find(n => !targets.has(n.id)) || graph.nodes[0]
-  }
-
-  // ====== 任务会话消息（任务页仅列出有消息的顶层会话） ======
-
-  /** 向任务会话追加一条消息并同步 message_count / last_message_at */
-  private appendConversationMessages(conversationId: string | undefined, role: 'user' | 'assistant', content: string): void {
-    if (!conversationId || !content) return
-    try {
-      const row = DatabaseService.getInstance().getDb()
-        .prepare('SELECT messages_json FROM conversations WHERE id = ?')
-        .get(conversationId) as { messages_json?: string } | undefined
-      if (!row) return
-      const existing = safeParseArray<Record<string, unknown>>(row.messages_json)
-      const now = Date.now()
-      const next = [...existing, { id: `msg_${generateId()}`, role, content, timestamp: now }]
-      WorkspaceManagerService.getInstance().updateConversation(conversationId, {
-        messages_json: JSON.stringify(next),
-        message_count: next.length,
-        last_message_at: Math.floor(now / 1000),
-      })
-    } catch (err: unknown) {
-      logger.warn(`Failed to append message to conversation ${conversationId}:`, err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  /** 启动消息：模板任务发起记录 + 运行入参 */
-  private buildStartMessage(params: PluginWorkflowRunParams): string {
-    const lines = [`模板任务「${params.templateName || '未命名模板'}」已启动。`]
-    const variables = Object.entries(params.variables || {}).filter(([, v]) => String(v ?? '').trim())
-    if (variables.length > 0) {
-      lines.push('', '运行入参：')
-      for (const [name, value] of variables) lines.push(`${name}：${String(value).slice(0, 500)}`)
-    }
-    return lines.join('\n')
-  }
-
-  /** 结束消息：状态 / 节点进度 / 耗时 / 失败原因 / 产出文件 */
-  private buildFinishMessage(run: PluginWorkflowRun): string {
-    const done = run.nodes.filter(n => n.status === 'completed').length
-    const head = run.status === 'completed' ? '模板任务执行完成'
-      : run.status === 'failed' ? '模板任务执行失败'
-      : run.status === 'aborted' ? '模板任务已中止'
-      : '模板任务结束'
-    const duration = formatRunDuration(run.startedAt, run.endedAt)
-    const lines = [`${head}（节点进度 ${done}/${run.nodes.length}${duration ? `，耗时 ${duration}` : ''}）。`]
-    if (run.status === 'failed' && run.error) lines.push(`失败原因：${run.error.slice(0, 1000)}`)
-    if (run.artifacts.length > 0) {
-      lines.push('', '产出文件：')
-      for (const artifact of run.artifacts.slice(0, 20)) lines.push(`- ${artifact.path}`)
-    }
-    return lines.join('\n')
   }
 
   // ====== 持久化 ======
@@ -1008,15 +970,6 @@ class NodeTranscriptRecorder {
       this.hooks.persist()
     }, TRANSCRIPT_PERSIST_THROTTLE_MS)
   }
-}
-
-/** 运行耗时文案（Unix 秒），未结束返回空串 */
-function formatRunDuration(startSec?: number, endSec?: number): string {
-  if (!startSec || !endSec) return ''
-  const secs = Math.max(endSec - startSec, 0)
-  if (secs < 60) return `${secs}s`
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`
-  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`
 }
 
 export default WorkflowRuntimeService
