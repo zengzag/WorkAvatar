@@ -5,11 +5,12 @@ import type { MenuProps } from 'antd'
 import {
   PlusOutlined, RobotOutlined, DeleteOutlined, MessageOutlined, ClockCircleOutlined,
   FolderOpenOutlined, SettingOutlined, SearchOutlined, EllipsisOutlined,
-  AppstoreOutlined, BarsOutlined, CopyOutlined, DatabaseOutlined,
+  AppstoreOutlined, BarsOutlined, CopyOutlined, DatabaseOutlined, SolutionOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import DeleteConversationOptions from '../components/employee-settings/DeleteConversationOptions'
+import SubAgentProfilesDrawer from '../components/workbench/SubAgentProfilesDrawer'
 import type { DeleteConversationState } from '../components/employee-settings/DeleteConversationOptions'
 import type { Employee } from '../types'
 
@@ -63,6 +64,7 @@ const Employees: React.FC = () => {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | undefined>()
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [profilesOpen, setProfilesOpen] = useState(false)
   /** 删除员工确认弹窗中的对话处理选择（供 onOk 读取最新值） */
   const deleteStateRef = useRef<DeleteConversationState>({ conversationAction: 'keep', transferToEmployeeId: undefined, deleteWorkspace: true })
 
@@ -616,6 +618,13 @@ const Employees: React.FC = () => {
               { label: '', value: 'list', icon: <BarsOutlined /> },
             ]}
           />
+          <Tooltip title={t('subagentProfiles.title')}>
+            <Button
+              size="small"
+              icon={<SolutionOutlined />}
+              onClick={() => setProfilesOpen(true)}
+            />
+          </Tooltip>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>
             {t('digitalEmployees.createEmployee', { defaultValue: '新建员工' })}
           </Button>
@@ -655,6 +664,7 @@ const Employees: React.FC = () => {
         )}
       </div>
 
+      <SubAgentProfilesDrawer open={profilesOpen} onClose={() => setProfilesOpen(false)} />
       <style>{pageStyle}</style>
 
       <EmployeeSettingsDrawer
