@@ -75,6 +75,10 @@ class KMSMCPService {
 
   updateConfig(config: Partial<KMSMCPConfig>): void {
     this.config = { ...this.config, ...config }
+    // 端口夹取，越界值会让 start() 总是失败
+    if (Number.isFinite(this.config.port)) {
+      this.config.port = Math.min(65535, Math.max(1, Math.floor(Number(this.config.port))))
+    }
   }
 
   getStatus(): { running: boolean; port: number; url: string } {

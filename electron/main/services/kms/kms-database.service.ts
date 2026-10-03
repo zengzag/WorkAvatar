@@ -280,8 +280,9 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_files_dir ON kms_files(dir_id);
-      -- file_hash 唯一索引：同一物理文件（内容哈希相同）不重复索引
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash);
+      -- file_hash 普通索引：代码层负责同哈希去重复用（克隆索引），唯一约束会令重复内容文件注册/更新直接抛约束错误
+      DROP INDEX IF EXISTS idx_kms_files_hash_unique;
+      CREATE INDEX IF NOT EXISTS idx_kms_files_hash ON kms_files(file_hash);
       CREATE INDEX IF NOT EXISTS idx_kms_files_status ON kms_files(index_status);
       CREATE INDEX IF NOT EXISTS idx_kms_files_tier ON kms_files(data_tier);
       CREATE INDEX IF NOT EXISTS idx_kms_files_modified ON kms_files(modified_time);

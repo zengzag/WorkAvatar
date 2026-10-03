@@ -154,14 +154,17 @@ class KMSIndexWorkerClientService {
     } catch (err: any) {
       const isTimeout = err?.message?.includes?.('timed out')
       if (isTimeout) {
-        // 超时：仅 reject 当前任务，Worker 仍可能存活，不标记失败
-        logger.warn(`Worker task ${task} timed out, rejecting task without marking worker as failed:`, err?.message || err)
+        // 超时：仅 reject 当前任务，Worker 仍可能存活，不标记失败。
+        // 不再降级主线程 fallback：cancel 是协作式中止，大文件解析期间无法立刻停下，
+        // 关闭 fallback 可避免 Worker 原任务与主线程同一任务双跑、并发写同一索引状态。
+        logger.warn(`Worker task ${task} timed out, rejecting without fallback to avoid double-run:`, err?.message || err)
+        throw err
       } else {
         // Worker 初始化失败 / 其他错误：标记 Worker 不可用
         logger.warn(`Worker task ${task} failed (non-timeout), marking worker as failed:`, err?.message || err)
         this.markWorkerFailed()
+        return fallback()
       }
-      return fallback()
     }
   }
 

@@ -62,6 +62,8 @@ class KMSKnowledgeCardService {
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
+    // 启动即清理历史上崩溃残留的 __refreshing__ 卡片（原先只在 refreshCard 时触发）
+    this.recoverInterruptedRefresh()
   }
 
   static getInstance(): KMSKnowledgeCardService {

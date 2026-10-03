@@ -49,6 +49,24 @@ class KMSIndexManagerService {
     this.db = KMSDatabaseService.getInstance().getDb()
   }
 
+  /**
+   * 并发防护 + 取消控制共用的 AbortController 获取/释放。
+   * 五个入口（buildFull/incremental/rebuildDir/processCollectionDeep/
+   * processSingleFileDeep）共用同一字段，字段被占用时返回 null，
+   * 入口调用方须 early-return，避免覆盖 abortController 导致前一任务失去取消能力。
+   */
+  private acquireAbortController(): { controller: AbortController; signal: AbortSignal } | null {
+    if (this.abortController && !this.abortController.signal.aborted) return null
+    const controller = new AbortController()
+    this.abortController = controller
+    return { controller, signal: controller.signal }
+  }
+
+  /** finally/cancel 收尾：只在自己启动的 controller 仍被引用时清空，避免覆盖后一任务的引用 */
+  private releaseAbortController(mine: AbortController): void {
+    if (this.abortController === mine) this.abortController = null
+  }
+
   static getInstance(): KMSIndexManagerService {
     if (!KMSIndexManagerService.instance) {
       KMSIndexManagerService.instance = new KMSIndexManagerService()
@@ -75,13 +93,14 @@ class KMSIndexManagerService {
   ): Promise<void> {
     // 并发防护：增量/全量/合集深处理并发触发时，直接覆盖 abortController 会让
     // 前一管线失去取消能力，且两条管线并发写同一批状态机互相踩踏
-    if (this.abortController && !this.abortController.signal.aborted) {
+    const token = this.acquireAbortController()
+    if (!token) {
       onProgress?.({ phase: 'error', current: 0, total: 0, message: '已有索引任务在进行中，请等待完成或取消后再试' })
       throw new Error('INDEX_PIPELINE_RUNNING')
     }
     const { withEmbedding = true, dirId, resetHotData = false } = options
-    this.abortController = new AbortController()
-    const signal = this.abortController.signal
+    const abortController = token.controller
+    const signal = token.signal
 
     const isFull = mode === 'full'
     const isIncremental = mode === 'incremental'
@@ -313,13 +332,14 @@ class KMSIndexManagerService {
       logger.error(errorLabel, err)
       onProgress?.({ phase: 'error', current: 0, total: 0, message: err.message })
     } finally {
-      this.abortController = null
+      this.releaseAbortController(abortController)
     }
   }
 
   cancelIndexing(): void {
     this.abortController?.abort()
-    this.abortController = null
+    // 不立即置 null：运行中的管线在 finally 里用本地引用释放，
+    // 此处置 null 会让 finally 误判"字段已不被自己引用"或被 early-return 的调用抢走
   }
 
   /**
@@ -393,8 +413,16 @@ class KMSIndexManagerService {
     onProgress?: ProgressCallback,
     incremental: boolean = true,
   ): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
-    this.abortController = new AbortController()
-    const signal = this.abortController.signal
+    let abortController: AbortController | null = null
+    // 并发防护：与其他四个索引入口共用 abortController，被占用时直接拒绝，
+    // 避免覆盖让前一任务失去取消能力（任务很小，让调用方稍后重试）
+    const token = this.acquireAbortController()
+    if (!token) {
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: '已有索引任务在进行中，请等待完成或取消后再试', collectionId })
+      return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'INDEX_PIPELINE_RUNNING' }
+    }
+    abortController = token.controller
+    const signal = token.signal
 
     try {
       const KMSService = (await import('./kms.service')).default
@@ -509,7 +537,7 @@ class KMSIndexManagerService {
       onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', collectionId })
       return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: err?.message || 'Unknown error' }
     } finally {
-      this.abortController = null
+      if (abortController) this.releaseAbortController(abortController)
     }
   }
 
@@ -522,8 +550,16 @@ class KMSIndexManagerService {
     collectionId?: string,
     onProgress?: ProgressCallback,
   ): Promise<{ success: boolean; error?: string }> {
-    this.abortController = new AbortController()
-    const signal = this.abortController.signal
+    let abortController: AbortController | null = null
+    // 并发防护：与其他四个索引入口共用 abortController，被占用时直接拒绝，
+    // 避免覆盖让前一任务失去取消能力（单文件任务很快，让调用方稍后重试）
+    const token = this.acquireAbortController()
+    if (!token) {
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: '已有索引任务在进行中，请等待完成或取消后再试', fileId, collectionId })
+      return { success: false, error: 'INDEX_PIPELINE_RUNNING' }
+    }
+    abortController = token.controller
+    const signal = token.signal
 
     try {
       const file = this.db.prepare('SELECT id, file_name, file_path FROM kms_files WHERE id = ?').get(fileId) as any
@@ -627,7 +663,7 @@ class KMSIndexManagerService {
       onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', fileId, ...extras })
       return { success: false, error: err?.message || 'Unknown error' }
     } finally {
-      this.abortController = null
+      if (abortController) this.releaseAbortController(abortController)
     }
   }
 
@@ -803,7 +839,7 @@ class KMSIndexManagerService {
 
   cancelCollectionDeepProcess(): void {
     this.abortController?.abort()
-    this.abortController = null
+    // 不立即置 null：与 cancelIndexing 同理，由运行中入口的 finally 用本地引用释放
   }
 
   /**
