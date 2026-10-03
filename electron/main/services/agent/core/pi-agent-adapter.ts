@@ -125,9 +125,17 @@ function createStreamFn(config: AgentConfig): StreamFn {
     // 循环检测中断控制器：与外部 signal 级联（外部中止 → 一并中止），
     // 检测触发时仅中止本次 LLM 调用，不影响外层 agent 循环的中断语义
     const loopAbort = new AbortController()
-    if (options?.signal) {
-      if (options.signal.aborted) loopAbort.abort()
-      else options.signal.addEventListener('abort', () => loopAbort.abort(), { once: true })
+    let detachExternalAbort: (() => void) | undefined
+    const externalSignal = options?.signal
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        loopAbort.abort()
+      } else {
+        const onAbort = () => loopAbort.abort()
+        externalSignal.addEventListener('abort', onAbort, { once: true })
+        // 配对移除：流结束后调用，避免外部 signal 与每次 LLM 请求间的监听器堆积
+        detachExternalAbort = () => externalSignal.removeEventListener('abort', onAbort)
+      }
     }
     const innerStream = openaiCompletionsStream(piModel, context, buildPiStreamOptions({
       providerType: config.providerType,
@@ -147,7 +155,7 @@ function createStreamFn(config: AgentConfig): StreamFn {
       context: contextSnapshot,
       options,
       startTime,
-    }, loopAbort)
+    }, loopAbort, detachExternalAbort)
   }
 }
 
@@ -230,6 +238,8 @@ function wrapStreamWithLogging(
     startTime: number
   },
   loopAbort?: AbortController,
+  /** 流结束后清理回调：配对移除外部 signal 上的 abort 监听 */
+  onStreamEnd?: () => void,
 ): AssistantMessageEventStream {
   let content = ''
   let reasoningContent = ''
@@ -384,6 +394,7 @@ function wrapStreamWithLogging(
         }
       } finally {
         writeLog()
+        onStreamEnd?.()
       }
     },
     result() {
@@ -528,7 +539,8 @@ function toTokenUsage(usage: PiUsage | undefined): TokenUsage | undefined {
 /**
  * 包装 ToolDispatcher + 中间件为 pi AgentTool。
  * execute 内部委托给现有 ToolDispatcher.dispatch，保留中间件链（retry/timeout/logging/result_size）。
- * 注意：ToolDispatcher.dispatch 不接受 signal 参数，这里通过 dispatch 前检查 abort 与超时中间件兜底。
+ * execute 的 signal 通过 ToolHandlerContext 透传给 dispatch 与 handler，
+ * dispatcher 执行前预检 abort，timeout 中间件在等待期感知中止立即收敛为失败。
  */
 function toAgentTool(
   tool: ToolDefinition,
@@ -550,10 +562,11 @@ function toAgentTool(
         }
       }
 
-      const toolContext = imageSupport || onUpdate
+      const toolContext = imageSupport || onUpdate || signal
         ? {
             ...(onUpdate ? { onProgress: (progress: any) => onUpdate({ content: [{ type: 'text', text: '' }], details: { progress } }) } : {}),
             ...(imageSupport ? { imageSupport: true } : {}),
+            ...(signal ? { signal } : {}),
           }
         : undefined
 

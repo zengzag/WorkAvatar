@@ -39,6 +39,16 @@ export class ToolDispatcher {
     const startTime = Date.now()
 
     try {
+      // signal 已中止：不进入权限门/中间件链，直接拒绝（避免不可中断的工具阻塞"停止"操作）
+      if (context?.signal?.aborted) {
+        return {
+          success: false,
+          error: `工具 "${toolName}" 已被中止（用户停止生成）`,
+          toolName,
+          latencyMs: Date.now() - startTime,
+        }
+      }
+
       if (this.preExecuteGate) {
         const denied = await this.preExecuteGate.check(tool, toolParams, context)
         if (denied) {
@@ -52,6 +62,10 @@ export class ToolDispatcher {
       }
       if (tool.noRetry) {
         middlewareParams._noRetry = true
+      }
+      // 中止信号注入中间件参数副本（供 timeout 中间件感知），不传给 handler（handler 走 context.signal）
+      if (context?.signal) {
+        middlewareParams._signal = context.signal
       }
 
       const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {

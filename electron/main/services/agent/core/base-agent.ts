@@ -215,12 +215,14 @@ export abstract class BaseAgent {
       }
     } catch (error: any) {
       this.context.setState('error')
-      this.eventEmitter.emit('run:error', { error: error.message })
+      // 非 Error 抛出物（如字符串/对象）兜底为 String，避免 message 为 undefined
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      this.eventEmitter.emit('run:error', { error: errorMessage })
 
       return {
         content: '',
         success: false,
-        error: error.message,
+        error: errorMessage,
         metadata: {
           totalLatencyMs: Date.now() - startTime,
           iterations: this.context.getIterationCount(),
@@ -328,8 +330,10 @@ export abstract class BaseAgent {
       }
 
       this.context.setState('error')
-      this.eventEmitter.emit('run:error', { error: error.message })
-      callbacks.onError?.(error.message)
+      // 非 Error 抛出物（如字符串/对象）兜底为 String，避免 message 为 undefined
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      this.eventEmitter.emit('run:error', { error: errorMessage })
+      callbacks.onError?.(errorMessage)
     } finally {
       // 仅当自己仍是最新一次 runStream 时才清除锁（旧 run 的 finally 不得释放新 run 的锁）
       if (this._runToken === runToken) {

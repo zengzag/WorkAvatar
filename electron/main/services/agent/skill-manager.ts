@@ -52,9 +52,12 @@ export class SkillManager {
   getSkillsXml(): string {
     if (this.discoveredSkills.size === 0) return ''
 
+    const escapeXml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
     const parts: string[] = []
     for (const [name, skill] of this.discoveredSkills) {
-      parts.push(`<skill name="${name}">${skill.description}</skill>`)
+      parts.push(`<skill name="${escapeXml(name)}">${escapeXml(skill.description)}</skill>`)
     }
 
     return `<skills>\n${parts.join('\n')}\n</skills>`

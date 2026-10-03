@@ -10,6 +10,8 @@ export interface ToolHandlerContext {
   onProgress?: (progress: any) => void
   /** 当前模型是否支持图片（视觉）输入；未设置视为支持（保守输出中性文案） */
   imageSupport?: boolean
+  /** 中止信号：用户停止生成时置为 aborted，工具与中间件据此刻意尽快退出等待 */
+  signal?: AbortSignal
 }
 
 export interface ToolDefinition {

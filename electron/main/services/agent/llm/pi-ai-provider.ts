@@ -59,6 +59,8 @@ function buildPiModel(
     reasoning,
     input: ['text', 'image'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    // 项目侧上下文预算由 memory-manager 按模型真实 context_window 管理（employee-agent.service），
+    // 此处为 pi-ai 内部字段，取偏大值避免对已裁剪输入再次截断
     contextWindow: 256 * 1024,
     maxTokens: 48 * 1024,
     compat: {
@@ -161,13 +163,14 @@ function parseUserContent(content: string | LLMMessageContentPart[]): string | (
     if (p.type === 'text' && p.text) {
       parts.push({ type: 'text', text: p.text })
     } else if (p.type === 'image_url' && p.image_url) {
-      // 从 data URL 解析 base64 data 与 mimeType；非 data URL 原样传递（provider 自行处理）
+      // 从 data URL 解析 base64 data 与 mimeType；
+      // HTTP URL 不能伪造成 base64 data（会静默丢失/损坏数据），改为占位文本提示
       const url = p.image_url.url
       const match = /^data:(image\/[a-zA-Z+.-]+);base64,(.*)$/.exec(url)
       if (match) {
         parts.push({ type: 'image', data: match[2], mimeType: match[1] })
       } else {
-        parts.push({ type: 'image', data: url, mimeType: 'image/png' })
+        parts.push({ type: 'text', text: `[图片链接: ${url}]（不支持直接以 URL 引用图片，请使用本地图片附件）` })
       }
     }
   }

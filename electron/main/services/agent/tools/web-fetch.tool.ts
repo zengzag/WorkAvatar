@@ -82,6 +82,44 @@ export function isPrivateOrLocalTarget(hostname: string): boolean {
   return false
 }
 
+const MAX_REDIRECTS = 5
+
+/** 校验重定向目标：Location 必须是合法 http/https URL，且非内网/本机地址 */
+export function resolveRedirectTarget(location: string, baseUrl: string, followedRedirects: number): URL {
+  if (followedRedirects >= MAX_REDIRECTS) {
+    throw new Error(`重定向次数超过上限（${MAX_REDIRECTS}）`)
+  }
+  let nextUrl: URL
+  try {
+    nextUrl = new URL(location, baseUrl)
+  } catch {
+    throw new Error('重定向 Location 头无效')
+  }
+  if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+    throw new Error('重定向仅允许 http/https 协议')
+  }
+  if (isPrivateOrLocalTarget(nextUrl.hostname)) {
+    throw new Error('重定向目标为内网/本机地址，已拒绝')
+  }
+  return nextUrl
+}
+
+/** 手动跟随重定向（最多 5 跳），每一跳对目标 hostname 复检 SSRF，阻断 30x 跳向内网 */
+export async function fetchWithGuardedRedirects(url: string, init?: RequestInit): Promise<Response> {
+  let currentUrl = url
+  for (let followedRedirects = 0; ; followedRedirects++) {
+    const response = await fetch(currentUrl, { ...init, redirect: 'manual' })
+    const location = response.status >= 300 && response.status < 400
+      ? response.headers.get('location')
+      : null
+    // 非重定向（含无 Location 的 3xx）：原样返回，状态码由调用方处理
+    if (!location) return response
+    const next = resolveRedirectTarget(location, currentUrl, followedRedirects)
+    try { await response.body?.cancel?.() } catch { /* ignore */ }
+    currentUrl = next.href
+  }
+}
+
 const MAX_FETCH_BYTES = 2 * 1024 * 1024
 
 /** 流式读取响应体，超过上限即停止，避免大文件拉爆内存 */
@@ -142,7 +180,7 @@ export const webFetchTool: ToolDefinition = {
 
       const maxChars = Math.min(Math.max(args.max_chars || 10000, 100), 50000)
 
-      const response = await fetch(url, {
+      const response = await fetchWithGuardedRedirects(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
       })
 
