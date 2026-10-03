@@ -142,6 +142,13 @@ describe('SubAgentRuntime', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // 重置 chatStream 并恢复默认实现：mockImplementation 的测试用例不污染后续用例
+    chatStream.mockReset()
+    chatStream.mockImplementation(async (_params: any, callbacks: any, _signal?: AbortSignal) => {
+      callbacks.onChunk?.('子员工完成了检索')
+      callbacks.onToolResult?.({ name: 'report_generated_files', generatedFiles: [{ path: '/tmp/out.docx', name: 'out.docx', ext: 'docx', size: 10, mtime: 1 }], success: true })
+      callbacks.onDone?.({ tokenUsage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } })
+    })
     setDelegationRows([
       { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['target1'], acceptDelegation: true }) },
       { id: 'target1', delegation_json: '' },
@@ -537,6 +544,22 @@ describe('SubAgentRuntime', () => {
     expect(params.messages[1].content).toContain('执行中断（应用重启）')
   })
 
+  it('tokenUsage 多轮累加：gate 纠偏轮用量不覆盖第一轮', async () => {
+    let calls = 0
+    chatStream.mockImplementation(async (_params: any, callbacks: any) => {
+      calls++
+      callbacks.onDone?.({ tokenUsage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } })
+    })
+    const launched = runtime.launchSubAgent(baseInput())
+    const runId = launched.runId!
+    // 一项任务留在台账 → 触发纠偏轮（MAX_GATE_ROUNDS=2），共 3 次 streamOnce
+    runtime.createTask(runId, '不收尾的任务')
+    const outcomes = await runtime.awaitRuns([runId], 3000)
+    expect(outcomes[0].success).toBe(true)
+    expect(calls).toBe(3)
+    expect(outcomes[0].tokenUsage).toEqual({ promptTokens: 300, completionTokens: 60, totalTokens: 360 })
+  })
+
   // ---- 阶段一/三/四：临时子智能体、后台通知、任务台账、结构化结果 ----
 
   it('临时子智能体：跳过委托设置校验，生成 inline 员工并在结束时下线', async () => {
@@ -655,6 +678,11 @@ describe('SubAgentRuntime', () => {
     const gateCall = chatStream.mock.calls[1][0] as any
     expect(gateCall.messages.at(-1).content).toContain('Completion gate')
     expect(gateCall.messages.at(-1).content).toContain('梳理要点')
+    // gate 纠偏轮带第一轮 assistant 上下文（续聊而非失忆）
+    const roles = gateCall.messages.map((m: any) => m.role)
+    expect(roles[roles.length - 2]).toBe('assistant')
+    expect(roles[roles.length - 1]).toBe('user')
+    expect(gateCall.messages.at(-2).content).toContain('第1轮输出')
     // 结果携带未收尾清单
     expect(outcomes[0].output).toContain('未收尾任务项')
     expect(outcomes[0].result?.incompleteTasks).toEqual(['梳理要点', '生成文档'])

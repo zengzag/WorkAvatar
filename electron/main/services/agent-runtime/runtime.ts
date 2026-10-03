@@ -1189,7 +1189,7 @@ class SubAgentRuntime {
                 this.emit(runId, 'tool_progress', p)
               },
               onDone: (metadata?: any) => {
-                tokenUsage = metadata?.tokenUsage
+                tokenUsage = mergeTokenUsage(tokenUsage, metadata?.tokenUsage)
                 this.emit(runId, 'status', { status: entry.controller.signal.aborted ? 'cancelled' : 'completed' })
               },
               onError: (error: string) => {
@@ -1264,11 +1264,23 @@ class SubAgentRuntime {
         await streamOnce(subMessages, providerId, modelId)
 
         // 完成门（MiMo 语义）：台账仍有未收尾项时注入纠偏轮，最多 MAX_GATE_ROUNDS 次
+        // 第一轮的回答与关键工具产出固化为一条 assistant 上下文置于 gatePrompt 前，纠偏轮才能"续聊"而非失忆
+        const buildGateContext = (): Array<{ role: string; content: string }> => {
+          const parts: string[] = []
+          if (finalAnswer.trim()) parts.push(finalAnswer.trim().slice(0, 4000))
+          if (entry.structuredCapture !== undefined && entry.structuredCapture !== null) {
+            parts.push(`Structured result: ${JSON.stringify(entry.structuredCapture).slice(0, 2000)}`)
+          }
+          if (reportedFiles.length) {
+            parts.push(`Generated files:\n${reportedFiles.map(f => `- ${f.path}`).join('\n')}`)
+          }
+          return parts.length ? [{ role: 'assistant', content: ['[First-round progress]', ...parts].join('\n') }] : []
+        }
         for (let gate = 0; gate < MAX_GATE_ROUNDS; gate++) {
           if (entry.controller.signal.aborted || subError) break
           if (!entry.tasks.some(t => t.status === 'open' || t.status === 'in_progress')) break
           await streamOnce(
-            [...subMessages, { role: 'user', content: buildGatePrompt() }],
+            [...subMessages, ...buildGateContext(), { role: 'user', content: buildGatePrompt() }],
             providerId,
             modelId,
           )
@@ -1319,6 +1331,18 @@ class SubAgentRuntime {
       tokenUsage,
     })
   }
+}
+
+/** tokenUsage 对象级累加：字段级求和，任一侧缺省字段沿用另一方；两侧均无数据返回 undefined */
+function mergeTokenUsage(a: AgentRunTokenUsage | undefined, b: AgentRunTokenUsage | undefined): AgentRunTokenUsage | undefined {
+  if (!a) return b ? { ...b } : undefined
+  if (!b) return a
+  const out: AgentRunTokenUsage = { ...a }
+  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens'] as const) {
+    const val = b[key]
+    if (val !== undefined) out[key] = (a[key] || 0) + val
+  }
+  return out
 }
 
 function safeParse(json: string): any {
