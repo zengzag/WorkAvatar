@@ -416,6 +416,8 @@ class PluginHostService {
       try { dispose() } catch { /* ignore */ }
     }
     record.disposers?.clear()
+    // 关闭该插件分库下已打开的 KV 连接（下次使用惰性重开；分库路径即 plugin-data/<id>/）
+    this.closePluginKvDb(id)
     logger.info(`插件已下线: ${id}`)
   }
 
@@ -529,35 +531,6 @@ class PluginHostService {
       }
     }
     return undefined
-  }
-
-  /**
-   * 热重载插件：启停/导入/删除/升级后无需重启应用即可生效。
-   * 流程：deactivate 全部激活插件 → 清 require 缓存与宿主状态 → 重新扫描激活。
-   * 注意：插件贡献的 agent 工具已注册进内核 ToolRegistry，重载后需调用
-   * EmployeeAgentService.clearAgentCache 刷新员工工具列表；渲染端由调用方 reload 窗口重建。
-   */
-  reload(): void {
-    // 1. deactivate 全部激活插件（单点下线逻辑：技能/员工/贡献点/资源按插件清理）
-    for (const record of this.records.values()) {
-      if (record.status === 'active') this.deactivateRecord(record)
-    }
-    // 2. 清宿主状态（deactivateRecord 已按插件清理，这里防御性兜底共享状态）
-    this.records.clear()
-    this.handlers.clear()
-    this.contributions.clear()
-    this.messageActions.clear()
-    this.kernelEventListeners.clear()
-    this.viewContributions.clear()
-    this.commands.clear()
-    this.busResponders.clear()
-    this.schedulerJobs.clear()
-    // 插件员工随热重载整体下线，重新激活后按新声明重建（内置员工不受影响）
-    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
-    EmployeeRegistryService.getInstance().resetPluginEmployees()
-    // 3. 重新扫描激活
-    this.scanAndActivate(this.readDisabledList())
-    logger.info('插件已热重载')
   }
 
   private scanPluginInto(records: Map<string, PluginRecord>, rootDir: string, disabled: Set<string>): void {
@@ -750,7 +723,7 @@ class PluginHostService {
     return db
   }
 
-  /** 插件 KV 专用连接（index.db，按插件缓存复用） */
+  /** 插件 KV 专用连接（index.db，按插件缓存复用；key = 插件 id，个别旧快照的 key 兼容为分库路径，闭库时按目录收尾段归一匹配） */
   private kvDbs = new Map<string, Database.Database>()
 
   private getKvDb(id: string): Database.Database {
@@ -761,6 +734,31 @@ class PluginHostService {
       this.kvDbs.set(id, db)
     }
     return db
+  }
+
+  /** 关闭某插件的 KV 专用连接（插件分库 plugin-data/<id>/index.db，下线时释放 fd；下次使用重新惰性打开） */
+  private closePluginKvDb(id: string): void {
+    for (const key of [...this.kvDbs.keys()]) {
+      if (key === id || path.basename(path.dirname(path.resolve(key))) === id) {
+        this.closeKvDbEntry(key)
+      }
+    }
+  }
+
+  /** 退出时关闭全部插件 KV 专用连接 */
+  private closeAllKvDbs(): void {
+    for (const key of [...this.kvDbs.keys()]) {
+      this.closeKvDbEntry(key)
+    }
+  }
+
+  private closeKvDbEntry(key: string): void {
+    const db = this.kvDbs.get(key)
+    if (!db) return
+    this.kvDbs.delete(key)
+    try { db.close() } catch (err: any) {
+      logger.warn(`插件 KV 库关闭失败（${key}，忽略）:`, err?.message || err)
+    }
   }
 
   /** 跨插件共享 KV 宿主库（惰性打开，跨插件/跨热重载持久） */
@@ -1370,6 +1368,8 @@ class PluginHostService {
       services.windows = {
         create: (options: PluginWindowOptions): PluginWindowHandle => {
           const id = `${manifest.id}:win:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+          // 远程 URL（OAuth 登录页等）不注入宿主 preload，避免宿主 IPC 通道泄漏给外部页面
+          const isRemoteUrl = !options.contentPath && !!options.url && !/^(plugin:|file:)/i.test(options.url)
           const winOptions: any = {
             width: options.width,
             height: options.height,
@@ -1379,7 +1379,7 @@ class PluginHostService {
             webPreferences: {
               nodeIntegration: false,
               contextIsolation: true,
-              preload: getPreloadPath(),
+              preload: isRemoteUrl ? undefined : getPreloadPath(),
             },
           }
           if (options.alwaysOnTop) winOptions.alwaysOnTop = true
@@ -2150,6 +2150,8 @@ class PluginHostService {
       try { this.sharedDb.close() } catch { /* ignore */ }
       this.sharedDb = null
     }
+    // 关闭全部插件 KV 专用连接（deactivateRecord 只处理下线插件，此处兜底全量关闭）
+    this.closeAllKvDbs()
     // 清理插件创建的窗口
     for (const wins of this.pluginWindows.values()) {
       for (const win of wins) {
