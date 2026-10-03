@@ -188,6 +188,8 @@ export function useKMS() {
   // 用 ref 追踪最新设置，避免 search 回调因 kmsSettings 变化而频繁重建
   const kmsSettingsRef = useRef(kmsSettings)
   kmsSettingsRef.current = kmsSettings
+  // 搜索请求序号：竞态保护，阻止过期请求结果覆盖最新结果
+  const searchReqIdRef = useRef(0)
 
   const loadDirs = useCallback(async () => {
     try {
@@ -286,15 +288,20 @@ export function useKMS() {
   }, [loadSearchDirs])
 
   const clearSearch = useCallback(() => {
+    searchReqIdRef.current += 1
     setSearchQuery('')
     setSearchResults([])
   }, [])
 
   const search = useCallback(async (query: string, mode?: SearchMode, filters?: SearchFilters) => {
     if (!query.trim()) {
+      searchReqIdRef.current += 1
       setSearchResults([])
       return
     }
+    // 竞态防护：只允许最新一次搜索写入结果/复位加载态，防止慢结果覆盖新结果
+    // （KMSSearchPanel 切换搜索模式会连续触发重搜，IPC 返回顺序无保障）
+    const reqId = ++searchReqIdRef.current
     setIsSearching(true)
 
     try {
@@ -309,6 +316,7 @@ export function useKMS() {
         })
         // safeHandle 错误时返回 { error }（truthy），必须用 Array.isArray 兜底避免下游 useMemo 遍历时报 "e is not iterable"
         const fileResults = Array.isArray(results) ? results : []
+        if (reqId !== searchReqIdRef.current) return
         setSearchResults(fileResults)
         window.electronAPI.kms.recordSearchHistory({
           query,
@@ -331,6 +339,7 @@ export function useKMS() {
         })
         // safeHandle 错误时返回 { error }（truthy），必须用 Array.isArray 兜底避免下游 useMemo 遍历时报 "e is not iterable"
         const listResults = Array.isArray(results) ? results : []
+        if (reqId !== searchReqIdRef.current) return
         setSearchResults(listResults)
         window.electronAPI.kms.recordSearchHistory({
           query,
@@ -341,9 +350,11 @@ export function useKMS() {
       }
     } catch (err) {
       console.error('KMS search failed:', err)
+      if (reqId !== searchReqIdRef.current) return
       setSearchResults([])
     } finally {
-      setIsSearching(false)
+      // 过期请求不能复位 isSearching，否则会覆盖新搜索的加载态
+      if (reqId === searchReqIdRef.current) setIsSearching(false)
     }
   }, [])
 

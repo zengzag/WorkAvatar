@@ -1,5 +1,6 @@
 import React from 'react'
 import { theme } from 'antd'
+import { isColorDark } from '../../utils/format'
 
 interface HighlightRange {
   start: number
@@ -50,7 +51,8 @@ function mergeHighlights(highlights: HighlightRange[]): HighlightRange[] {
 
 const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keywords, keywordColor }) => {
   const { token } = theme.useToken()
-  const isDark = token.colorBgContainer === '#141414' || token.colorBgContainer === '#1f1f1f' || token.colorBgContainer?.toString().startsWith('#1')
+  // 统一按容器背景亮度判断明暗主题（与 CodeBlock/ChatInput 一致）
+  const isDark = isColorDark(String(token.colorBgContainer))
 
   let effectiveHighlights = highlights || []
   if (keywords && keywords.length > 0) {
@@ -62,7 +64,9 @@ const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keyword
     return <>{text}</>
   }
 
-  // 暗色主题使用更鲜明的高亮色，亮色主题使用柔和的背景色
+  // 暗色主题使用更鲜明的高亮色，亮色主题使用柔和的背景色。
+  // 硬编码色说明：#e6a817（琥珀色）为关键字高亮主色，选中字 #1a1a1a 与其对比度固定，
+  // 不随 token 变化，避免不同暗色 token 下选中字缺失对比
   const bgColor = keywordColor || (isDark ? '#e6a817' : token.colorWarningBg)
   const textColor = isDark ? '#1a1a1a' : 'inherit'
 

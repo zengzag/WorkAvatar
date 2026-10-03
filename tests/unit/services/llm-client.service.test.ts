@@ -84,7 +84,7 @@ describe('getProviderConfig', () => {
       api_key: 'sk-test',
       embedding_model: 'text-embedding-3-small',
       temperature: 0.7,
-      max_tokens: 4096,
+      max_tokens: 48 * 1024,
       timeout_ms: 60000,
     })
   })

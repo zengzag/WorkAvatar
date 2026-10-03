@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { Input, theme, Typography, Spin, Empty, Tag, Tooltip } from 'antd'
 import type { InputRef } from 'antd'
 import { SearchOutlined, RobotOutlined, MessageOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
+import { requestPendingTaskJump } from '../../utils/pending-task-jump'
 import type { ConversationSearchResultItem } from '../../../electron/shared/ipc-channels'
 
 const { Text } = Typography
@@ -94,8 +95,8 @@ const GlobalSearchBox: React.FC<GlobalSearchBoxProps> = ({
       // 同一员工：直接切换对话
       onSelectConversation(item.conversationId)
     } else {
-      // 跨员工：写入激活对话 ID，路由跳转，目标页面初始化时会读取
-      localStorage.setItem(`employeeWorkbench:activeConvId:${item.employeeId}`, item.conversationId)
+      // 跨员工：写入待任务跳转目标，路由跳转，任务页订阅消费后定位对话
+      requestPendingTaskJump(item.employeeId, item.conversationId)
       navigate('/tasks')
     }
   }, [currentEmployeeId, onSelectConversation, navigate])
