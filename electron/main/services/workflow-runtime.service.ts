@@ -398,9 +398,13 @@ export class WorkflowRuntimeService {
 
     const [outcome] = await SubAgentRuntime.getInstance().awaitRuns([launch.runId], NODE_WAIT_TIMEOUT_MS)
     const output = this.outcomeText(outcome)
-    if (!outcome?.success && !output) {
-      recorder.finalize()
-      throw new Error(outcome?.error || '子会话执行失败')
+    if (!outcome?.success) {
+      // 超时/失败后取消子 run，防孤儿继续烧 token（已终态的 run cancelRun 幂等无副作用）
+      SubAgentRuntime.getInstance().cancelRun(launch.runId)
+      if (!output) {
+        recorder.finalize()
+        throw new Error(outcome?.error || '子会话执行失败')
+      }
     }
     recorder.finalize()
 
@@ -424,9 +428,14 @@ export class WorkflowRuntimeService {
   private parseVerdict(rules: PluginWorkflowVerdictRules, output: string): string {
     const text = String(output || '')
     if (rules.markedPattern) {
-      const marked = text.match(new RegExp(rules.markedPattern, 'i'))
-      const value = marked?.[1]?.trim().toLowerCase()
-      if (value) return value
+      // 模板正则可能非法或灾难性回溯：预检 + try/catch，失败时回退关键词判定而非整次运行失败
+      try {
+        const marked = text.match(new RegExp(rules.markedPattern, 'i'))
+        const value = marked?.[1]?.trim().toLowerCase()
+        if (value) return value
+      } catch (err: any) {
+        logger.warn(`Invalid verdict markedPattern, fallback to failKeywords: ${err?.message || err}`)
+      }
     }
     const failKeywords = rules.failKeywords || []
     for (const word of failKeywords) {
