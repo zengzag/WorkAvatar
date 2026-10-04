@@ -1728,6 +1728,27 @@ export default {
       reprocessTitle: 'Confirm Reprocess?',
       reprocessConfirm: 'This collection has already been processed. Reprocessing will overwrite existing paragraph summaries, file summaries, TOC, and vector indexes, and may take a long time. Continue?',
     },
+    // Sensitive content control (AI exclusion level)
+    sensitive: {
+      title: 'Sensitive Content Control',
+      desc: 'Set AI exclusion levels for dirs/files: level 2 fully excludes them from all data feeds of search, MCP and Agent.',
+      dirLevel: 'Directory Levels',
+      fileLevel: 'Excluded Files',
+      level0: 'Normal AI retrieval',
+      level1: 'Manual processing only (level 1)',
+      level2: 'Fully excluded (level 2)',
+      saved: 'Saved',
+      fileExcluded: 'File fully excluded from AI retrieval',
+      saveFailed: 'Save failed',
+      noFiles: 'No excluded files',
+      selectTooltip: 'Choose the AI data feed level for this file',
+    },
+    purge: {
+      desc: 'Physically deletes vectors that remain cold and have been archived for over 30 days to reclaim disk space. Normally executed automatically by the data-tiering flow; this is a fallback entry point.',
+      button: 'Purge Archived Vectors',
+      success: 'Physically deleted {{count}} archived vectors; {{still}} still within the grace period',
+      failed: 'Cleanup failed',
+    },
   },
   subagentProfiles: {
     title: 'Sub-Agent Profiles',

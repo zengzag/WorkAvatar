@@ -135,6 +135,7 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const [dbStats, setDbStats] = useState<any>(null)
   const [loadingStats, setLoadingStats] = useState(false)
   const [cleaning, setCleaning] = useState(false)
+  const [purging, setPurging] = useState(false)
 
   useEffect(() => {
     setAutoEnabled(autoIndexConfig.enabled)
@@ -215,6 +216,24 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
       },
     })
   }, [modal, t, formatBytes, message, loadDbStats])
+
+  // 归档冷向量清理（物理删除兜底入口；分层降级流程已自动执行）
+  const handlePurgeArchivedVectors = useCallback(async () => {
+    setPurging(true)
+    try {
+      const result: any = await window.electronAPI.kms.purgeArchivedVectors()
+      if (result?.error) {
+        message.error(t('kms.purge.failed') + `: ${result.error}`)
+      } else {
+        message.success(t('kms.purge.success', { count: result?.purged ?? 0, still: result?.stillArchived ?? 0 }))
+      }
+    } catch (err: any) {
+      console.error('Failed to purge archived vectors:', err)
+      message.error(t('kms.purge.failed') + (err?.message ? `: ${err.message}` : ''))
+    } finally {
+      setPurging(false)
+    }
+  }, [message, t])
 
   const formatProgressTime = (ts: number | null): string => ts ? formatTime(ts, 'time') : '-'
 
@@ -523,14 +542,24 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
             <div style={{ textAlign: 'center', padding: '8px 0' }}><Spin size="small" /></div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Tooltip title={t('kms.purge.desc')}>
+              <Button
+                size="small"
+                onClick={handlePurgeArchivedVectors}
+                loading={purging}
+                disabled={purging || cleaning || isIndexing}
+              >
+                {t('kms.purge.button')}
+              </Button>
+            </Tooltip>
             <Button
               size="small"
               danger
               icon={<DeleteOutlined />}
               onClick={handleCleanup}
               loading={cleaning}
-              disabled={cleaning || isIndexing}
+              disabled={cleaning || purging || isIndexing}
             >
               {cleaning ? t('kms.settingsPanel.cleanupRunning') : t('kms.settingsPanel.cleanupDatabase')}
             </Button>

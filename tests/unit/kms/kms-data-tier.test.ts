@@ -4,17 +4,17 @@ const state = vi.hoisted(() => {
   const hot = new Set<string>()
   const cold = new Set<string>()
   const updates: Array<{ tier: string; ids: string[] }> = []
-  const stats = new Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }>()
+  const stats = new Map<string, { hitCount: number; readCount: number; engagementScore: number; lastAccessed: number | null }>()
   const updatedAt = new Map<string, number>()
   const dayArgs: Array<{ count: number; days: number }> = []
   const selects: string[] = []
   const flags = { missingEntries: 0 }
 
   const buildStats = (ids: string[]) => {
-    const m = new Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }>()
+    const m = new Map<string, { hitCount: number; readCount: number; engagementScore: number; lastAccessed: number | null }>()
     const list = flags.missingEntries > 0 ? ids.slice(0, ids.length - flags.missingEntries) : ids
     for (const id of list) {
-      m.set(id, stats.get(id) ?? { hitCount: 0, readCount: 0, lastAccessed: null })
+      m.set(id, stats.get(id) ?? { hitCount: 0, readCount: 0, engagementScore: 0, lastAccessed: null })
     }
     return m
   }
@@ -57,7 +57,17 @@ const state = vi.hoisted(() => {
 })
 
 vi.mock('../../../electron/main/services/kms/kms-database.service', () => ({
-  default: { getInstance: () => ({ getDb: () => state.fakeDb }) },
+  default: { getInstance: () => ({ getDb: () => state.fakeDb, getVectorDb: () => state.fakeDb }) },
+}))
+
+vi.mock('../../../electron/main/services/kms/kms-search-engine.service', () => ({
+  default: {
+    getInstance: () => ({
+      archiveChunkVectorsForColdFiles: vi.fn(() => 1),
+      restoreArchivedVectorsForFile: vi.fn(() => 1),
+      purgeArchivedVectors: vi.fn(() => 0),
+    }),
+  },
 }))
 
 vi.mock('../../../electron/main/services/kms/kms-crawler.service', () => ({
@@ -76,8 +86,8 @@ import KMSDataTierService from '../../../electron/main/services/kms/kms-data-tie
 const tiers = KMSDataTierService.getInstance()
 const now = () => Math.floor(Date.now() / 1000)
 
-function setStats(id: string, s: Partial<{ hitCount: number; readCount: number; lastAccessed: number | null }>) {
-  state.stats.set(id, { hitCount: 0, readCount: 0, lastAccessed: null, ...s })
+function setStats(id: string, s: Partial<{ hitCount: number; readCount: number; engagementScore: number; lastAccessed: number | null }>) {
+  state.stats.set(id, { hitCount: 0, readCount: 0, engagementScore: 0, lastAccessed: null, ...s })
 }
 
 beforeEach(() => {
@@ -100,7 +110,7 @@ describe('kms-data-tier / 空库与去抖', () => {
 
   it('非强制模式在 5 分钟内不重复评估（去抖）', () => {
     state.cold.add('f1')
-    setStats('f1', { hitCount: 20 })
+    setStats('f1', { engagementScore: 20 })
     const first = tiers.evaluateDataTiers(true)
     expect(first.promotedFileIds).toEqual(['f1'])
 
@@ -158,14 +168,14 @@ describe('kms-data-tier / 降级（hot → cold）', () => {
 describe('kms-data-tier / 晋升（cold → hot）', () => {
   it('命中次数达到 15 次晋升', () => {
     state.cold.add('f1')
-    setStats('f1', { hitCount: 15 })
+    setStats('f1', { engagementScore: 15 })
     expect(tiers.evaluateDataTiers(true).promotedFileIds).toEqual(['f1'])
     expect(state.hot.has('f1')).toBe(true)
   })
 
   it('命中 14 次不晋升（阈值边界）', () => {
     state.cold.add('f1')
-    setStats('f1', { hitCount: 14 })
+    setStats('f1', { engagementScore: 14 })
     expect(tiers.evaluateDataTiers(true).promotedFileIds).toEqual([])
   })
 
@@ -191,7 +201,7 @@ describe('kms-data-tier / 晋升（cold → hot）', () => {
     state.hot.add('h1')
     state.cold.add('c1')
     setStats('h1', { lastAccessed: now() - 200 * 86400 })
-    setStats('c1', { hitCount: 100 })
+    setStats('c1', { engagementScore: 100 })
     const out = tiers.evaluateDataTiers(true)
     expect(out.demotedFileIds).toEqual(['h1'])
     expect(out.promotedFileIds).toEqual(['c1'])
@@ -202,7 +212,7 @@ describe('kms-data-tier / 晋升（cold → hot）', () => {
     const ids = Array.from({ length: 601 }, (_, i) => `c${i}`)
     for (const id of ids) {
       state.cold.add(id)
-      setStats(id, { hitCount: 20 })
+      setStats(id, { engagementScore: 20 })
     }
     const out = tiers.evaluateDataTiers(true)
     expect(out.promotedFileIds).toHaveLength(601)
@@ -213,7 +223,7 @@ describe('kms-data-tier / 晋升（cold → hot）', () => {
 
   it('重复评估具有幂等性（已晋升的文件不再重复更新）', () => {
     state.cold.add('f1')
-    setStats('f1', { hitCount: 20 })
+    setStats('f1', { engagementScore: 20 })
     expect(tiers.evaluateDataTiers(true).promotedFileIds).toEqual(['f1'])
     state.updates.length = 0
     expect(tiers.evaluateDataTiers(true).promotedFileIds).toEqual([])

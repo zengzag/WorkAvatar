@@ -71,6 +71,7 @@ vi.mock('../../../electron/main/services/kms/kms-knowledge-card.service', () => 
 import { DatabaseSync } from 'node:sqlite'
 import KMSDatabaseService from '../../../electron/main/services/kms/kms-database.service'
 import KMSSearchEngineService from '../../../electron/main/services/kms/kms-search-engine.service'
+import KMSContentVersionService from '../../../electron/main/services/kms/kms-content-version.service'
 import KMSService from '../../../electron/main/services/kms/kms.service'
 
 let kms: KMSService
@@ -82,6 +83,7 @@ beforeEach(async () => {
   docsDir = fs.mkdtempSync(path.join(state.root, 'docs'))
   ;(KMSDatabaseService as any).instance = undefined
   ;(KMSSearchEngineService as any).instance = undefined
+  ;(KMSContentVersionService as any).instance = undefined
   ;(KMSService as any).instance = undefined
 
   KMSDatabaseService.getInstance()
@@ -95,6 +97,7 @@ afterEach(() => {
   try { KMSDatabaseService.getInstance().close() } catch { /* closed */ }
   ;(KMSDatabaseService as any).instance = undefined
   ;(KMSSearchEngineService as any).instance = undefined
+  ;(KMSContentVersionService as any).instance = undefined
   ;(KMSService as any).instance = undefined
   fs.rmSync(state.root, { recursive: true, force: true })
 })
@@ -249,6 +252,73 @@ describe('搜索', () => {
     expect(results).toHaveLength(1)
     expect(results[0].file_id).toBe('f1')
     expect(kms.searchFiles('zzz', { topK: 50 })).toEqual([])
+  })
+
+  it('searchFiles：多词空格切分 AND 匹配', () => {
+    const dir = kms.addIndexDir(docsDir)
+    const fp1 = path.join(docsDir, '三季度报告.docx')
+    fs.writeFileSync(fp1, '内容')
+    mainDb.prepare(`
+      INSERT INTO kms_files (id, dir_id, file_path, file_name, file_hash)
+      VALUES ('f-term1', ?, ?, '三季度报告.docx', 'h-term1')
+    `).run(dir.id, fp1)
+
+    // 两个词都命中 → 命中
+    const hit = kms.searchFiles('季度 报告', { topK: 50 })
+    expect(hit.some(r => r.file_id === 'f-term1')).toBe(true)
+
+    // OR 降级：只命中一个词也能召回
+    const partial = kms.searchFiles('报告 不存在的词', { topK: 50 })
+    expect(partial.some(r => r.file_id === 'f-term1')).toBe(true)
+  })
+
+  it('searchFiles：AI 完全排除（level 2）的文件不返回', () => {
+    const dir = kms.addIndexDir(docsDir)
+    const fp = path.join(docsDir, '秘密报表.docx')
+    fs.writeFileSync(fp, '内容')
+    mainDb.prepare(`
+      INSERT INTO kms_files (id, dir_id, file_path, file_name, file_hash, ai_exclusion_level)
+      VALUES ('f-sec', ?, ?, '秘密报表.docx', 'h-sec', 2)
+    `).run(dir.id, fp)
+
+    expect(kms.searchFiles('秘密', { topK: 50 })).toEqual([])
+    // level 1 仍参与文件名搜索
+    mainDb.prepare('UPDATE kms_files SET ai_exclusion_level = 1 WHERE id = ?').run('f-sec')
+    expect(kms.searchFiles('秘密', { topK: 50 })).toHaveLength(1)
+  })
+
+  it('searchFiles：路径子串命中（目录场景）', () => {
+    const dir = kms.addIndexDir(docsDir)
+    const subdir = path.join(docsDir, '合同归档')
+    fs.mkdirSync(subdir, { recursive: true })
+    const fp = path.join(subdir, 'x-2024.docx')
+    fs.writeFileSync(fp, '内容')
+    mainDb.prepare(`
+      INSERT INTO kms_files (id, dir_id, file_path, file_name, file_hash)
+      VALUES ('f-path', ?, ?, 'x-2024.docx', 'h-path')
+    `).run(dir.id, fp)
+
+    // 文件名不含"合同"，但路径含 → 召回
+    const results = kms.searchFiles('合同', { topK: 50 })
+    expect(results.some(r => r.file_id === 'f-path')).toBe(true)
+  })
+
+  it('searchFiles：含下划线的文件名可按字面命中（LIKE 转义生效）', () => {
+    const dir = kms.addIndexDir(docsDir)
+    const fp = path.join(docsDir, '会议纪要_2024.docx')
+    fs.writeFileSync(fp, '内容')
+    mainDb.prepare(`
+      INSERT INTO kms_files (id, dir_id, file_path, file_name, file_hash)
+      VALUES ('f-underscore', ?, ?, '会议纪要_2024.docx', 'h-underscore')
+    `).run(dir.id, fp)
+
+    expect(kms.searchFiles('会议纪要_2024', { topK: 50 }).some(r => r.file_id === 'f-underscore')).toBe(true)
+  })
+
+  it('searchFiles：纯分隔符查询不抛错且返回空', () => {
+    kms.addIndexDir(docsDir)
+    expect(() => kms.searchFiles('，', { topK: 50 })).not.toThrow()
+    expect(kms.searchFiles('，', { topK: 50 })).toEqual([])
   })
 
   it('searchCollectionSummaries：无摘要返回空', () => {

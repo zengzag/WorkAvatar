@@ -74,4 +74,3 @@ const KMSCollectionEditModalComponent: React.FC<KMSCollectionEditModalProps> = (
 const KMSCollectionEditModal = React.memo(KMSCollectionEditModalComponent)
 export { KMSCollectionEditModal }
 export default KMSCollectionEditModal
-

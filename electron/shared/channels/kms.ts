@@ -74,6 +74,7 @@ export const KMS_CHANNELS = {
   KMS_MCP_GET_STATUS: 'kms-mcp:get-status',
   KMS_MCP_GET_CONFIG: 'kms-mcp:get-config',
   KMS_MCP_SET_CONFIG: 'kms-mcp:set-config',
+  KMS_MCP_RESET_API_KEY: 'kms-mcp:reset-api-key',
   // 列出工具类别（含工具数、默认启用状态）
   KMS_MCP_LIST_CATEGORIES: 'kms-mcp:list-categories',
   // 列出当前配置启用的所有对外工具（MCP 格式），可选传入自定义类别做预览
@@ -99,6 +100,12 @@ export const KMS_CHANNELS = {
   KMS_ADD_STOP_WORD: 'kms:add-stop-word',
   KMS_DELETE_STOP_WORD: 'kms:delete-stop-word',
   KMS_CLEAR_AUTO_STOP_WORDS: 'kms:clear-auto-stop-words',
+  // KMS 敏感内容控制（AI 排除级别）
+  KMS_SET_FILE_AI_EXCLUSION: 'kms:set-file-ai-exclusion',
+  KMS_SET_DIR_AI_EXCLUSION: 'kms:set-dir-ai-exclusion',
+  KMS_LIST_AI_EXCLUSIONS: 'kms:list-ai-exclusions',
+  // KMS 冷向量物理删除
+  KMS_PURGE_ARCHIVED_VECTORS: 'kms:purge-archived-vectors',
 } as const
 
 export interface KMSAddDirParams {

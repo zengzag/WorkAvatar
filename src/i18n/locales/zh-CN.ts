@@ -1734,6 +1734,27 @@ export default {
       reprocessTitle: '确认重新处理？',
       reprocessConfirm: '该合集已经处理过，重新处理将覆盖现有的段落摘要、文件摘要、目录与智能索引，可能需要较长时间。是否继续？',
     },
+    // 敏感内容控制（AI 排除级别）
+    sensitive: {
+      title: '敏感内容控制',
+      desc: '设置目录/文件的 AI 排除级别：2 级将完全排除出搜索、MCP 与 Agent 的所有数据供给。',
+      dirLevel: '目录级别',
+      fileLevel: '已排除文件',
+      level0: '正常参与 AI 检索',
+      level1: '仅手动处理（1 级）',
+      level2: '完全排除（2 级）',
+      saved: '已保存',
+      fileExcluded: '文件已完全排除出 AI 检索',
+      saveFailed: '保存失败',
+      noFiles: '暂无排除文件',
+      selectTooltip: '选择此文件的 AI 数据供给级别',
+    },
+    purge: {
+      desc: '物理删除仍为冷数据且归档超过 30 天的向量以回收磁盘空间；通常由冷热分层流程自动执行，此为兜底入口。',
+      button: '清理归档向量',
+      success: '已物理删除 {{count}} 条归档向量，剩余归档 {{still}} 条（宽限期内）',
+      failed: '清理失败',
+    },
   },
   subagentProfiles: {
     title: '子智能体模板',

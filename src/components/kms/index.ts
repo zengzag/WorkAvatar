@@ -11,3 +11,4 @@ export { default as KMSCollectionProcessModal } from './KMSCollectionProcessModa
 export { default as KnowledgeCardBanner } from './KnowledgeCardBanner'
 export { default as KnowledgeCardDetail } from './KnowledgeCardDetail'
 export { default as KMSKnowledgeCardsView } from './KMSKnowledgeCardsView'
+export { default as KMSSensitiveControlCard } from './KMSSensitiveControlCard'
