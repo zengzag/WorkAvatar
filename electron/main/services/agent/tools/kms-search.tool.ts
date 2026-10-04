@@ -188,6 +188,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
         }
 
         const typeLabels: Record<string, string> = {
+          document: '文档',
           file_title: '标题',
           file_summary: '摘要',
           paragraph: '段落',

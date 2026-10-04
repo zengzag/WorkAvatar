@@ -426,7 +426,7 @@ class KMSIndexWorkerClientService {
       // Worker 完成任务后，主线程的搜索/向量缓存可能与 Worker 的写入不一致，
       // 主动失效所有缓存，让下一次查询重新从 DB 加载
       try {
-        KMSSearchEngineService.getInstance().invalidateCache()
+        KMSSearchEngineService.getInstance().invalidateAllCaches()
         KMSDatabaseService.getInstance().checkpoint('PASSIVE')
       } catch (err: any) {
         logger.warn('Post-task cache invalidation/checkpoint failed:', err?.message || err)

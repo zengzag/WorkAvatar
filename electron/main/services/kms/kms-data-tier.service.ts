@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
+import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-DataTier')
@@ -86,7 +87,11 @@ class KMSDataTierService {
       const statsMap = crawler.getFileAccessStatsBatch(coldFileIds, HOT_PROMOTE_DAYS)
       for (const fileId of coldFileIds) {
         const stats = statsMap.get(fileId)!
-        if (stats.hitCount >= HOT_PROMOTE_HIT_THRESHOLD || stats.readCount >= HOT_PROMOTE_READ_THRESHOLD) {
+        if (
+          stats.engagementScore >= HOT_PROMOTE_HIT_THRESHOLD ||
+          stats.hitCount >= HOT_PROMOTE_HIT_THRESHOLD * 2 ||
+          stats.readCount >= HOT_PROMOTE_READ_THRESHOLD
+        ) {
           promoteIds.push(fileId)
         }
       }
@@ -107,12 +112,18 @@ class KMSDataTierService {
       tx(ids, tier)
     }
 
+    const searchEngine = KMSSearchEngineService.getInstance()
     if (demoteIds.length > 0) {
       updateTierBatch(demoteIds, 'cold')
+      searchEngine.archiveChunkVectorsForColdFiles(Math.max(1000, demoteIds.length))
+      // 物理删除长期未恢复的归档冷向量（30 天宽限期，真正的磁盘回收）
+      const purged = searchEngine.purgeArchivedVectors()
+      if (purged > 0) logger.info(`Purged ${purged} archived cold vectors`)
       logger.info(`Demoted ${demoteIds.length} file(s) from hot to cold (no access in ${COLD_DEMOTE_DAYS} days)`)
     }
     if (promoteIds.length > 0) {
       updateTierBatch(promoteIds, 'hot')
+      for (const fileId of promoteIds) searchEngine.restoreArchivedVectorsForFile(fileId)
       logger.info(`Promoted ${promoteIds.length} file(s) from cold to hot`)
     }
 

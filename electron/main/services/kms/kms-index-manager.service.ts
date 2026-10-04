@@ -5,6 +5,7 @@ import KMSSearchEngineService from './kms-search-engine.service'
 import KMSAutoIndexService from './kms-auto-index.service'
 import KMSEmbeddingService from './kms-embedding.service'
 import KMSDataTierService from './kms-data-tier.service'
+import KMSContentVersionService from './kms-content-version.service'
 import FileParserService from '../file-parser.service'
 import LLMClientService from '../llm-client.service'
 import { generateId } from '../common-utils'
@@ -248,17 +249,25 @@ class KMSIndexManagerService {
 
           // 解析后：标题索引 + 段落索引 + 解析模式 + 轻量摘要，合并为单个事务
           // 把原本 4-5 次小事务提交合并为 1 次，减少 fsync 次数（synchronous=NORMAL 下也减少 WAL 写入）
+          KMSContentVersionService.getInstance().ensureForFile(file.id)
           KMSDatabaseService.getInstance().runInTransaction(() => {
             if (parseMode) {
               this.saveParseMode(file.id, parseMode)
             }
             searchEngine.indexFileTitle(file.id, file.fileName, file.filePath)
             if (parseResult.fullText) {
+              searchEngine.indexFileDocument(file.id, file.fileName, file.filePath, parseResult.fullText)
               searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
             }
             if (isFull && parseResult.fullText) {
               this.saveLightSummary(file.id, file.fileName, parseResult.fullText)
             }
+            this.db.prepare(`
+              UPDATE kms_files
+              SET content_changed_at = unixepoch(),
+                  document_date = COALESCE(document_date, ?)
+              WHERE id = ?
+            `).run(file.modifiedTime || null, file.id)
           })
 
           const isHot = file.dataTier === 'hot'
@@ -686,9 +695,11 @@ class KMSIndexManagerService {
     if (!parseResult.fullText) return
 
     // 解析后写入：删除旧索引 + 标题/段落索引 + 轻量摘要合并为单个事务
+    KMSContentVersionService.getInstance().ensureForFile(file.id)
     KMSDatabaseService.getInstance().runInTransaction(() => {
       searchEngine.deleteIndexByFile(file.id)
       searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
+      searchEngine.indexFileDocument(file.id, file.file_name, file.file_path, parseResult.fullText)
       searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
       this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
     })
@@ -969,13 +980,15 @@ class KMSIndexManagerService {
 
         const parseMode = parseResult.metadata?.parser
 
-        // 2. 删除旧索引并重新索引（标题 + 内容段落 + 解析模式 + 轻量摘要）
+        // 2. 删除旧索引并重新索引（标题 + 文档向量源 + 内容段落 + 解析模式 + 轻量摘要）
+        KMSContentVersionService.getInstance().ensureForFile(file.id)
         KMSDatabaseService.getInstance().runInTransaction(() => {
           searchEngine.deleteIndexByFile(file.id)
           if (parseMode) {
             this.saveParseMode(file.id, parseMode)
           }
           searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
+          searchEngine.indexFileDocument(file.id, file.file_name, file.file_path, parseResult.fullText)
           searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
           this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
         })

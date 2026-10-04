@@ -218,6 +218,14 @@ class KMSDatabaseService {
     return KMSDatabaseService.instance
   }
 
+  private ensureColumn(table: string, column: string, definition: string, target: 'main' | 'vector' = 'main'): void {
+    const db = target === 'vector' ? this.vectorDb : this.db
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as any[]
+    if (!cols.some(c => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
+  }
+
   private initializeSchema(): void {
     this.db.exec(`
       -- 索引目录配置表
@@ -506,6 +514,46 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_stop_words_word ON kms_stop_words(word);
+
+      CREATE TABLE IF NOT EXISTS kms_content_versions (
+        id TEXT PRIMARY KEY,
+        exact_hash TEXT NOT NULL UNIQUE,
+        normalized_hash TEXT NOT NULL DEFAULT '',
+        canonical_file_id TEXT,
+        file_size INTEGER NOT NULL DEFAULT 0,
+        parser TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_seen_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_content_versions_normalized ON kms_content_versions(normalized_hash);
+      CREATE INDEX IF NOT EXISTS idx_kms_content_versions_canonical ON kms_content_versions(canonical_file_id);
+
+      CREATE TABLE IF NOT EXISTS kms_file_name_tokens (
+        file_id TEXT NOT NULL,
+        token TEXT NOT NULL,
+        PRIMARY KEY (file_id, token)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_file_name_tokens_token ON kms_file_name_tokens(token);
+    `)
+
+    this.ensureColumn('kms_index_dirs', 'ai_exclusion_level', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('kms_files', 'content_version_id', "TEXT NOT NULL DEFAULT ''")
+    this.ensureColumn('kms_files', 'ai_exclusion_level', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('kms_files', 'content_changed_at', 'INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('kms_files', 'document_date', 'INTEGER')
+    this.ensureColumn('kms_files', 'effective_date', 'INTEGER')
+    this.ensureColumn('kms_files', 'expiry_date', 'INTEGER')
+    this.ensureColumn('kms_files', 'document_status', "TEXT NOT NULL DEFAULT 'unknown'")
+    this.ensureColumn('kms_search_index', 'content_version_id', "TEXT NOT NULL DEFAULT ''")
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_kms_files_content_version ON kms_files(content_version_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_ai_exclusion ON kms_files(ai_exclusion_level);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_document_dates ON kms_files(document_date, effective_date, expiry_date);
+      CREATE INDEX IF NOT EXISTS idx_kms_search_index_content_version ON kms_search_index(content_version_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_index_dirs_ai_exclusion ON kms_index_dirs(ai_exclusion_level);
     `)
 
     this.recoverStuckFiles()
@@ -540,9 +588,44 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source ON kms_embeddings(source_type, source_id);
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_file ON kms_embeddings(file_id);
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_dimension ON kms_embeddings(dimension);
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_model_dimension ON kms_embeddings(model, dimension);
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_updated ON kms_embeddings(updated_at DESC);
       -- 覆盖索引：支持 anti-join 查询的 index-only scan（避免回表取 id）
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source_covering ON kms_embeddings(source_type, source_id, id);
+
+      CREATE TABLE IF NOT EXISTS kms_vector_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS kms_embedding_jobs (
+        id TEXT PRIMARY KEY,
+        model_key TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        content_version_id TEXT NOT NULL DEFAULT '',
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        content_hash TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        priority INTEGER NOT NULL DEFAULT 100,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        locked_by TEXT NOT NULL DEFAULT '',
+        locked_until INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        UNIQUE(model_key, source_type, source_id, content_hash)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_embedding_jobs_status ON kms_embedding_jobs(status, priority, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_kms_embedding_jobs_file ON kms_embedding_jobs(file_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_embedding_jobs_lock ON kms_embedding_jobs(locked_until, status);
+    `)
+
+    this.ensureColumn('kms_embeddings', 'archived', 'INTEGER NOT NULL DEFAULT 0', 'vector')
+    this.vectorDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_archived ON kms_embeddings(archived, source_type, file_id);
     `)
   }
 
@@ -681,6 +764,111 @@ class KMSDatabaseService {
       orphanedFtsCount,
       orphanedEmbeddingCount,
       orphanedFileCount,
+    }
+  }
+
+  /**
+   * KMS 规模诊断：只做 COUNT/GROUP BY，不加载正文或向量 BLOB。
+   * 用于优化前后记录文件数、索引条数、向量分布和库体积基线。
+   */
+  public getIndexDiagnostics(): Record<string, any> {
+    const scalar = (db: Database.Database, sql: string): number => {
+      try {
+        const row = db.prepare(sql).get() as any
+        return Number(row?.cnt ?? row?.count ?? 0)
+      } catch (err: any) {
+        logger.warn('KMS diagnostic scalar query failed:', err?.message || err)
+        return 0
+      }
+    }
+
+    const groups = (db: Database.Database, sql: string): Record<string, number> => {
+      const out: Record<string, number> = {}
+      try {
+        const rows = db.prepare(sql).all() as any[]
+        for (const row of rows) {
+          const key = String(row.name ?? row.status ?? row.tier ?? row.type ?? row.model ?? row.dimension ?? 'unknown')
+          out[key] = Number(row.cnt ?? row.count ?? 0)
+        }
+      } catch (err: any) {
+        logger.warn('KMS diagnostic group query failed:', err?.message || err)
+      }
+      return out
+    }
+
+    const stats = this.getDatabaseStats()
+    const vectorMeta = Object.fromEntries(
+      (this.vectorDb.prepare('SELECT key, value FROM kms_vector_meta').all() as any[])
+        .map(row => [row.key, row.value])
+    )
+
+    return {
+      generatedAt: new Date().toISOString(),
+      sizes: {
+        mainDb: stats.mainDbSize,
+        vectorDb: stats.vectorDbSize,
+        mainWal: stats.mainWalSize,
+        vectorWal: stats.vectorWalSize,
+      },
+      directories: {
+        indexDirs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_index_dirs'),
+        enabledIndexDirs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_index_dirs WHERE enabled = 1'),
+        searchDirs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_search_dirs'),
+        enabledSearchDirs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_search_dirs WHERE enabled = 1'),
+      },
+      files: {
+        total: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_files'),
+        byStatus: groups(this.db, 'SELECT index_status AS status, COUNT(*) AS cnt FROM kms_files GROUP BY index_status'),
+        byTier: groups(this.db, 'SELECT data_tier AS tier, COUNT(*) AS cnt FROM kms_files GROUP BY data_tier'),
+        byExtension: groups(this.db, 'SELECT file_ext AS name, COUNT(*) AS cnt FROM kms_files GROUP BY file_ext ORDER BY cnt DESC LIMIT 50'),
+      },
+      index: {
+        searchIndexRows: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_search_index'),
+        ftsRows: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_fts'),
+        paragraphs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_paragraphs'),
+        fileSummaries: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_file_summaries'),
+        bySearchSource: groups(this.db, 'SELECT source_type AS type, COUNT(*) AS cnt FROM kms_search_index GROUP BY source_type'),
+      },
+      vectors: {
+        total: scalar(this.vectorDb, 'SELECT COUNT(*) AS cnt FROM kms_embeddings'),
+        byDimension: groups(this.vectorDb, 'SELECT dimension, COUNT(*) AS cnt FROM kms_embeddings GROUP BY dimension'),
+        byModel: groups(this.vectorDb, 'SELECT model, COUNT(*) AS cnt FROM kms_embeddings GROUP BY model ORDER BY cnt DESC LIMIT 50'),
+        bySourceType: groups(this.vectorDb, 'SELECT source_type AS type, COUNT(*) AS cnt FROM kms_embeddings GROUP BY source_type'),
+        pendingJobs: scalar(this.vectorDb, "SELECT COUNT(*) AS cnt FROM kms_embedding_jobs WHERE status IN ('pending','running')"),
+        archivedChunkVectors: scalar(this.vectorDb, "SELECT COUNT(*) AS cnt FROM kms_embeddings WHERE COALESCE(archived,0)=1 AND source_type IN ('paragraph','content_paragraph')"),
+        active: vectorMeta,
+      },
+      contentVersions: {
+        total: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_content_versions'),
+        filesMissingVersion: scalar(this.db, "SELECT COUNT(*) AS cnt FROM kms_files WHERE COALESCE(content_version_id, '') = ''"),
+        duplicateClusters: scalar(this.db, `
+          SELECT COUNT(*) AS cnt FROM (
+            SELECT file_hash FROM kms_files WHERE file_hash != ''
+            GROUP BY file_hash HAVING COUNT(*) > 1
+          )
+        `),
+      },
+      ai: {
+        excludedFiles: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_files WHERE COALESCE(ai_exclusion_level,0) >= 2'),
+        excludedDirs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_index_dirs WHERE COALESCE(ai_exclusion_level,0) >= 2'),
+      },
+      knowledge: {
+        collections: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_collections'),
+        collectionFiles: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_file_collections'),
+        collectionSummaries: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_collection_summaries'),
+        knowledgeCards: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_knowledge_cards'),
+        activeKnowledgeCards: scalar(this.db, "SELECT COUNT(*) AS cnt FROM kms_knowledge_cards WHERE status = 'active'"),
+        keywordStats: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_keyword_stats'),
+      },
+      activity: {
+        accessLogs: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_access_log'),
+        searchHistory: scalar(this.db, 'SELECT COUNT(*) AS cnt FROM kms_search_history'),
+      },
+      orphans: {
+        fts: stats.orphanedFtsCount,
+        embeddings: stats.orphanedEmbeddingCount,
+        files: stats.orphanedFileCount,
+      },
     }
   }
 

@@ -83,6 +83,8 @@ export function buildLikeWhereClause(options?: SearchOptions): { whereClause: st
     params.push(...options.dirIds)
   }
 
+  whereClause += " AND COALESCE(f.ai_exclusion_level, 0) < 2 AND COALESCE(d.ai_exclusion_level, 0) < 2"
+
   return { whereClause, params }
 }
 
@@ -132,6 +134,8 @@ export function buildFtsWhereClause(options?: SearchOptions): { whereClause: str
     whereClause += ` AND kms_fts.file_id IN (SELECT id FROM kms_files WHERE dir_id IN (${placeholders}))`
     params.push(...options.dirIds)
   }
+
+  whereClause += " AND COALESCE(f.ai_exclusion_level, 0) < 2 AND COALESCE(d.ai_exclusion_level, 0) < 2"
 
   return { whereClause, params }
 }
