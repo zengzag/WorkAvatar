@@ -5,6 +5,8 @@ export interface DBEmployee {
   description: string
   rules: string
   avatar_type: string
+  avatar_icon?: string | null
+  avatar_color?: string | null
   default_skill_id: string | null
   profile_json: string
   /** 委托能力设置 JSON：{"enabled":bool,"targetIds":[],"acceptDelegation":bool}，空串未配置 */

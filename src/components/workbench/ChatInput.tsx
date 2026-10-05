@@ -1,11 +1,12 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, PlusOutlined, DownOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, useLayoutEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import FileChangesModal from './FileChangesModal'
+import EmployeeAvatar from '../common/EmployeeAvatar'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -22,6 +23,44 @@ const measureTextWidth = (text: string, fontPx: number): number => {
   if (!textMeasureCtx) return text.length * fontPx
   textMeasureCtx.font = `${fontPx}px "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif`
   return Math.ceil(textMeasureCtx.measureText(text).width)
+}
+
+/** 圆形图标按钮：高亮仅跟随鼠标悬停（禁用态永不高亮） */
+const HoverIconButton: React.FC<{
+  icon: React.ReactNode
+  title: string
+  size: number
+  token: any
+  disabled?: boolean
+  onClick?: () => void
+}> = ({ icon, title, size, token, disabled, onClick }) => {
+  const [hovered, setHovered] = useState(false)
+  // 按钮可能因翻页在悬停中被禁用（禁用元素不派发 mouseleave），此时需主动复位
+  useEffect(() => { if (disabled) setHovered(false) }, [disabled])
+  const active = hovered && !disabled
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: size, height: size, borderRadius: '50%', flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'inherit', userSelect: 'none',
+        border: `1px solid ${active ? token.colorPrimary : token.colorBorderSecondary}`,
+        background: token.colorBgContainer,
+        color: disabled ? token.colorTextQuaternary : (active ? token.colorPrimary : token.colorTextSecondary),
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        transition: 'border-color 0.2s ease, color 0.2s ease',
+      }}
+    >
+      {icon}
+    </button>
+  )
 }
 
 export interface AttachedImage {
@@ -1140,40 +1179,7 @@ const ChatInput: React.FC<{
     </div>
   ), [t, token, defaultModelSearch, filteredDefaultModels, defaultProviderId, defaultModelId, onDefaultModelChange])
 
-  /** 员工首字母头像（去掉表情等符号，仅字母数字） */
-  const getEmployeeInitial = (name: string) => {
-    const ch = (name || '').trim().charAt(0).toUpperCase()
-    return /^[A-Z0-9]$/.test(ch) ? ch : ''
-  }
-
-  /** 按员工 id 哈希出稳定色相，同一员工头像颜色各处一致 */
-  const getEmployeeHue = (id: string) => {
-    let h = 0
-    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360
-    return h
-  }
-
-  // 常用数字员工：最多前4个（后端按last_active_at倒序）
-  const top4Employees = useMemo(() => {
-    const list = employees || []
-    return list.slice(0, Math.min(4, list.length))
-  }, [employees])
-
-  // 当前选中的员工
-  const selectedEmployee = useMemo(() => {
-    if (!selectedEmployeeId || !employees) return null
-    return employees.find(e => e.id === selectedEmployeeId) || null
-  }, [employees, selectedEmployeeId])
-
-  // 快捷候选：常用4个 + 选中但不在其中的员工
-  const candidateEmployees = useMemo(() => {
-    if (selectedEmployee && !top4Employees.some(e => e.id === selectedEmployee.id)) {
-      return [...top4Employees, selectedEmployee]
-    }
-    return top4Employees
-  }, [top4Employees, selectedEmployee])
-
-  // 快捷条可用宽度（保证单行，能显示几个由宽度动态决定）
+  // 数字员工快捷条可用宽度
   const railWrapRef = useRef<HTMLDivElement>(null)
   const [railWidth, setRailWidth] = useState(0)
   useLayoutEffect(() => {
@@ -1189,82 +1195,74 @@ const ChatInput: React.FC<{
 
   const ITEM_GAP = 6
   const LABEL_MAX_WIDTH = 88
-  // 每个 chip 的自然宽度：左内边距5 + 头像22 + 间距7 + 标题(上限88) + 右内边距12 + 边框2
-  const chipWidths = useMemo(() => candidateEmployees.map(emp =>
-    5 + 22 + 7 + Math.min(measureTextWidth(emp.name, 13), LABEL_MAX_WIDTH) + 12 + 2
-  ), [candidateEmployees])
-  // 「更多」按钮宽度：内边距24 + 图标11 + 间距5 + 文案 + 边框2
-  const moreButtonWidth = useMemo(
-    () => 24 + 11 + 5 + measureTextWidth(t('workbench.moreEmployees'), 12.5) + 2,
-    [t]
-  )
+  // 左右翻页箭头按钮为图标按钮，尺寸固定
+  const ARROW_BTN_WIDTH = 26
+  // 「全部员工」按钮为图标按钮，尺寸固定
+  const MENU_BTN_WIDTH = 32
 
-  // 单行动态截断：放得下几个显示几个，其余收进「更多」弹层
-  const shownCount = useMemo(() => {
-    if (railWidth <= 0) return candidateEmployees.length
+  // 单个 chip 的最大自然宽度：左内边距5 + 头像22 + 间距7 + 标题(上限88) + 右内边距12 + 边框2
+  const maxChipWidth = useMemo(() => {
+    const list = employees || []
+    if (list.length === 0) return 0
+    return Math.max(...list.map(emp =>
+      5 + 22 + 7 + Math.min(measureTextWidth(emp.name, 13), LABEL_MAX_WIDTH) + 12 + 2
+    ))
+  }, [employees])
+
+  // 每页容纳的员工数：按最宽 chip 保守估算，保证任意一页都能完整显示
+  const pageSize = useMemo(() => {
+    const total = (employees || []).length
+    if (total === 0) return 1
+    if (railWidth <= 0) return total
+    const available = Math.max(
+      maxChipWidth,
+      railWidth - (ARROW_BTN_WIDTH * 2 + MENU_BTN_WIDTH + ITEM_GAP * 3)
+    )
     let used = 0
     let count = 0
-    for (let i = 0; i < candidateEmployees.length; i++) {
-      const restAfter = (employees || []).length - (count + 1)
-      const reserved = restAfter > 0 ? ITEM_GAP + moreButtonWidth : 0
-      const next = used + (count > 0 ? ITEM_GAP : 0) + chipWidths[i]
-      if (next + reserved <= railWidth + 4) {
-        used = next
-        count++
-      } else break
+    while (count < total) {
+      const next = used + (count > 0 ? ITEM_GAP : 0) + maxChipWidth
+      if (next > available) break
+      used = next
+      count++
     }
-    return count
-  }, [candidateEmployees, chipWidths, railWidth, moreButtonWidth])
+    return Math.max(1, count)
+  }, [employees, railWidth, maxChipWidth])
 
-  const shownEmployees = useMemo(() => (
-    candidateEmployees.slice(0, railWidth <= 0 ? candidateEmployees.length : shownCount)
-  ), [candidateEmployees, shownCount, railWidth])
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((employees || []).length / pageSize)),
+    [employees, pageSize]
+  )
 
-  // 下拉可选员工：未出现在快捷条上的
-  const dropdownEmployees = useMemo(() => {
-    const shownIds = new Set(shownEmployees.map(e => e.id))
-    return (employees || []).filter(e => !shownIds.has(e.id))
-  }, [employees, shownEmployees])
+  // 翻页游标；尺寸或列表变化导致越界时收敛到最后一页
+  const [employeePage, setEmployeePage] = useState(0)
+  useEffect(() => {
+    setEmployeePage(p => Math.min(p, totalPages - 1))
+  }, [totalPages])
 
-  // 选中员工未出现在快捷条上时，由「更多」按钮呈现已选态
-  const selectedHiddenEmployee = selectedEmployee && !shownEmployees.some(e => e.id === selectedEmployee.id)
-    ? selectedEmployee
-    : null
+  const safePage = Math.min(employeePage, totalPages - 1)
+  const shownEmployees = useMemo(() => {
+    const start = safePage * pageSize
+    return (employees || []).slice(start, start + pageSize)
+  }, [employees, safePage, pageSize])
 
-  const filteredDropdownEmployees = useMemo(() => {
-    if (!employeeSearch.trim()) return dropdownEmployees
+  // 选择员工：选中并翻到该员工所在页，保证选中态在快捷条上可见
+  const handlePickEmployee = useCallback((id: string) => {
+    const idx = (employees || []).findIndex(e => e.id === id)
+    if (idx >= 0) setEmployeePage(Math.floor(idx / pageSize))
+    onSelectEmployee?.(id)
+  }, [employees, pageSize, onSelectEmployee])
+
+  // 「全部员工」弹层的过滤结果（含快捷条上已显示的员工）
+  const filteredEmployees = useMemo(() => {
+    const list = employees || []
+    if (!employeeSearch.trim()) return list
     const search = employeeSearch.toLowerCase()
-    return dropdownEmployees.filter(e =>
+    return list.filter(e =>
       e.name.toLowerCase().includes(search) ||
       (e.description || '').toLowerCase().includes(search)
     )
-  }, [dropdownEmployees, employeeSearch])
-
-  const renderEmployeeAvatar = useCallback((emp: Employee, size: number, active: boolean) => {
-    if (active) {
-      return (
-        <div style={{
-          width: size, height: size, borderRadius: '50%', flexShrink: 0,
-          background: token.colorPrimary,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <CheckOutlined style={{ fontSize: size * 0.5, color: '#fff' }} />
-        </div>
-      )
-    }
-    const hue = getEmployeeHue(emp.id)
-    const initial = getEmployeeInitial(emp.name)
-    return (
-      <div style={{
-        width: size, height: size, borderRadius: '50%', flexShrink: 0,
-        background: `linear-gradient(135deg, hsl(${hue}, 72%, 62%), hsl(${(hue + 40) % 360}, 68%, 54%))`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: '#fff', fontWeight: 700, fontSize: Math.round(size * 0.42),
-      }}>
-        {initial || <RobotOutlined style={{ fontSize: Math.round(size * 0.5) }} />}
-      </div>
-    )
-  }, [token])
+  }, [employees, employeeSearch])
 
   return (
     <div style={centerMode
@@ -1274,13 +1272,25 @@ const ChatInput: React.FC<{
       {showEmployeeSelector && employees && employees.length > 0 && (
         <div ref={railWrapRef} style={{ paddingTop: 6, paddingBottom: 6, width: '100%' }}>
           <div style={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', alignItems: 'center', gap: 6, overflow: 'hidden', maxWidth: '100%' }}>
+            {/* 左翻页：翻到上一组数字员工 */}
+            {totalPages > 1 && (
+              <HoverIconButton
+                icon={<LeftOutlined style={{ fontSize: 10 }} />}
+                title={t('workbench.prevEmployees')}
+                size={ARROW_BTN_WIDTH}
+                token={token}
+                disabled={safePage === 0}
+                onClick={() => setEmployeePage(p => Math.max(0, p - 1))}
+              />
+            )}
+
             {shownEmployees.map(emp => {
               const active = emp.id === selectedEmployeeId
               return (
                 <Tooltip key={emp.id} title={emp.description || emp.name} mouseEnterDelay={0.4}>
                   <button
                     type="button"
-                    onClick={() => onSelectEmployee?.(emp.id)}
+                    onClick={() => handlePickEmployee(emp.id)}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 7,
                       padding: '4px 12px 4px 5px', borderRadius: 999,
@@ -1305,115 +1315,122 @@ const ChatInput: React.FC<{
                       e.currentTarget.style.color = token.colorTextSecondary
                     }}
                   >
-                    {renderEmployeeAvatar(emp, 22, active)}
+                    <EmployeeAvatar
+                      employeeId={emp.id}
+                      avatarType={emp.avatar_type}
+                      avatarIcon={emp.avatar_icon}
+                      avatarColor={emp.avatar_color}
+                      source={emp.source}
+                      size={22}
+                      active={active}
+                    />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 88, minWidth: 0, whiteSpace: 'nowrap' }}>{emp.name}</span>
                   </button>
                 </Tooltip>
               )
             })}
 
-            {/* 更多员工：Popover 选择器 */}
-            {dropdownEmployees.length > 0 && (
-              <Popover
-                open={employeePickerOpen}
-                onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}
-                content={
-                  <div style={{ width: 256, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <Input
-                      placeholder={t('workbench.searchEmployee')}
-                      prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
-                      value={employeeSearch}
-                      onChange={(e) => setEmployeeSearch(e.target.value)}
-                      allowClear
-                      size="small"
-                      variant="borderless"
-                      style={{ padding: '2px 8px', marginBottom: 2 }}
-                    />
-                    <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {filteredDropdownEmployees.length === 0 && (
-                        <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
-                          {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
-                        </div>
-                      )}
-                      {filteredDropdownEmployees.map(emp => {
-                        const empActive = emp.id === selectedEmployeeId
-                        return (
-                          <div
-                            key={emp.id}
-                            onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: 10,
-                              padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
-                              background: empActive ? token.colorPrimaryBg : 'transparent',
-                              transition: 'background 0.15s',
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : token.colorBgTextHover }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : 'transparent' }}
-                          >
-                            {renderEmployeeAvatar(emp, 30, empActive)}
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Text strong={empActive} style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: empActive ? token.colorPrimary : 'inherit' }}>{emp.name}</Text>
-                              {emp.description && (
-                                <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                }
-                trigger="click"
-                placement="bottomLeft"
-                arrow={false}
-                styles={{ container: { padding: 8 } }}
-              >
-                {selectedHiddenEmployee ? (
-                  <button
-                    type="button"
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 7,
-                      height: 32, padding: '0 12px 0 5px', borderRadius: 999,
-                      cursor: 'pointer', userSelect: 'none', flexShrink: 0, minWidth: 0,
-                      fontFamily: 'inherit',
-                      border: `1px solid ${token.colorPrimaryBorder}`,
-                      background: token.colorPrimaryBg,
-                      color: token.colorPrimary, fontSize: 13, fontWeight: 600,
-                      transition: 'opacity 0.2s ease',
-                    }}
-                  >
-                    {renderEmployeeAvatar(selectedHiddenEmployee, 22, false)}
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 88, minWidth: 0, whiteSpace: 'nowrap' }}>{selectedHiddenEmployee.name}</span>
-                    <DownOutlined style={{ fontSize: 9, opacity: 0.7 }} />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 5,
-                      height: 32, padding: '0 12px', borderRadius: 999,
-                      cursor: 'pointer', userSelect: 'none', flexShrink: 0,
-                      fontFamily: 'inherit',
-                      border: `1px dashed ${token.colorBorderSecondary}`,
-                      background: 'transparent',
-                      color: token.colorTextSecondary, fontSize: 12.5, fontWeight: 500,
-                      transition: 'border-color 0.2s ease, color 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = token.colorPrimary
-                      e.currentTarget.style.color = token.colorPrimary
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = token.colorBorderSecondary
-                      e.currentTarget.style.color = token.colorTextSecondary
-                    }}
-                  >
-                    <PlusOutlined style={{ fontSize: 11 }} />
-                    <span>{t('workbench.moreEmployees')}</span>
-                  </button>
-                )}
-              </Popover>
+            {/* 右翻页：翻到下一组数字员工 */}
+            {totalPages > 1 && (
+              <HoverIconButton
+                icon={<RightOutlined style={{ fontSize: 10 }} />}
+                title={t('workbench.nextEmployees')}
+                size={ARROW_BTN_WIDTH}
+                token={token}
+                disabled={safePage >= totalPages - 1}
+                onClick={() => setEmployeePage(p => Math.min(totalPages - 1, p + 1))}
+              />
             )}
+
+            {/* 全部数字员工：Popover 选择器（含搜索、滚动） */}
+            <Popover
+              open={employeePickerOpen}
+              onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}
+              content={
+                <div style={{ width: 256, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <Input
+                    placeholder={t('workbench.searchEmployee')}
+                    prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
+                    value={employeeSearch}
+                    onChange={(e) => setEmployeeSearch(e.target.value)}
+                    allowClear
+                    size="small"
+                    variant="borderless"
+                    style={{ padding: '2px 8px', marginBottom: 2 }}
+                  />
+                  <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {filteredEmployees.length === 0 && (
+                      <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+                        {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
+                      </div>
+                    )}
+                    {filteredEmployees.map(emp => {
+                      const empActive = emp.id === selectedEmployeeId
+                      return (
+                        <div
+                          key={emp.id}
+                          onClick={() => { handlePickEmployee(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                            background: empActive ? token.colorPrimaryBg : 'transparent',
+                            transition: 'background 0.15s',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : token.colorBgTextHover }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : 'transparent' }}
+                        >
+                          <EmployeeAvatar
+                            employeeId={emp.id}
+                            avatarType={emp.avatar_type}
+                            avatarIcon={emp.avatar_icon}
+                            avatarColor={emp.avatar_color}
+                            source={emp.source}
+                            size={30}
+                            active={empActive}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Text strong={empActive} style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: empActive ? token.colorPrimary : 'inherit' }}>{emp.name}</Text>
+                            {emp.description && (
+                              <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              }
+              trigger="click"
+              placement="bottomLeft"
+              arrow={false}
+              styles={{ container: { padding: 8 } }}
+            >
+              <button
+                type="button"
+                title={t('workbench.allEmployees')}
+                style={{
+                  width: MENU_BTN_WIDTH, height: MENU_BTN_WIDTH, borderRadius: '50%', flexShrink: 0,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', userSelect: 'none',
+                  fontFamily: 'inherit',
+                  border: `1px solid ${employeePickerOpen ? token.colorPrimary : token.colorBorderSecondary}`,
+                  background: token.colorBgContainer,
+                  color: employeePickerOpen ? token.colorPrimary : token.colorTextSecondary,
+                  transition: 'border-color 0.2s ease, color 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = token.colorPrimary
+                  e.currentTarget.style.color = token.colorPrimary
+                }}
+                onMouseLeave={(e) => {
+                  if (employeePickerOpen) return
+                  e.currentTarget.style.borderColor = token.colorBorderSecondary
+                  e.currentTarget.style.color = token.colorTextSecondary
+                }}
+              >
+                <MenuOutlined style={{ fontSize: 12 }} />
+              </button>
+            </Popover>
           </div>
         </div>
       )}

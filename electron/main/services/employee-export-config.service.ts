@@ -16,6 +16,8 @@ export interface EmployeeConfigExport {
     /** 规则（系统提示词） */
     rules: string
     avatar_type: string
+    avatar_icon?: string
+    avatar_color?: string
     profile_json: string
     memory_enabled: boolean
     default_skill_id: string | null
@@ -81,6 +83,8 @@ export class EmployeeExportConfigService {
         description: employee.description,
         rules: employee.rules || '',
         avatar_type: employee.avatar_type,
+        avatar_icon: employee.avatar_icon || '',
+        avatar_color: employee.avatar_color || '',
         profile_json: employee.profile_json || '',
         memory_enabled: !!employee.memory_enabled,
         default_skill_id: employee.default_skill_id || null,
@@ -199,8 +203,8 @@ export class EmployeeExportConfigService {
 
     this.db.getDb().transaction(() => {
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, memory_enabled, default_skill_id, delegation_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, avatar_icon, avatar_color, memory_enabled, default_skill_id, delegation_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,
@@ -208,6 +212,8 @@ export class EmployeeExportConfigService {
         importData.employee.rules || '',
         importData.employee.profile_json || '',
         importData.employee.avatar_type || 'default',
+        importData.employee.avatar_icon || '',
+        importData.employee.avatar_color || '',
         importData.employee.memory_enabled ? 1 : 0,
         importData.employee.default_skill_id || null,
         importData.employee.delegation_json || '',

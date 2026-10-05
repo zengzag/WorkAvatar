@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Input, Button, Empty, Spin, App, theme, Typography, Tooltip, Segmented, Dropdown, Avatar } from 'antd'
+import { Input, Button, Empty, Spin, App, theme, Typography, Tooltip, Segmented, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
 import {
-  PlusOutlined, RobotOutlined, DeleteOutlined, MessageOutlined, ClockCircleOutlined,
+  PlusOutlined, DeleteOutlined, MessageOutlined, ClockCircleOutlined,
   FolderOpenOutlined, SettingOutlined, SearchOutlined, EllipsisOutlined,
   AppstoreOutlined, BarsOutlined, CopyOutlined, DatabaseOutlined, SolutionOutlined,
 } from '@ant-design/icons'
@@ -11,21 +11,11 @@ import { useTranslation } from 'react-i18next'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import DeleteConversationOptions from '../components/employee-settings/DeleteConversationOptions'
 import SubAgentProfilesDrawer from '../components/workbench/SubAgentProfilesDrawer'
+import EmployeeAvatar from '../components/common/EmployeeAvatar'
 import type { DeleteConversationState } from '../components/employee-settings/DeleteConversationOptions'
 import type { Employee } from '../types'
 
 const { Text, Paragraph } = Typography
-
-const AVATAR_COLORS = ['#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96', '#13c2c2', '#faad14', '#f5222d']
-
-function getAvatarColor(id: string): string {
-  let hash = 0
-  for (let i = 0; i < id.length; i++) {
-    hash = ((hash << 5) - hash) + id.charCodeAt(i)
-    hash |= 0
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
-}
 
 function toMs(ts: number): number {
   return ts > 1e12 ? ts : ts * 1000
@@ -391,7 +381,6 @@ const Employees: React.FC = () => {
           gap: 12,
         }}>
           {group.employees.map((emp) => {
-            const color = getAvatarColor(emp.id)
             const empStats = stats[emp.id]
             const convCount = empStats?.conversationCount ?? 0
             const lastActive = formatLastActive(empStats?.lastActiveAt)
@@ -413,10 +402,14 @@ const Employees: React.FC = () => {
               >
                 {/* 头部：头像 + 名称 + 来源角标 */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  <Avatar
+                  <EmployeeAvatar
+                    employeeId={emp.id}
+                    avatarType={emp.avatar_type}
+                    avatarIcon={emp.avatar_icon}
+                    avatarColor={emp.avatar_color}
+                    source={emp.source}
                     size={44}
-                    style={{ backgroundColor: color, borderRadius: 8, flexShrink: 0 }}
-                    icon={emp.source === 'builtin' ? <DatabaseOutlined style={{ fontSize: 22 }} /> : <RobotOutlined style={{ fontSize: 22 }} />}
+                    shape="square"
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Text strong ellipsis style={{ fontSize: 14, display: 'block' }}>
@@ -497,7 +490,6 @@ const Employees: React.FC = () => {
         /* 列表视图 */
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {group.employees.map((emp) => {
-            const color = getAvatarColor(emp.id)
             const empStats = stats[emp.id]
             const convCount = empStats?.conversationCount ?? 0
             const lastActive = formatLastActive(empStats?.lastActiveAt)
@@ -516,10 +508,14 @@ const Employees: React.FC = () => {
                   borderBottom: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
-                <Avatar
+                <EmployeeAvatar
+                  employeeId={emp.id}
+                  avatarType={emp.avatar_type}
+                  avatarIcon={emp.avatar_icon}
+                  avatarColor={emp.avatar_color}
+                  source={emp.source}
                   size={36}
-                  style={{ backgroundColor: color, borderRadius: 6, flexShrink: 0 }}
-                  icon={emp.source === 'builtin' ? <DatabaseOutlined style={{ fontSize: 18 }} /> : <RobotOutlined style={{ fontSize: 18 }} />}
+                  shape="square"
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

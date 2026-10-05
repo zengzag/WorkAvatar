@@ -66,6 +66,10 @@ export interface Employee {
   rules: string
   profile_json: string
   avatar_type: string
+  /** 自定义头像图标 key（robot/user/team/... 空=按 avatar_type 预设或默认） */
+  avatar_icon?: string
+  /** 自定义头像颜色 hex（空=按 id 自动配色） */
+  avatar_color?: string
   default_skill_id?: string
   /** 员工来源，缺省视为 user（旧数据兼容） */
   source?: EmployeeSource

@@ -66,6 +66,8 @@ export interface EmployeeUpdateParams {
   default_skill_id?: string
   workspace_path?: string
   avatar_type?: string
+  avatar_icon?: string
+  avatar_color?: string
   memory_enabled?: boolean
   /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化） */
   delegation_json?: string

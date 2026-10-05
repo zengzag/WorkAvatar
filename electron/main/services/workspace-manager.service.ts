@@ -115,6 +115,8 @@ class WorkspaceManagerService {
     workspace_path?: string | null
     memory_enabled?: boolean
     avatar_type?: string
+    avatar_icon?: string
+    avatar_color?: string
     delegation_json?: string
   }): Employee | null {
     const employee = this.getEmployee(id)
@@ -127,6 +129,7 @@ class WorkspaceManagerService {
       'name', 'description', 'rules', 'profile_json',
       'default_skill_id',
       'memory_enabled', 'workspace_path', 'avatar_type',
+      'avatar_icon', 'avatar_color',
       'delegation_json'
     ]
 

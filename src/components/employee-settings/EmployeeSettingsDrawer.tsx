@@ -20,6 +20,7 @@ import {
 } from '../employee-settings'
 import DeleteConversationOptions from './DeleteConversationOptions'
 import type { DeleteConversationState } from './DeleteConversationOptions'
+import { resolveEmployeeAvatarIcon, resolveEmployeeAvatarColor } from '../common/EmployeeAvatar'
 import type { Employee } from '../../types'
 import { parseEmployeeDelegation } from '../../types'
 
@@ -103,7 +104,9 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         name: employee.name,
         description: employee.description,
         rules: employee.rules,
-        avatar_type: employee.avatar_type,
+        // 头像：把历史 avatar_type 预设解析成具体图标/颜色，表单里直接编辑具体值
+        avatar_icon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
+        avatar_color: resolveEmployeeAvatarColor(employee.avatar_color, employee.avatar_type, employee.id),
       })
     }
   }, [employee, form])

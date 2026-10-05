@@ -133,6 +133,9 @@ class DatabaseService {
         description TEXT DEFAULT '',
         rules TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
+        -- 自定义头像：图标 key（robot/user/... 空=按 avatar_type 预设或默认）与颜色 hex（空=按 id 自动配色）
+        avatar_icon TEXT DEFAULT '',
+        avatar_color TEXT DEFAULT '',
         default_skill_id TEXT,
         profile_json TEXT DEFAULT '',
         arch_version INTEGER NOT NULL DEFAULT 1,
@@ -461,6 +464,18 @@ class DatabaseService {
 
     // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
     migrateMemorySchema(this.db)
+
+    // 员工自定义头像增量列（幂等）：图标 key 与颜色 hex
+    const employeeColumns = this.db.prepare('PRAGMA table_info(employees)').all() as Array<{ name: string }>
+    for (const [name, ddl] of [
+      ['avatar_icon', "TEXT DEFAULT ''"],
+      ['avatar_color', "TEXT DEFAULT ''"],
+    ] as const) {
+      if (employeeColumns.length > 0 && !employeeColumns.some(c => c.name === name)) {
+        this.db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${ddl}`)
+        logger.info(`迁移：employees 增加 ${name} 列`)
+      }
+    }
 
     // 模板任务运行记录增量列：运行实际入参（幂等）
     const workflowRunColumns = this.db.prepare('PRAGMA table_info(workflow_runs)').all() as Array<{ name: string }>
