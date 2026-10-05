@@ -19,8 +19,6 @@ export interface KmsSettings {
   embeddingModel: any
   summaryModel: any
   searchParams: {
-    maxRounds: number
-    topK: number
     resultLimit: number
     autoReparseHotData: boolean
     enableKnowledgeCards?: boolean
@@ -31,8 +29,6 @@ export interface KmsSettings {
 }
 
 const DEFAULT_SEARCH_PARAMS = {
-  maxRounds: 5,
-  topK: 10,
   resultLimit: 100,
   autoReparseHotData: true,
   enableKnowledgeCards: true,
