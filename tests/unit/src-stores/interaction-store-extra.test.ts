@@ -95,14 +95,22 @@ describe('interaction.store / 队列顺序与弹出', () => {
     expect(useInteractionStore.getState().currentRequest).toBeNull()
   })
 
-  it('相同 id 重复入队两次都会保留（不做去重）', () => {
+  it('队列中相同 id 重复入队只保留一次（按 id 去重）', () => {
     const s = useInteractionStore.getState()
-    s.enqueue(req('dup'))
-    s.enqueue(req('dup'))
-    expect(useInteractionStore.getState().queue.map(q => q.id)).toEqual(['dup'])
+    s.enqueue(req('a'))
+    s.enqueue(req('b'))
+    s.enqueue(req('b')) // 队列中重复，不再入队
+    expect(useInteractionStore.getState().queue.map(q => q.id)).toEqual(['b'])
     useInteractionStore.getState().respond({ cancelled: true })
     useInteractionStore.getState().respond({ cancelled: true })
-    expect(respondCalls.map(c => c.id)).toEqual(['dup', 'dup'])
+    expect(respondCalls.map(c => c.id)).toEqual(['a', 'b'])
+  })
+
+  it('与 currentRequest 相同 id 的请求不重复入队', () => {
+    useInteractionStore.getState().enqueue(req('dup'))
+    useInteractionStore.getState().enqueue(req('dup'))
+    expect(useInteractionStore.getState().queue).toHaveLength(0)
+    expect(useInteractionStore.getState().currentRequest?.id).toBe('dup')
   })
 
   it('大量入队保持顺序', () => {

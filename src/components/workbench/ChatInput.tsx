@@ -1,18 +1,67 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
+import { useMemo, useRef, useCallback, useState, useEffect, useLayoutEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
-import { isColorDark } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import FileChangesModal from './FileChangesModal'
+import EmployeeAvatar from '../common/EmployeeAvatar'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
 
 /** 模型选择的最大数量（对比模式上限） */
 const MAX_SELECTED_MODELS = 3
+
+let textMeasureCtx: CanvasRenderingContext2D | null = null
+/** 估算文本渲染宽度（用于员工 chip 单行布局计算） */
+const measureTextWidth = (text: string, fontPx: number): number => {
+  if (!textMeasureCtx) {
+    try { textMeasureCtx = document.createElement('canvas').getContext('2d') } catch { /* ignore */ }
+  }
+  if (!textMeasureCtx) return text.length * fontPx
+  textMeasureCtx.font = `${fontPx}px "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif`
+  return Math.ceil(textMeasureCtx.measureText(text).width)
+}
+
+/** 圆形图标按钮：高亮仅跟随鼠标悬停（禁用态永不高亮） */
+const HoverIconButton: React.FC<{
+  icon: React.ReactNode
+  title: string
+  size: number
+  token: any
+  disabled?: boolean
+  onClick?: () => void
+}> = ({ icon, title, size, token, disabled, onClick }) => {
+  const [hovered, setHovered] = useState(false)
+  // 按钮可能因翻页在悬停中被禁用（禁用元素不派发 mouseleave），此时需主动复位
+  useEffect(() => { if (disabled) setHovered(false) }, [disabled])
+  const active = hovered && !disabled
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: size, height: size, borderRadius: '50%', flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'inherit', userSelect: 'none',
+        border: `1px solid ${active ? token.colorPrimary : token.colorBorderSecondary}`,
+        background: token.colorBgContainer,
+        color: disabled ? token.colorTextQuaternary : (active ? token.colorPrimary : token.colorTextSecondary),
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        transition: 'border-color 0.2s ease, color 0.2s ease',
+      }}
+    >
+      {icon}
+    </button>
+  )
+}
 
 export interface AttachedImage {
   id: string
@@ -1026,11 +1075,6 @@ const ChatInput: React.FC<{
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false)
   const [employeeSearch, setEmployeeSearch] = useState('')
 
-  // 滑动高亮指示器状态
-  const pillContainerRef = useRef<HTMLDivElement>(null)
-  const pillItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
-  const [indicatorStyle, setIndicatorStyle] = useState<React.CSSProperties>({ left: 0, width: 0, opacity: 0 })
-
   const defaultModelLabel = useMemo(() => {
     if (!defaultProviderId || !defaultModelId) return ''
     const p = providers.find((p: any) => p.id === defaultProviderId)
@@ -1135,133 +1179,90 @@ const ChatInput: React.FC<{
     </div>
   ), [t, token, defaultModelSearch, filteredDefaultModels, defaultProviderId, defaultModelId, onDefaultModelChange])
 
-  // 常用数字员工：固定前4个是最近使用的（后端按last_active_at倒序）
-  const top4Employees = useMemo(() => {
+  // 数字员工快捷条可用宽度
+  const railWrapRef = useRef<HTMLDivElement>(null)
+  const [railWidth, setRailWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = railWrapRef.current
+    if (!el) return
+    setRailWidth(el.clientWidth)
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) setRailWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const ITEM_GAP = 6
+  const LABEL_MAX_WIDTH = 88
+  // 左右翻页箭头按钮为图标按钮，尺寸固定
+  const ARROW_BTN_WIDTH = 26
+  // 「全部员工」按钮为图标按钮，尺寸固定
+  const MENU_BTN_WIDTH = 32
+
+  // 单个 chip 的最大自然宽度：左内边距5 + 头像22 + 间距7 + 标题(上限88) + 右内边距12 + 边框2
+  const maxChipWidth = useMemo(() => {
     const list = employees || []
-    return list.slice(0, Math.min(4, list.length))
+    if (list.length === 0) return 0
+    return Math.max(...list.map(emp =>
+      5 + 22 + 7 + Math.min(measureTextWidth(emp.name, 13), LABEL_MAX_WIDTH) + 12 + 2
+    ))
   }, [employees])
 
-  // 第5个位置：如果当前选中员工不在前4个，则显示选中员工；否则为null（显示更多按钮）
-  const fifthSlotEmployee = useMemo(() => {
-    if (!selectedEmployeeId) return null
-    if (top4Employees.some(e => e.id === selectedEmployeeId)) return null
-    return (employees || []).find(e => e.id === selectedEmployeeId) || null
-  }, [employees, selectedEmployeeId, top4Employees])
+  // 每页容纳的员工数：按最宽 chip 保守估算，保证任意一页都能完整显示
+  const pageSize = useMemo(() => {
+    const total = (employees || []).length
+    if (total === 0) return 1
+    if (railWidth <= 0) return total
+    const available = Math.max(
+      maxChipWidth,
+      railWidth - (ARROW_BTN_WIDTH * 2 + MENU_BTN_WIDTH + ITEM_GAP * 3)
+    )
+    let used = 0
+    let count = 0
+    while (count < total) {
+      const next = used + (count > 0 ? ITEM_GAP : 0) + maxChipWidth
+      if (next > available) break
+      used = next
+      count++
+    }
+    return Math.max(1, count)
+  }, [employees, railWidth, maxChipWidth])
 
-  // 需要显示在tab上的员工：前4个 + （如果有）第5个位置的选中员工
-  const visibleEmployees = useMemo(() => {
-    return fifthSlotEmployee ? [...top4Employees, fifthSlotEmployee] : top4Employees
-  }, [top4Employees, fifthSlotEmployee])
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil((employees || []).length / pageSize)),
+    [employees, pageSize]
+  )
 
-  // 下拉菜单中的剩余数字员工：排除所有显示在tab上的员工
-  const dropdownEmployees = useMemo(() => {
-    const visibleIds = new Set(visibleEmployees.map(e => e.id))
-    return (employees || []).filter(e => !visibleIds.has(e.id))
-  }, [employees, visibleEmployees])
+  // 翻页游标；尺寸或列表变化导致越界时收敛到最后一页
+  const [employeePage, setEmployeePage] = useState(0)
+  useEffect(() => {
+    setEmployeePage(p => Math.min(p, totalPages - 1))
+  }, [totalPages])
 
-  const filteredDropdownEmployees = useMemo(() => {
-    if (!employeeSearch.trim()) return dropdownEmployees
+  const safePage = Math.min(employeePage, totalPages - 1)
+  const shownEmployees = useMemo(() => {
+    const start = safePage * pageSize
+    return (employees || []).slice(start, start + pageSize)
+  }, [employees, safePage, pageSize])
+
+  // 选择员工：选中并翻到该员工所在页，保证选中态在快捷条上可见
+  const handlePickEmployee = useCallback((id: string) => {
+    const idx = (employees || []).findIndex(e => e.id === id)
+    if (idx >= 0) setEmployeePage(Math.floor(idx / pageSize))
+    onSelectEmployee?.(id)
+  }, [employees, pageSize, onSelectEmployee])
+
+  // 「全部员工」弹层的过滤结果（含快捷条上已显示的员工）
+  const filteredEmployees = useMemo(() => {
+    const list = employees || []
+    if (!employeeSearch.trim()) return list
     const search = employeeSearch.toLowerCase()
-    return dropdownEmployees.filter(e =>
+    return list.filter(e =>
       e.name.toLowerCase().includes(search) ||
       (e.description || '').toLowerCase().includes(search)
     )
-  }, [dropdownEmployees, employeeSearch])
-
-  // 更新滑动指示器位置
-  const updateIndicator = useCallback(() => {
-    const container = pillContainerRef.current
-    if (!container) return
-    // 确定当前选中项的key
-    let targetKey: string | null = null
-    if (selectedEmployeeId) {
-      if (top4Employees.some(e => e.id === selectedEmployeeId)) {
-        targetKey = selectedEmployeeId
-      } else if (fifthSlotEmployee && fifthSlotEmployee.id === selectedEmployeeId) {
-        targetKey = selectedEmployeeId
-      }
-    }
-    if (!targetKey && dropdownEmployees.length > 0) {
-      // 默认选中更多按钮位置（无选中项时）
-      targetKey = '__more__'
-    }
-    if (!targetKey) {
-      setIndicatorStyle(prev => ({ ...prev, opacity: 0 }))
-      return
-    }
-    // 使用requestAnimationFrame确保DOM已渲染
-    requestAnimationFrame(() => {
-      const targetEl = pillItemRefs.current.get(targetKey!)
-      if (!targetEl || !container) {
-        setIndicatorStyle(prev => ({ ...prev, opacity: 0 }))
-        return
-      }
-      const containerRect = container.getBoundingClientRect()
-      const targetRect = targetEl.getBoundingClientRect()
-      setIndicatorStyle({
-        left: targetRect.left - containerRect.left,
-        width: targetRect.width,
-        opacity: 1,
-      })
-    })
-  }, [selectedEmployeeId, top4Employees, fifthSlotEmployee, dropdownEmployees.length])
-
-  useEffect(() => {
-    updateIndicator()
-  }, [updateIndicator])
-
-  useEffect(() => {
-    const handleResize = () => updateIndicator()
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [updateIndicator])
-
-  // 胶囊分段选择器样式
-  const isDark = isColorDark(token.colorBgContainer)
-  const pillContainerStyle: React.CSSProperties = {
-    position: 'relative',
-    display: 'inline-flex',
-    alignItems: 'center',
-    background: token.colorBgElevated,
-    border: `1px solid ${token.colorBorderSecondary}`,
-    borderRadius: 999,
-    padding: 3,
-    gap: 0,
-    boxShadow: isDark
-      ? '0 0 16px rgba(0,0,0,0.25)' 
-      : '0 2px 6px rgba(0,0,0,0.06)',
-  }
-
-  const pillIndicatorStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 3,
-    bottom: 3,
-    borderRadius: 999,
-    background: token.colorPrimary,
-    boxShadow: `0 0 14px ${token.colorPrimary}30, 0 2px 8px ${token.colorPrimary}25`,
-    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-    zIndex: 0,
-    pointerEvents: 'none',
-  }
-
-  const getPillItemStyle = (active: boolean): React.CSSProperties => ({
-    position: 'relative',
-    zIndex: 1,
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    padding: '4px 13px',
-    borderRadius: 999,
-    cursor: 'pointer',
-    userSelect: 'none',
-    transition: 'color 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-    background: 'transparent',
-    color: active ? '#fff' : token.colorTextSecondary,
-    fontWeight: active ? 600 : 400,
-    fontSize: 13,
-    whiteSpace: 'nowrap',
-  })
+  }, [employees, employeeSearch])
 
   return (
     <div style={centerMode
@@ -1269,133 +1270,167 @@ const ChatInput: React.FC<{
       : { padding: '8px 6% 12px 6%', flexShrink: 0 }
     }>
       {showEmployeeSelector && employees && employees.length > 0 && (
-        <div style={{ paddingTop: 8, paddingBottom: 4, display: 'flex', justifyContent: 'center' }}>
-          <div ref={pillContainerRef} style={pillContainerStyle}>
-            {/* 滑动高亮指示器 */}
-            <div style={{ ...pillIndicatorStyle, ...indicatorStyle }} />
+        <div ref={railWrapRef} style={{ paddingTop: 6, paddingBottom: 6, width: '100%' }}>
+          <div style={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', alignItems: 'center', gap: 6, overflow: 'hidden', maxWidth: '100%' }}>
+            {/* 左翻页：翻到上一组数字员工 */}
+            {totalPages > 1 && (
+              <HoverIconButton
+                icon={<LeftOutlined style={{ fontSize: 10 }} />}
+                title={t('workbench.prevEmployees')}
+                size={ARROW_BTN_WIDTH}
+                token={token}
+                disabled={safePage === 0}
+                onClick={() => setEmployeePage(p => Math.max(0, p - 1))}
+              />
+            )}
 
-            {/* 前4个固定的常用员工 */}
-            {top4Employees.map((emp) => {
+            {shownEmployees.map(emp => {
               const active = emp.id === selectedEmployeeId
               return (
-                <div
-                  key={emp.id}
-                  ref={(el) => { if (el) pillItemRefs.current.set(emp.id, el); else pillItemRefs.current.delete(emp.id) }}
-                  onClick={() => onSelectEmployee?.(emp.id)}
-                  style={getPillItemStyle(active)}
-                  onMouseEnter={(e) => {
-                    if (active) return
-                    e.currentTarget.style.color = token.colorText
-                  }}
-                  onMouseLeave={(e) => {
-                    if (active) return
-                    e.currentTarget.style.color = token.colorTextSecondary
-                  }}
-                >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{emp.name}</span>
-                </div>
-              )
-            })}
-
-            {/* 下拉Popover：第4个位置或更多按钮 */}
-            {(dropdownEmployees.length > 0 || fifthSlotEmployee) && (
-              <Popover
-                open={employeePickerOpen}
-                onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}
-                content={
-                  <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <Input
-                      placeholder={t('workbench.searchEmployee')}
-                      prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
-                      value={employeeSearch}
-                      onChange={(e) => setEmployeeSearch(e.target.value)}
-                      allowClear
-                      size="small"
-                      variant="borderless"
-                      style={{ padding: '2px 8px', marginBottom: 2 }}
-                    />
-                    <div style={{ maxHeight: 264, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {filteredDropdownEmployees.length === 0 && (
-                        <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
-                          {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
-                        </div>
-                      )}
-                      {filteredDropdownEmployees.map(emp => {
-                        const empActive = emp.id === selectedEmployeeId
-                        return (
-                          <div
-                            key={emp.id}
-                            onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: 8,
-                              padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
-                              background: empActive ? token.colorPrimaryBg : 'transparent',
-                              transition: 'background 0.15s',
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : token.colorBgTextHover }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : 'transparent' }}
-                          >
-                            <div style={{
-                              width: 28, height: 28, borderRadius: '50%',
-                              background: empActive ? token.colorPrimary : `${token.colorPrimary}15`,
-                              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                            }}>
-                              <RobotOutlined style={{ fontSize: 14, color: empActive ? '#fff' : token.colorPrimary }} />
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Text strong={empActive} style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: empActive ? token.colorPrimary : 'inherit' }}>{emp.name}</Text>
-                              {emp.description && (
-                                <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
-                              )}
-                            </div>
-                            {empActive && <CheckOutlined style={{ fontSize: 12, color: token.colorPrimary }} />}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                }
-                trigger="click"
-                placement="bottomLeft"
-                arrow={false}
-                styles={{ container: { padding: 8 } }}
-              >
-                {fifthSlotEmployee ? (
-                  <div
-                    ref={(el) => { if (el) pillItemRefs.current.set(fifthSlotEmployee.id, el); else pillItemRefs.current.delete(fifthSlotEmployee.id) }}
-                    style={getPillItemStyle(true)}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.color = 'rgba(255,255,255,0.9)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = '#fff'
-                    }}
-                  >
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{fifthSlotEmployee.name}</span>
-                    <DownOutlined style={{ fontSize: 8 }} />
-                  </div>
-                ) : (
-                  <div
-                    ref={(el) => { if (el) pillItemRefs.current.set('__more__', el); else pillItemRefs.current.delete('__more__') }}
+                <Tooltip key={emp.id} title={emp.description || emp.name} mouseEnterDelay={0.4}>
+                  <button
+                    type="button"
+                    onClick={() => handlePickEmployee(emp.id)}
                     style={{
-                      ...getPillItemStyle(false),
-                      gap: 5,
-                      padding: '4px 10px',
+                      display: 'inline-flex', alignItems: 'center', gap: 7,
+                      padding: '4px 12px 4px 5px', borderRadius: 999,
+                      cursor: 'pointer', userSelect: 'none', minWidth: 0, maxWidth: 134,
+                      fontFamily: 'inherit',
+                      border: `1px solid ${active ? token.colorPrimary : token.colorBorderSecondary}`,
+                      background: active ? token.colorPrimaryBg : token.colorBgContainer,
+                      boxShadow: active ? `0 0 0 3px ${token.colorPrimaryBg}` : 'none',
+                      color: active ? token.colorPrimary : token.colorTextSecondary,
+                      fontWeight: active ? 600 : 400,
+                      fontSize: 13, lineHeight: '22px',
+                      transition: 'border-color 0.2s ease, color 0.2s ease',
                     }}
                     onMouseEnter={(e) => {
+                      if (active) return
+                      e.currentTarget.style.borderColor = token.colorPrimary
                       e.currentTarget.style.color = token.colorText
                     }}
                     onMouseLeave={(e) => {
+                      if (active) return
+                      e.currentTarget.style.borderColor = token.colorBorderSecondary
                       e.currentTarget.style.color = token.colorTextSecondary
                     }}
                   >
-                    <UnorderedListOutlined style={{ fontSize: 12 }} />
-                    <span style={{ fontSize: 12, fontWeight: 500 }}>{dropdownEmployees.length}</span>
-                    <DownOutlined style={{ fontSize: 8 }} />
-                  </div>
-                )}
-              </Popover>
+                    <EmployeeAvatar
+                      employeeId={emp.id}
+                      avatarType={emp.avatar_type}
+                      avatarIcon={emp.avatar_icon}
+                      avatarColor={emp.avatar_color}
+                      source={emp.source}
+                      size={22}
+                      active={active}
+                    />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 88, minWidth: 0, whiteSpace: 'nowrap' }}>{emp.name}</span>
+                  </button>
+                </Tooltip>
+              )
+            })}
+
+            {/* 右翻页：翻到下一组数字员工 */}
+            {totalPages > 1 && (
+              <HoverIconButton
+                icon={<RightOutlined style={{ fontSize: 10 }} />}
+                title={t('workbench.nextEmployees')}
+                size={ARROW_BTN_WIDTH}
+                token={token}
+                disabled={safePage >= totalPages - 1}
+                onClick={() => setEmployeePage(p => Math.min(totalPages - 1, p + 1))}
+              />
             )}
+
+            {/* 全部数字员工：Popover 选择器（含搜索、滚动） */}
+            <Popover
+              open={employeePickerOpen}
+              onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}
+              content={
+                <div style={{ width: 256, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <Input
+                    placeholder={t('workbench.searchEmployee')}
+                    prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
+                    value={employeeSearch}
+                    onChange={(e) => setEmployeeSearch(e.target.value)}
+                    allowClear
+                    size="small"
+                    variant="borderless"
+                    style={{ padding: '2px 8px', marginBottom: 2 }}
+                  />
+                  <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {filteredEmployees.length === 0 && (
+                      <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+                        {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
+                      </div>
+                    )}
+                    {filteredEmployees.map(emp => {
+                      const empActive = emp.id === selectedEmployeeId
+                      return (
+                        <div
+                          key={emp.id}
+                          onClick={() => { handlePickEmployee(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                            background: empActive ? token.colorPrimaryBg : 'transparent',
+                            transition: 'background 0.15s',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : token.colorBgTextHover }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : 'transparent' }}
+                        >
+                          <EmployeeAvatar
+                            employeeId={emp.id}
+                            avatarType={emp.avatar_type}
+                            avatarIcon={emp.avatar_icon}
+                            avatarColor={emp.avatar_color}
+                            source={emp.source}
+                            size={30}
+                            active={empActive}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <Text strong={empActive} style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: empActive ? token.colorPrimary : 'inherit' }}>{emp.name}</Text>
+                            {emp.description && (
+                              <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              }
+              trigger="click"
+              placement="bottomLeft"
+              arrow={false}
+              styles={{ container: { padding: 8 } }}
+            >
+              <button
+                type="button"
+                title={t('workbench.allEmployees')}
+                style={{
+                  width: MENU_BTN_WIDTH, height: MENU_BTN_WIDTH, borderRadius: '50%', flexShrink: 0,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', userSelect: 'none',
+                  fontFamily: 'inherit',
+                  border: `1px solid ${employeePickerOpen ? token.colorPrimary : token.colorBorderSecondary}`,
+                  background: token.colorBgContainer,
+                  color: employeePickerOpen ? token.colorPrimary : token.colorTextSecondary,
+                  transition: 'border-color 0.2s ease, color 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = token.colorPrimary
+                  e.currentTarget.style.color = token.colorPrimary
+                }}
+                onMouseLeave={(e) => {
+                  if (employeePickerOpen) return
+                  e.currentTarget.style.borderColor = token.colorBorderSecondary
+                  e.currentTarget.style.color = token.colorTextSecondary
+                }}
+              >
+                <MenuOutlined style={{ fontSize: 12 }} />
+              </button>
+            </Popover>
           </div>
         </div>
       )}

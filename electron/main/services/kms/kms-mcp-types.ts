@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import type { BuiltinToolCategoryId } from '../mcp/builtin-mcp-converter'
 
 /**
@@ -12,10 +13,14 @@ export interface KMSMCPConfig {
   tool_categories?: BuiltinToolCategoryId[]
 }
 
+export function createDefaultMcpApiKey(): string {
+  return crypto.randomBytes(24).toString('base64url')
+}
+
 export const DEFAULT_CONFIG: KMSMCPConfig = {
   enabled: false,
   port: 3101,
-  apiKey: '',
+  apiKey: createDefaultMcpApiKey(),
   // 向后兼容默认：仅 KMS MCP 升级后若用户未修改过，默认开启 kms 类别，其他类别手动开启
   tool_categories: ['kms'],
 }

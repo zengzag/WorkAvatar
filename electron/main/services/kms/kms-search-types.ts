@@ -1,4 +1,4 @@
-export type SourceType = 'file_title' | 'file_summary' | 'paragraph' | 'content_paragraph' | 'file_name'
+export type SourceType = 'document' | 'file_title' | 'file_summary' | 'paragraph' | 'content_paragraph' | 'file_name'
 
 export interface HighlightRange {
   start: number
@@ -21,6 +21,8 @@ export interface SearchResult {
   highlights?: HighlightRange[]
   matched_keywords?: string[]
   modified_time?: number
+  sibling_count?: number
+  content_version_id?: string
 }
 
 export interface SearchOptions {
@@ -33,6 +35,9 @@ export interface SearchOptions {
   fileExtensions?: string[]
   collectionIds?: string[]
   dirIds?: string[]
+  embeddingModel?: string
+  /** 需排除的文件 id（AI 排除级别 >= 2）；用排除集而非白名单，避免大库下全量下传 */
+  excludeFileIds?: string[]
 }
 
 export interface EmbeddingEntry {

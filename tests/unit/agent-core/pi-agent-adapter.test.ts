@@ -326,6 +326,18 @@ describe('runPiAgentLoop / agentTools 包装', () => {
     expect(handler).not.toHaveBeenCalled()
   })
 
+  it('signal 未中止时经 toolContext 透传给 dispatcher/handler 的 ctx.signal', async () => {
+    let seenSignal: AbortSignal | undefined
+    const tools = await runWithTools(toolDef('tool_sig', async (_args, ctx: any) => {
+      seenSignal = ctx?.signal
+      return { success: true, output: 'ok' }
+    }))
+    const ctrl = new AbortController()
+    const res = await tools[0].execute('c', {}, ctrl.signal, undefined)
+    expect(res.isError).toBe(false)
+    expect(seenSignal).toBe(ctrl.signal)
+  })
+
   it('dispatcher.dispatch 抛异常 → isError=true 且信息含异常', async () => {
     const harness = makeHarness({ messages: [systemMsg('S'), userMsg('q')] })
     harness.params.toolDispatcher = { dispatch: async () => { throw new Error('boom') } }
@@ -696,7 +708,7 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(model.compat.thinkingFormat).toBe('zai')
     expect(model.compat.zaiToolStream).toBe(true)
     expect(model.baseUrl).toBe('https://api.openai.com/v1')
-    expect(model.maxTokens).toBe(8192)
+    expect(model.maxTokens).toBe(48 * 1024)
   })
 
   it('createPiModel：opencode-go 的 alwaysReasoning 与会话亲和头', async () => {
@@ -961,6 +973,16 @@ describe('wrapStreamWithLogging（经 streamFn 驱动）', () => {
     await streamFn(undefined, { messages: [] }, { signal: already.signal })
     const signal2 = h.streamCalls[h.streamCalls.length - 1].options.signal as AbortSignal
     expect(signal2.aborted).toBe(true)
+  })
+
+  it('流结束后配对移除外部 signal 上的 abort 监听', async () => {
+    h.innerStreamFactory = () => innerStream([])
+    const streamFn = await captureWrappedStream()
+    const external = new AbortController()
+    const removeSpy = vi.spyOn(external.signal, 'removeEventListener')
+    const wrapped: any = await streamFn(undefined, { messages: [] }, { signal: external.signal })
+    for await (const _ev of wrapped) { /* drain */ }
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function))
   })
 
   it('消费者提前 break 时日志仍只写一次', async () => {

@@ -4,6 +4,9 @@ import KMSDatabaseService from './kms-database.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
 import kmsTokenizer from './kms-tokenizer.service'
+import { foldResultsByContent } from './kms-search-quality'
+import { isFreshnessIntent, rerankResults, type RerankHints } from './kms-rerank.service'
+import { tokenizeFileName, tokenizeQueryTerm } from './kms-text-tokens'
 import { LRUBoundedCache } from './lru-bounded-cache'
 import {
   computeEmbeddingEntriesBytes,
@@ -43,6 +46,11 @@ const RRF_K = 60
  * 权重倍数使其显著高于词级分散命中（词级单来源最高仅 1/(k+rank)）。
  */
 const PHRASE_RRF_WEIGHT = 3
+
+/** JS 向量兜底只允许作为小规模精确扫描，禁止无限加载全库 */
+const VECTOR_FALLBACK_MAX_SCAN = 50_000
+const VECTOR_FALLBACK_BUDGET_MS = 300
+const VECTOR_FALLBACK_MIN_SCORE = 0.35
 
 class KMSSearchEngineService {
   private db: Database.Database
@@ -88,6 +96,9 @@ class KMSSearchEngineService {
     : (null as any)  // Worker 模式下不分配缓存，调用 embeddingCache.* 时走短路逻辑
   private vecDimension: number | null = null
   private vecReady: boolean = false
+  private indexGeneration: number = 0
+  /** 文件名 token 补齐节流：避免每次搜索都对 kms_files 全表做 NOT EXISTS 探测 */
+  private lastFileNameTokenBackfillAt: number = 0
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
@@ -116,17 +127,206 @@ class KMSSearchEngineService {
     ).get() as any
 
     if (existing) {
-      const dimRow = this.vectorDb.prepare(
-        'SELECT dimension FROM kms_embeddings ORDER BY updated_at DESC LIMIT 1'
-      ).get() as any
-      if (dimRow?.dimension) {
-        this.vecDimension = dimRow.dimension
+      const active = this.getActiveVectorModel()
+      if (!active) {
+        const latest = this.vectorDb.prepare(`
+          SELECT model, dimension FROM kms_embeddings
+          WHERE dimension > 0
+          GROUP BY model, dimension
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `).get() as any
+        if (latest?.dimension) {
+          this.setVectorMeta('active_model', latest.model || '')
+          this.setVectorMeta('active_dimension', String(latest.dimension))
+        }
       }
+      this.vecDimension = active?.dimension ?? this.getActiveVectorModel()?.dimension ?? null
       logger.info(`vec0 虚表已存在，维度=${this.vecDimension}`)
       return
     }
 
     logger.info('vec0 虚表尚未创建，将延迟到首次写入时创建')
+  }
+
+  getActiveVectorModel(): { model: string; dimension: number } | null {
+    try {
+      const row = this.vectorDb.prepare(`
+        SELECT key, value FROM kms_vector_meta
+        WHERE key IN ('active_model', 'active_dimension')
+      `).all() as any[]
+      const map = new Map<string, string>(row.map((r: any) => [r.key, r.value]))
+      const dimension = Number(map.get('active_dimension'))
+      if (!Number.isFinite(dimension) || dimension <= 0) return null
+      return { model: map.get('active_model') || '', dimension }
+    } catch {
+      return null
+    }
+  }
+
+  private setVectorMeta(key: string, value: string): void {
+    this.vectorDb.prepare(`
+      INSERT INTO kms_vector_meta (key, value, updated_at)
+      VALUES (?, ?, unixepoch())
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()
+    `).run(key, value)
+  }
+
+  activateVectorModel(model: string, dimension: number, recreateIndex: boolean = false): void {
+    if (!Number.isFinite(dimension) || dimension <= 0) return
+    const previous = this.getActiveVectorModel()
+    this.setVectorMeta('active_model', model || '')
+    this.setVectorMeta('active_dimension', String(dimension))
+
+    if (this.vecReady && (!previous || previous.dimension !== dimension || recreateIndex)) {
+      try {
+        this.vectorDb.exec('DROP TABLE IF EXISTS vec_kms_embeddings')
+        this.createVecTable(dimension)
+      } catch (err: any) {
+        logger.warn('Failed to recreate vec0 table for active model:', err?.message || err)
+      }
+    } else {
+      this.vecDimension = dimension
+    }
+    this.invalidateAllCaches()
+  }
+
+  prepareVectorModel(model: string, dimension: number, rebuild: boolean = false): void {
+    this.activateVectorModel(model, dimension, rebuild)
+    if (rebuild) {
+      this.vectorDb.prepare('DELETE FROM kms_embeddings WHERE model = ?').run(model)
+      this.invalidateAllCaches()
+    }
+  }
+
+  archiveChunkVectorsForColdFiles(limit: number = 1000): number {
+    const rows = this.db.prepare(`
+      SELECT f.id
+      FROM kms_files f
+      WHERE f.data_tier = 'cold'
+        AND EXISTS (
+          SELECT 1 FROM kms_embeddings e
+          WHERE e.file_id = f.id
+            AND e.source_type IN ('paragraph', 'content_paragraph')
+            AND COALESCE(e.archived, 0) = 0
+        )
+      LIMIT ?
+    `).all(limit) as any[]
+    if (rows.length === 0) return 0
+    const ids = rows.map(r => r.id)
+    const tx = this.vectorDb.transaction(() => {
+      for (let i = 0; i < ids.length; i += 500) {
+        const batch = ids.slice(i, i + 500)
+        const placeholders = batch.map(() => '?').join(',')
+        const rowids = (this.vectorDb.prepare(
+          `SELECT rowid FROM kms_embeddings
+           WHERE file_id IN (${placeholders}) AND source_type IN ('paragraph','content_paragraph')
+             AND COALESCE(archived, 0) = 0`
+        ).all(...batch) as any[]).map(r => Number(r.rowid))
+        this.vectorDb.prepare(
+          `UPDATE kms_embeddings SET archived = 1, updated_at = unixepoch()
+           WHERE file_id IN (${placeholders}) AND source_type IN ('paragraph','content_paragraph')
+             AND COALESCE(archived, 0) = 0`
+        ).run(...batch)
+        for (let j = 0; j < rowids.length; j += 500) {
+          const rowidBatch = rowids.slice(j, j + 500).map(x => BigInt(x))
+          const rowidPlaceholders = rowidBatch.map(() => '?').join(',')
+          try {
+            this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...rowidBatch)
+          } catch (err: any) {
+            logger.warn('Failed to remove archived vectors from vec0:', err?.message || err)
+          }
+        }
+      }
+    })
+    tx()
+    this.invalidateAllCaches()
+    return ids.length
+  }
+
+  restoreArchivedVectorsForFile(fileId: string): number {
+    const rows = this.vectorDb.prepare(`
+      SELECT rowid, embedding, source_type, file_id, model, dimension
+      FROM kms_embeddings
+      WHERE file_id = ? AND COALESCE(archived, 0) = 1
+    `).all(fileId) as any[]
+    if (rows.length === 0) return 0
+
+    const active = this.getActiveVectorModel()
+    const tx = this.vectorDb.transaction(() => {
+      this.vectorDb.prepare(`
+        UPDATE kms_embeddings
+        SET archived = 0, updated_at = unixepoch()
+        WHERE file_id = ? AND COALESCE(archived, 0) = 1
+      `).run(fileId)
+      // 归档时已从 vec0 移除，恢复时必须重新写回，否则晋升后向量不在 ANN 索引中
+      for (const row of rows) {
+        if (!row.embedding) continue
+        if (active && (row.model !== active.model || row.dimension !== active.dimension)) continue
+        this.syncVecIndex(Number(row.rowid), row.embedding, row.file_id, row.source_type, row.dimension)
+      }
+    })
+    tx()
+    this.invalidateAllCaches()
+    return rows.length
+  }
+
+  /**
+   * 物理删除已归档的冷向量（真正的磁盘空间回收）
+   *
+   * 归档（archiveChunkVectorsForColdFiles）只是把向量标记 archived=1 并移出 vec0 索引，
+   * 行数据仍留在 kms_embeddings 中。本方法把满足条件的归档行彻底删除：
+   * - 默认仅删除「文件仍为 cold 层级」且归档时间超过 olderThanDays（默认 30 天）的向量
+   *   —— 30 天宽限期保证：若文件刚被降级就又被搜索命中晋升，无需重新生成向量
+   * - once 删除同时清理 vec0 虚表（此时已无对应 rowid，容忍失败）
+   * - 返回物理删除的行数；代码为幂等操作，可重复调用
+   */
+  purgeArchivedVectors(options?: { olderThanDays?: number; limit?: number }): number {
+    const olderThanDays = options?.olderThanDays ?? 30
+    const limit = options?.limit ?? 5000
+    const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400
+    const rows = this.vectorDb.prepare(`
+      SELECT e.rowid AS rowid
+      FROM kms_embeddings e
+      JOIN kms_files f ON f.id = e.file_id
+      WHERE COALESCE(e.archived, 0) = 1
+        AND f.data_tier = 'cold'
+        AND e.updated_at < ?
+      LIMIT ?
+    `).all(cutoff, limit) as any[]
+    if (rows.length === 0) return 0
+
+    let purged = 0
+    const tx = this.vectorDb.transaction(() => {
+      for (let i = 0; i < rows.length; i += 500) {
+        const batch = rows.slice(i, i + 500)
+        const rowidBatch = batch.map(r => BigInt(Number(r.rowid)))
+        const placeholders = rowidBatch.map(() => '?').join(',')
+        try {
+          this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${placeholders})`).run(...rowidBatch)
+        } catch (err: any) {
+          logger.warn('purgeArchivedVectors: vec0 清理失败（行已不在索引中，忽略）:', err?.message || err)
+        }
+        this.vectorDb.prepare(`DELETE FROM kms_embeddings WHERE rowid IN (${placeholders})`).run(...rowidBatch)
+        purged += batch.length
+      }
+    })
+    tx()
+    this.invalidateAllCaches()
+    logger.info(`purgeArchivedVectors: physically removed ${purged} archived cold vectors (olderThanDays=${olderThanDays})`)
+    return purged
+  }
+
+  getArchivedVectorCount(): number {
+    return (this.vectorDb.prepare(
+      'SELECT COUNT(*) AS cnt FROM kms_embeddings WHERE COALESCE(archived, 0) = 1'
+    ).get() as any)?.cnt || 0
+  }
+
+  private isActiveVectorEntry(model: string, dimension: number): boolean {
+    const active = this.getActiveVectorModel()
+    if (!active) return true
+    return active.model === model && active.dimension === dimension
   }
 
   private createVecTable(dimension: number): void {
@@ -144,6 +344,24 @@ class KMSSearchEngineService {
       logger.error('vec0 虚表创建失败:', err?.message || err)
       this.vecReady = false
     }
+  }
+
+  syncFileNameTokens(fileId: string, fileName: string, filePath?: string): void {
+    const tokens = tokenizeFileName(fileName, filePath)
+    this.db.prepare('DELETE FROM kms_file_name_tokens WHERE file_id = ?').run(fileId)
+    const stmt = this.db.prepare('INSERT OR IGNORE INTO kms_file_name_tokens (file_id, token) VALUES (?, ?)')
+    for (const token of tokens) stmt.run(fileId, token)
+  }
+
+  backfillFileNameTokens(limit: number = 1000): number {
+    const rows = this.db.prepare(`
+      SELECT f.id, f.file_name, f.file_path
+      FROM kms_files f
+      WHERE NOT EXISTS (SELECT 1 FROM kms_file_name_tokens t WHERE t.file_id = f.id)
+      LIMIT ?
+    `).all(limit) as any[]
+    for (const row of rows) this.syncFileNameTokens(row.id, row.file_name, row.file_path)
+    return rows.length
   }
 
   indexFileTitle(fileId: string, fileName: string, filePath?: string): void {
@@ -174,6 +392,7 @@ class KMSSearchEngineService {
       }
     })
     tx()
+    this.syncFileNameTokens(fileId, fileName, filePath)
   }
 
   indexFileSummary(fileId: string, summary: string, keywords: string[]): void {
@@ -199,6 +418,37 @@ class KMSSearchEngineService {
         `).run(id, fileId, fileId, '文件摘要', summary, JSON.stringify(keywords), JSON.stringify({}))
 
         this.insertFtsRow(id, fileId, 'file_summary', fileId, '文件摘要', summary, keywordsStr)
+      }
+    })
+    tx()
+  }
+
+  indexFileDocument(fileId: string, fileName: string, filePath: string, documentText: string): void {
+    const title = fileName
+    const pathContext = (filePath || '').split(/[\\/]/).filter(Boolean).slice(-4).join(' / ')
+    const preview = (documentText || '').replace(/\s+/g, ' ').trim().substring(0, 1200)
+    const content = [`文档: ${fileName}`, pathContext ? `路径: ${pathContext}` : '', preview].filter(Boolean).join('\n')
+    const sourceId = `doc:${fileId}`
+    const tx = this.db.transaction(() => {
+      const existing = this.db.prepare(
+        "SELECT id FROM kms_search_index WHERE source_type = 'document' AND source_id = ?"
+      ).get(sourceId) as any
+      if (existing) {
+        this.db.prepare(`
+          UPDATE kms_search_index
+          SET file_id = ?, title = ?, content = ?, content_version_id = COALESCE(NULLIF((SELECT content_version_id FROM kms_files WHERE id = ?), ''), ''), updated_at = unixepoch()
+          WHERE id = ?
+        `).run(fileId, title, content, fileId, existing.id)
+        this.deleteFtsRow(existing.id)
+        this.insertFtsRow(existing.id, fileId, 'document', sourceId, title, content, '')
+      } else {
+        const versionRow = this.db.prepare('SELECT content_version_id FROM kms_files WHERE id = ?').get(fileId) as any
+        const id = generateId()
+        this.db.prepare(`
+          INSERT INTO kms_search_index (id, file_id, source_type, source_id, title, content, content_version_id, created_at, updated_at)
+          VALUES (?, ?, 'document', ?, ?, ?, COALESCE(?, ''), unixepoch(), unixepoch())
+        `).run(id, fileId, sourceId, title, content, versionRow?.content_version_id || '')
+        this.insertFtsRow(id, fileId, 'document', sourceId, title, content, '')
       }
     })
     tx()
@@ -637,6 +887,10 @@ class KMSSearchEngineService {
     this.invalidateCache()
   }
 
+  deleteEmbeddingsByFilesPublic(fileIds: string[]): void {
+    this.deleteEmbeddingsByFiles(fileIds)
+  }
+
   /**
    * 删除指定文件的所有 embedding 记录和对应的 vec0 虚表行。
    *
@@ -722,110 +976,16 @@ class KMSSearchEngineService {
   }
 
   /**
-   * 克隆索引数据（用于MD5去重：相同内容文件复用索引）
-   * 同时克隆对应的 embedding 记录，避免去重文件缺少向量嵌入
-   */
-  cloneIndexData(sourceFileId: string, targetFileId: string): void {
-    const sourceRows = this.db.prepare(
-      'SELECT * FROM kms_search_index WHERE file_id = ?'
-    ).all(sourceFileId) as any[]
-
-    if (sourceRows.length === 0) return
-
-    // 预加载源文件的 embedding 记录（向量库）
-    const sourceEmbeddings = this.vectorDb.prepare(
-      'SELECT * FROM kms_embeddings WHERE file_id = ?'
-    ).all(sourceFileId) as any[]
-
-    // 建立 source_type+source_id → embedding 记录 的映射
-    const embeddingMap = new Map<string, any>()
-    for (const emb of sourceEmbeddings) {
-      embeddingMap.set(`${emb.source_type}:${emb.source_id}`, emb)
-    }
-
-    // 收集需要克隆的 embedding 数据，待主库事务完成后在向量库独立事务中写入
-    const embeddingsToClone: Array<{
-      sourceType: string
-      sourceId: string
-      embedding: any
-      model: string
-      dimension: number
-    }> = []
-
-    // 主库事务：克隆 kms_search_index + kms_fts
-    const transaction = this.db.transaction(() => {
-      for (const row of sourceRows) {
-        const newId = generateId()
-        // 保留原 source_id，使 LEFT JOIN 能匹配到原文件的 embedding
-        this.db.prepare(`
-          INSERT INTO kms_search_index (id, file_id, source_type, source_id, paragraph_index, title, content, keywords_json, metadata_json, start_offset, end_offset, start_line, end_line, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).run(
-          newId, targetFileId, row.source_type, row.source_id,
-          row.paragraph_index, row.title, row.content,
-          row.keywords_json, row.metadata_json,
-          row.start_offset, row.end_offset, row.start_line, row.end_line
-        )
-
-        this.insertFtsRow(newId, targetFileId, row.source_type as SourceType, row.source_id, row.title, row.content, '')
-
-        // 收集对应的 embedding 记录，稍后在向量库事务中写入
-        const embKey = `${row.source_type}:${row.source_id}`
-        const sourceEmb = embeddingMap.get(embKey)
-        if (sourceEmb) {
-          embeddingsToClone.push({
-            sourceType: sourceEmb.source_type,
-            sourceId: sourceEmb.source_id,
-            embedding: sourceEmb.embedding,
-            model: sourceEmb.model,
-            dimension: sourceEmb.dimension,
-          })
-        }
-      }
-    })
-
-    transaction()
-
-    // 向量库独立事务：克隆 kms_embeddings + vec_kms_embeddings
-    // 跨库不能共用事务，需在向量库独立事务中执行
-    if (embeddingsToClone.length > 0) {
-      const vecTx = this.vectorDb.transaction(() => {
-        for (const emb of embeddingsToClone) {
-          const embResult = this.vectorDb.prepare(`
-            INSERT INTO kms_embeddings (source_type, source_id, file_id, embedding, model, dimension, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, unixepoch())
-          `).run(
-            emb.sourceType, emb.sourceId, targetFileId,
-            emb.embedding, emb.model, emb.dimension
-          )
-
-          if (this.vecReady && this.vecDimension && emb.dimension === this.vecDimension) {
-            try {
-              const vecRowId = Number(embResult.lastInsertRowid)
-              if (vecRowId > 0) {
-                // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 在加载了原生扩展时的类型校验回归
-                this.vectorDb.prepare(
-                  'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
-                ).run(BigInt(vecRowId), emb.embedding, targetFileId, emb.sourceType)
-              }
-            } catch (err: any) {
-              logger.warn(`cloneIndexData: vec0 insert failed for targetFile=${targetFileId}:`, err?.message || err)
-            }
-          }
-        }
-      })
-      vecTx()
-    }
-
-    this.invalidateCache()
-  }
-
-  /**
    * FTS5 全文检索
    */
-  ftsSearch(query: string, options?: SearchOptions): SearchResult[] {
+  ftsSearch(
+    query: string,
+    options?: SearchOptions,
+    internalOptions?: { includePhrase?: boolean }
+  ): SearchResult[] {
     const topK = options?.topK || 10
-    const cacheKey = `fts:${query}:${topK}:${JSON.stringify(options)}`
+    const includePhrase = internalOptions?.includePhrase !== false
+    const cacheKey = `fts:${this.indexGeneration}:${includePhrase ? 1 : 0}:${query}:${topK}:${JSON.stringify(options)}`
     const cached = this.getFromCache(cacheKey)
     if (cached) return cached
 
@@ -844,6 +1004,7 @@ class KMSSearchEngineService {
         FROM kms_fts fts
         JOIN kms_search_index si ON fts.index_id = si.id
         JOIN kms_files f ON si.file_id = f.id
+        JOIN kms_index_dirs d ON d.id = f.dir_id
         WHERE kms_fts MATCH ? AND ${whereClause}
         ORDER BY fts.rank
         LIMIT ?
@@ -853,10 +1014,12 @@ class KMSSearchEngineService {
       let results = this.convertFtsResultsToSearchResults(ftsResults, topK, queryWords)
       logger.info(`ftsSearch "${query}": tokenize=${convertStart - tokenizeStart}ms, fts=${convertStart - ftsStart}ms, convert=${Date.now() - convertStart}ms, results=${results.length}`)
 
-      // 整句短语命中加权：含完整查询句的文档优先排在词级结果之前
-      const phraseResults = this.phraseSearch(query, options, topK)
-      if (phraseResults.length > 0) {
-        results = this.mergePhraseToTop(results, phraseResults, topK)
+      // 整句短语命中加权：hybrid 会把 phrase 作为独立 RRF 来源，不能在此重复查询
+      if (internalOptions?.includePhrase !== false) {
+        const phraseResults = this.phraseSearch(query, options, topK)
+        if (phraseResults.length > 0) {
+          results = this.mergePhraseToTop(results, phraseResults, topK)
+        }
       }
 
       // FTS5 无结果时，降级到 LIKE 模糊匹配（参考搜索引擎的容错机制）
@@ -905,6 +1068,7 @@ class KMSSearchEngineService {
     const rows = this.db.prepare(`
       SELECT si.*, f.file_path AS f_file_path FROM kms_search_index si
       JOIN kms_files f ON si.file_id = f.id
+      JOIN kms_index_dirs d ON d.id = f.dir_id
       WHERE ${whereClause} AND (${likeWhere})
       LIMIT ${candidateLimit}
     `).all(...params, ...likeParams) as any[]
@@ -951,6 +1115,7 @@ class KMSSearchEngineService {
         FROM kms_fts fts
         JOIN kms_search_index si ON fts.index_id = si.id
         JOIN kms_files f ON si.file_id = f.id
+        JOIN kms_index_dirs d ON d.id = f.dir_id
         WHERE kms_fts MATCH ? AND ${whereClause}
         ORDER BY fts.rank
         LIMIT ?
@@ -1009,7 +1174,15 @@ class KMSSearchEngineService {
       return []
     }
 
-    // 优先用 vec0 KNN 索引；维度不匹配或未就绪时回退到 JS 全扫描
+    const activeModel = this.getActiveVectorModel()
+    if (options?.embeddingModel && activeModel) {
+      if (activeModel.model !== options.embeddingModel || activeModel.dimension !== queryEmbedding.length) {
+        logger.info(`Skip vector search: active=${activeModel.model}/${activeModel.dimension}, requested=${options.embeddingModel}/${queryEmbedding.length}`)
+        return []
+      }
+    }
+
+    // 优先用 vec0 KNN 索引；维度不匹配或未就绪时回退到有预算的 JS 精确扫描
     if (this.vecReady && this.vecDimension === queryEmbedding.length) {
       const vecResult = this.vectorSearchViaVec0(queryEmbedding, topK, effectiveOptions)
       if (vecResult !== null) return vecResult
@@ -1051,11 +1224,14 @@ class KMSSearchEngineService {
     const hasExt = (fileExtensions?.length || 0) > 0
     const hasTime = timeRangeStart !== undefined || timeRangeEnd !== undefined
 
-    // 无文件作用域过滤，直接返回原 options（保留原 fileIds 语义）
-    if (!hasCollection && !hasDir && !hasExt && !hasTime) return options
-
+    const aiExcludedIds = this.getAiExcludedFileIds()
     const sets: string[][] = []
     if (fileIds?.length) sets.push(fileIds)
+
+    // 无文件作用域过滤时只需携带 AI 排除集（用排除集而非允许白名单，避免大库全量 id 下传）
+    if (!hasCollection && !hasDir && !hasExt && !hasTime) {
+      return aiExcludedIds ? { ...options, excludeFileIds: aiExcludedIds } : options
+    }
 
     if (hasCollection) {
       const placeholders = collectionIds!.map(() => '?').join(',')
@@ -1112,7 +1288,21 @@ class KMSSearchEngineService {
       resolved = [...result]
     }
 
-    return { ...options, fileIds: resolved }
+    if (resolved.length > 0) {
+      resolved = this.expandContentVersionFileIds(resolved)
+    }
+
+    return { ...options, fileIds: resolved, excludeFileIds: aiExcludedIds }
+  }
+
+  /** 返回 AI 完全排除（level>=2）的文件 id；无排除时返回 undefined，供下游做小而精确的 NOT IN 过滤 */
+  private getAiExcludedFileIds(): string[] | undefined {
+    const rows = this.db.prepare(`
+      SELECT f.id FROM kms_files f
+      JOIN kms_index_dirs d ON d.id = f.dir_id
+      WHERE COALESCE(f.ai_exclusion_level, 0) >= 2 OR COALESCE(d.ai_exclusion_level, 0) >= 2
+    `).all() as any[]
+    return rows.length > 0 ? rows.map(r => r.id) : undefined
   }
 
   /**
@@ -1163,6 +1353,14 @@ class KMSSearchEngineService {
         params.push(...options.sourceTypes)
       }
 
+      // AI 排除集（通常很小）：小集合用 NOT IN 下推；过大时退回结果侧过滤，避免每次搜索建大临时表
+      const excludeIds = options?.excludeFileIds
+      const excludeSet = excludeIds && excludeIds.length > 500 ? new Set(excludeIds) : null
+      if (excludeIds && excludeIds.length > 0 && excludeIds.length <= 500) {
+        whereClause += ` AND file_id NOT IN (${excludeIds.map(() => '?').join(',')})`
+        params.push(...excludeIds)
+      }
+
       const knnRows = this.vectorDb.prepare(
         `SELECT rowid, distance FROM vec_kms_embeddings WHERE ${whereClause} ORDER BY distance`
       ).all(...params) as any[]
@@ -1184,14 +1382,23 @@ class KMSSearchEngineService {
         const batch = rowids.slice(i, i + 500)
         const placeholders = batch.map(() => '?').join(',')
         const metaRows = this.vectorDb.prepare(
-          `SELECT rowid, source_type, source_id, file_id FROM kms_embeddings WHERE rowid IN (${placeholders})`
+          `SELECT rowid, source_type, source_id, file_id, model, dimension FROM kms_embeddings WHERE COALESCE(archived, 0) = 0 AND rowid IN (${placeholders})`
         ).all(...batch) as any[]
         for (const row of metaRows) {
           metaMap.set(Number(row.rowid), row)
         }
       }
 
-      return knnRows.map(knn => {
+      const active = this.getActiveVectorModel()
+      return knnRows.filter(knn => {
+        const meta = metaMap.get(Number(knn.rowid))
+        if (!meta) return false
+        if (meta.dimension !== queryEmbedding.length) return false
+        if (options?.embeddingModel && meta.model !== options.embeddingModel) return false
+        if (!options?.embeddingModel && active && meta.model !== active.model) return false
+        if (excludeSet && excludeSet.has(meta.file_id)) return false
+        return true
+      }).map(knn => {
         const meta = metaMap.get(Number(knn.rowid))
         return {
           sourceType: meta?.source_type || '',
@@ -1216,32 +1423,35 @@ class KMSSearchEngineService {
     topK: number,
     options?: SearchOptions
   ): Array<{ sourceType: string; sourceId: string; fileId: string; score: number }> {
-    // 按过滤条件加载 embeddings：有过滤时下推 SQL，无过滤时使用全量缓存
+    const activeModel = this.getActiveVectorModel()
+    const modelFilter = options?.embeddingModel || activeModel?.model
+    const excludeSet = options?.excludeFileIds?.length ? new Set(options.excludeFileIds) : null
+    const startedAt = Date.now()
+
+    // 按过滤条件加载 embeddings：有过滤时下推 SQL，无过滤时也受扫描预算保护
     const hasFileFilter = options?.fileIds && options.fileIds.length > 0
     const hasTypeFilter = options?.sourceTypes && options.sourceTypes.length > 0
     const embeddings = (hasFileFilter || hasTypeFilter)
-      ? this.loadEmbeddingsFiltered(options!.fileIds, options!.sourceTypes as string[])
-      : this.loadAllEmbeddings()
+      ? this.loadEmbeddingsFiltered(options!.fileIds, options!.sourceTypes as string[], modelFilter, queryEmbedding.length)
+      : this.loadAllEmbeddings(modelFilter, queryEmbedding.length)
 
     if (embeddings.length === 0) return []
 
     const queryNorm = norm(queryEmbedding)
-    if (queryNorm === 0) return []
+    if (queryNorm === 0 || !Number.isFinite(queryNorm)) return []
 
-    // 防御性过滤：即使 loadAllEmbeddings/loadEmbeddingsFiltered 已过滤脏行，
-    // 缓存中的旧条目仍可能存在 embedding 为 null/空 的边缘情况（如旧版本写入的脏数据）
-    const validEmbeddings = embeddings.filter(e => e.embedding && e.embedding.length > 0)
-    if (validEmbeddings.length === 0) return []
-
-    const scored = validEmbeddings.map(e => {
+    const scored: Array<{ sourceType: string; sourceId: string; fileId: string; score: number }> = []
+    for (const e of embeddings) {
+      if (!e.embedding || e.embedding.length !== queryEmbedding.length) continue
+      if (excludeSet && excludeSet.has(e.fileId)) continue
       const similarity = cosineSimilarity(queryEmbedding, e.embedding, queryNorm)
-      return {
-        sourceType: e.sourceType,
-        sourceId: e.sourceId,
-        fileId: e.fileId,
-        score: similarity
+      if (!Number.isFinite(similarity) || similarity < VECTOR_FALLBACK_MIN_SCORE) continue
+      scored.push({ sourceType: e.sourceType, sourceId: e.sourceId, fileId: e.fileId, score: similarity })
+      if (Date.now() - startedAt > VECTOR_FALLBACK_BUDGET_MS) {
+        logger.warn(`JS vector fallback budget exceeded after ${scored.length} accepted candidate(s)`)
+        break
       }
-    })
+    }
 
     scored.sort((a, b) => b.score - a.score)
     return scored.slice(0, topK)
@@ -1258,20 +1468,23 @@ class KMSSearchEngineService {
   fileNameSearch(query: string, options: SearchOptions): SearchResult[] {
     const topK = options?.topK || 10
     const queryWords = extractQueryKeywords(query)
-    if (queryWords.length === 0) return []
+    const rawTerms = query.split(/[\s,，。；;：:、？?！!/\\()（）【】\[\]{}'"]+/)
+      .map(s => s.trim()).filter(Boolean)
+    if (queryWords.length === 0 && rawTerms.length === 0) return []
 
-    // 构建文件名 LIKE 子句（OR 关系，任一关键词命中即可）
-    const nameClauses: string[] = []
-    const nameParams: any[] = []
-    for (const word of queryWords) {
-      nameClauses.push('LOWER(f.file_name) LIKE ?')
-      nameParams.push(`%${word}%`)
+    if (Date.now() - this.lastFileNameTokenBackfillAt > 30_000) {
+      this.backfillFileNameTokens(1000)
+      this.lastFileNameTokenBackfillAt = Date.now()
     }
-    const nameWhere = nameClauses.join(' OR ')
 
-    // 过滤条件：复用 buildLikeWhereClause 中除 si 相关外的语义，
-    // 改为直接引用 f.* 字段，collectionIds/dirIds 走子查询。
-    const conditions: string[] = ['1=1']
+    const tokenSets = (rawTerms.length > 0 ? rawTerms : queryWords)
+      .map(tokenizeQueryTerm).filter(tokens => tokens.length > 0)
+    if (tokenSets.length === 0) return []
+
+    const conditions: string[] = [
+      "COALESCE(f.ai_exclusion_level, 0) < 2",
+      "COALESCE(d.ai_exclusion_level, 0) < 2",
+    ]
     const filterParams: any[] = []
 
     if (options?.dirIds && options.dirIds.length > 0) {
@@ -1297,41 +1510,73 @@ class KMSSearchEngineService {
       conditions.push(`f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`)
       filterParams.push(...options.collectionIds)
     }
+    if (options?.fileIds && options.fileIds.length > 0) {
+      const placeholders = options.fileIds.map(() => '?').join(',')
+      conditions.push(`f.id IN (${placeholders})`)
+      filterParams.push(...options.fileIds)
+    }
 
-    // 多取 topK*3 候选供 JS 精排
+    const tokenClauses: string[] = []
+    const tokenParams: any[] = []
+    for (const tokens of tokenSets) {
+      tokenClauses.push(tokens.map(() => `EXISTS (
+        SELECT 1 FROM kms_file_name_tokens t
+        WHERE t.file_id = f.id AND t.token = ?
+      )`).join(' AND '))
+      tokenParams.push(...tokens)
+    }
+
     const candidateLimit = Math.min(topK * 3, 500)
-    const rows = this.db.prepare(`
-      SELECT f.id as file_id, f.file_name, f.file_path, f.modified_time
+    const tokenSql = `
+      SELECT f.id as file_id, f.file_name, f.file_path, f.modified_time, f.content_version_id
       FROM kms_files f
-      WHERE ${conditions.join(' AND ')} AND (${nameWhere})
+      JOIN kms_index_dirs d ON d.id = f.dir_id
+      WHERE ${conditions.join(' AND ')} AND ${tokenClauses.join(' AND ')}
       LIMIT ${candidateLimit}
-    `).all(...filterParams, ...nameParams) as any[]
+    `
+    let rows = this.db.prepare(tokenSql).all(...filterParams, ...tokenParams) as any[]
+    if (rows.length === 0 && process.env.KMS_DEBUG_FILE_NAME === '1') {
+      logger.info(`fileName token miss sql=${tokenSql} params=${JSON.stringify([...filterParams, ...tokenParams])}`)
+    }
 
-    // JS 精排：长词权重 + 关键词匹配率，与 likeSearch 一致
+    // token 索引缺失或分词未命中时，仅在小规模候选集下安全回退 LIKE
+    if (rows.length === 0) {
+      const likeTerms = rawTerms.length > 0 ? rawTerms : queryWords
+      const likeClauses = likeTerms.map(() => 'LOWER(f.file_name) LIKE ?')
+      const likeParams = likeTerms.map(word => `%${word}%`)
+      rows = this.db.prepare(`
+        SELECT f.id as file_id, f.file_name, f.file_path, f.modified_time, f.content_version_id
+        FROM kms_files f
+        JOIN kms_index_dirs d ON d.id = f.dir_id
+        WHERE ${conditions.join(' AND ')} AND (${likeClauses.join(' OR ')})
+        LIMIT ${candidateLimit}
+      `).all(...filterParams, ...likeParams) as any[]
+    }
+
     const scored = rows.map(row => {
       const name = (row.file_name || '').toLowerCase()
       let score = 0
       let matchCount = 0
-      for (const word of queryWords) {
+      const scoreTerms = rawTerms.length > 0 ? rawTerms : queryWords
+      for (const word of scoreTerms) {
         if (name.includes(word)) {
           score += word.length * 2
           matchCount++
         }
       }
-      const matchRatio = matchCount / queryWords.length
-      return { row, score: score * (0.5 + matchRatio * 0.5) }
+      const matchRatio = matchCount / scoreTerms.length
+      return { row, score: Math.max(score, 1) * (0.5 + matchRatio * 0.5) }
     }).filter(r => r.score > 0)
 
     scored.sort((a, b) => b.score - a.score)
-    const top = scored.slice(0, topK)
-
-    return top.map(s => {
+    return scored.slice(0, topK).map(s => {
       const text = s.row.file_name || ''
       return {
         file_id: s.row.file_id,
         file_name: s.row.file_name,
         file_path: s.row.file_path,
         modified_time: s.row.modified_time,
+        content_version_id: s.row.content_version_id || '',
         text,
         match_type: 'file_name' as SourceType,
         highlights: this.computeHighlights(text, queryWords),
@@ -1367,16 +1612,18 @@ class KMSSearchEngineService {
    * 同时文件名直接包含查询关键词时，三个来源的 RRF 贡献叠加，得分最高。
    */
   hybridSearch(query: string, queryEmbedding: Float32Array | null, options?: SearchOptions): SearchResult[] {
+    const hybridStartedAt = Date.now()
     const topK = options?.topK || 10
     const useVector = options?.useVector !== false && queryEmbedding !== null
     const queryWords = extractQueryKeywords(query)
+    const timings: Record<string, number> = {}
 
-    // FTS5 关键词搜索
-    // ftsSearch 内部已有 try-catch 降级到 LIKE，但 LIKE 路径中的 convertFtsResultsToSearchResults
-    // 仍可能因脏数据（如 content 为 null）抛出异常。此处再加一层兜底，确保 hybridSearch 不中断。
+    // FTS5 关键词搜索（phrase 作为下方独立 RRF 来源，此处禁止内部重复查询）
     let ftsResults: SearchResult[] = []
     try {
-      ftsResults = this.ftsSearch(query, { ...options, topK: topK * 2 })
+      const startedAt = Date.now()
+      ftsResults = this.ftsSearch(query, { ...options, topK: topK * 2 }, { includePhrase: false })
+      timings.fts = Date.now() - startedAt
     } catch (err: any) {
       logger.warn('ftsSearch failed in hybridSearch, continuing with vector results only:', err?.message || err)
     }
@@ -1398,7 +1645,9 @@ class KMSSearchEngineService {
 
     if (useVector && queryEmbedding) {
       try {
+        const startedAt = Date.now()
         const vectorResults = this.vectorSearch(queryEmbedding, { ...options, topK: topK * 2 })
+        timings.vector = Date.now() - startedAt
         for (let i = 0; i < vectorResults.length; i++) {
           const vr = vectorResults[i]
           const key = `${vr.sourceType}-${vr.sourceId}`
@@ -1418,7 +1667,9 @@ class KMSSearchEngineService {
     // 文件名不含中文分词的段索引意义弱、纯语义匹配噪声大，关键词 LIKE 是最稳定的方式。
     let fileNameResults: SearchResult[] = []
     try {
+      const startedAt = Date.now()
       fileNameResults = this.fileNameSearch(query, { ...options, topK: topK * 2 })
+      timings.fileName = Date.now() - startedAt
     } catch (err: any) {
       // 文件名搜索失败时不影响主流程
       logger.warn('fileNameSearch failed in hybridSearch, continuing without file_name results:', err?.message || err)
@@ -1436,7 +1687,9 @@ class KMSSearchEngineService {
     // 整句短语检索：第 4 个 RRF 来源，命中完整查询句的文档按权重倍数显著加权
     let phraseResults: SearchResult[] = []
     try {
+      const startedAt = Date.now()
       phraseResults = this.phraseSearch(query, { ...options, topK: topK * 2 })
+      timings.phrase = Date.now() - startedAt
     } catch (err: any) {
       logger.warn('phraseSearch failed in hybridSearch, continuing without phrase results:', err?.message || err)
     }
@@ -1453,6 +1706,7 @@ class KMSSearchEngineService {
 
     // RRF 融合：score = Σ 1/(k + rank_i)，i ∈ {fts, vec, file_name, phrase}
     // 来源缺失的贡献为 0（rank undefined → 跳过）
+    const mergeStartedAt = Date.now()
     const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys(), ...fileNameRankMap.keys(), ...phraseRankMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
     const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string }; sortKey: number }> = []
@@ -1540,7 +1794,7 @@ class KMSSearchEngineService {
     if (missingEntries.length > 0) {
       const indexMap = new Map<string, any>()
       // fileMap 提到分批循环外：后续结果装配统一引用
-      const fileMap = new Map<string, { file_name: string; file_path: string; modified_time?: number }>()
+      const fileMap = new Map<string, { file_name: string; file_path: string; modified_time?: number; content_version_id?: string }>()
       // 分批查询防超 SQLITE 参数上限（每条 2 个参数，大 topK 时可能超 999）
       const batchSize = 400
       for (let i = 0; i < missingEntries.length; i += batchSize) {
@@ -1554,10 +1808,15 @@ class KMSSearchEngineService {
         const fileIds = [...new Set(indexRows.map(r => r.file_id).filter(Boolean))]
         if (fileIds.length > 0) {
           const fileRows = this.db.prepare(
-            `SELECT id, file_name, file_path, modified_time FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
+            `SELECT id, file_name, file_path, modified_time, content_version_id FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
           ).all(...fileIds) as any[]
           for (const row of fileRows) {
-            fileMap.set(row.id, { file_name: row.file_name, file_path: row.file_path, modified_time: row.modified_time })
+            fileMap.set(row.id, {
+              file_name: row.file_name,
+              file_path: row.file_path,
+              modified_time: row.modified_time,
+              content_version_id: row.content_version_id || '',
+            })
           }
         }
 
@@ -1582,6 +1841,7 @@ class KMSSearchEngineService {
               match_type: 'hybrid',
               start_offset: indexEntry.start_offset,
               end_offset: indexEntry.end_offset,
+              content_version_id: file?.content_version_id || '',
               score: entry.sortKey,
             },
             sortKey: entry.sortKey,
@@ -1590,10 +1850,22 @@ class KMSSearchEngineService {
       }
     }
 
-    // 合并文件名命中结果后统一排序
+    // 合并文件名命中结果后统一排序，再按物理文档折叠，避免长文档/重复片段刷屏
     hybridResults.push(...fileNameOnlyResults)
     hybridResults.sort((a, b) => b.sortKey - a.sortKey)
-    const topResults = hybridResults.slice(0, topK)
+    const foldedResults = foldResultsByContent(hybridResults.map(h => ({
+      file_id: h.result.file_id,
+      content_version_id: h.result.content_version_id,
+      score: h.sortKey,
+      item: h,
+    })), 1)
+    const topResults = foldedResults.slice(0, topK).map(r => ({
+      ...r.item,
+      result: {
+        ...r.item.result,
+        sibling_count: r.sibling_count || 0,
+      },
+    }))
 
     // RRF 分数归一化到 [0, 1]：除以本批最大分数，使 Top 结果 score=1.0
     // 前端 KMSSearchResultList 按 score*100 渲染匹配度进度条，未归一化的 RRF 原始分数
@@ -1601,12 +1873,48 @@ class KMSSearchEngineService {
     const maxSortKey = topResults.length > 0 ? topResults[0].sortKey : 0
     const safeMax = maxSortKey > 0 ? maxSortKey : 1
 
-    return topResults.map(h => ({
-      ...h.result,
-      score: h.sortKey / safeMax,
-      highlights: this.computeHighlights(h.result.text, queryWords),
+    timings.rrfMerge = Date.now() - mergeStartedAt
+
+    // 规则重排：新鲜度 + 词覆盖 + 版本约束 + 文件名前缀（kms-rerank.service）
+    const wantsLatest = isFreshnessIntent(query)
+    const nowSec = Math.floor(Date.now() / 1000)
+    // 查询已折叠结果所属文件的最新 content_version_id，用于非最新版本降权
+    const topFileIds = [...new Set(topResults.map(h => h.result.file_id).filter(Boolean))]
+    const latestVersionMap = new Map<string, string>()
+    if (topFileIds.length > 0) {
+      const versionRows = this.db.prepare(
+        `SELECT id, content_version_id FROM kms_files WHERE id IN (${topFileIds.map(() => '?').join(',')})`
+      ).all(...topFileIds) as any[]
+      for (const row of versionRows) {
+        if (row.content_version_id) latestVersionMap.set(row.id, row.content_version_id)
+      }
+    }
+
+    const rerankInput = topResults.map(h => ({
+      item: h.result,
+      hints: {
+        baseScore: h.sortKey / safeMax,
+        modifiedTime: h.result.modified_time,
+        contentVersionId: h.result.content_version_id,
+        latestVersionId: latestVersionMap.get(h.result.file_id),
+        text: h.result.text,
+        fileName: h.result.file_name,
+        freshnessIntent: wantsLatest,
+        nowSec,
+      } as RerankHints,
+    }))
+    const rerankStartedAt = Date.now()
+    const reranked = rerankResults(rerankInput, queryWords)
+    timings.rerank = Date.now() - rerankStartedAt
+
+    const finalResults = reranked.map(r => ({
+      ...r.item,
+      score: r.rerankScore,
+      highlights: this.computeHighlights(r.item.text, queryWords),
       matched_keywords: queryWords,
     }))
+    logger.info(`hybridSearch "${query}": results=${finalResults.length}, candidates=${hybridResults.length}, timings=${JSON.stringify(timings)}, total=${Date.now() - hybridStartedAt}ms`)
+    return finalResults
   }
 
   /**
@@ -1664,11 +1972,15 @@ class KMSSearchEngineService {
     // 传入完整底层 ArrayBuffer 导致存储了错误的向量数据
     const buffer = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength)
 
-    // 事务包裹 check-then-insert，避免并发写入产生重复行
+    if (!this.getActiveVectorModel()) {
+      this.activateVectorModel(model, embedding.length)
+    }
+
+    // 同一逻辑条目可按模型保留多版本向量，因此 upsert 必须包含 model
     const upsert = this.vectorDb.transaction(() => {
       const existing = this.vectorDb.prepare(
-        'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
-      ).get(sourceType, sourceId) as any
+        'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ? AND model = ?'
+      ).get(sourceType, sourceId, model) as any
 
       if (existing) {
         this.vectorDb.prepare(`
@@ -1687,23 +1999,11 @@ class KMSSearchEngineService {
 
     const rowid = upsert()
 
-    // 同步写入 vec0 虚表
-    this.syncVecIndex(rowid, buffer, fileId, sourceType, embedding.length)
-
-    // 仅更新 __all__ 缓存（若已存在），追加新条目而非全量清空，避免批量写入时缓存命中率归零
-    // 通过 LRU update 接口原地修改并重算字节，超限时自动淘汰
-    // Worker 模式下 embeddingCache 为 null，跳过缓存更新（Worker 仅做写入，搜索读取在主线程）
-    this.embeddingCache?.update('__all__', entries => {
-      entries.push({
-        id: sourceId,
-        sourceType,
-        sourceId,
-        fileId,
-        embedding: new Float32Array(embedding),
-        model,
-        dimension: embedding.length,
-      })
-    })
+    // 同步写入当前活动模型的 vec0 虚表；旧模型保留原始 BLOB 但不进入 ANN
+    if (this.isActiveVectorEntry(model, embedding.length)) {
+      this.syncVecIndex(rowid, buffer, fileId, sourceType, embedding.length)
+    }
+    this.invalidateEmbeddingCaches()
   }
 
   /**
@@ -1715,13 +2015,17 @@ class KMSSearchEngineService {
   ): void {
     if (entries.length === 0) return
 
+    if (!this.getActiveVectorModel() && entries[0]) {
+      this.activateVectorModel(entries[0].model, entries[0].embedding.length)
+    }
+
     const tx = this.vectorDb.transaction(() => {
       for (const e of entries) {
         // 使用 byteOffset + byteLength 构造 Buffer，避免 subarray 视图写入错误数据
         const buffer = Buffer.from(e.embedding.buffer, e.embedding.byteOffset, e.embedding.byteLength)
         const existing = this.vectorDb.prepare(
-          'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
-        ).get(e.sourceType, e.sourceId) as any
+          'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ? AND model = ?'
+        ).get(e.sourceType, e.sourceId, e.model) as any
 
         let rowid: number
         if (existing) {
@@ -1738,7 +2042,7 @@ class KMSSearchEngineService {
           rowid = Number(result.lastInsertRowid)
         }
 
-        if (this.vecReady && this.vecDimension === e.embedding.length) {
+        if (this.vecReady && this.isActiveVectorEntry(e.model, e.embedding.length)) {
           try {
             // 注意：sqlite-vec 0.1.x 在加载了 onnxruntime-node / PaddleOCR 等原生扩展的进程里
             // 会拒绝 number 类型的 rowid（"Only integers are allows for primary key values"）。
@@ -1757,27 +2061,8 @@ class KMSSearchEngineService {
 
     tx()
 
-    // 增量更新缓存：通过 LRU update 接口原地修改并重算字节，超限时自动淘汰
-    // Worker 模式下 embeddingCache 为 null，跳过缓存更新（Worker 仅做写入，搜索读取在主线程）
-    this.embeddingCache?.update('__all__', allCache => {
-      for (const e of entries) {
-        const existingIdx = allCache.findIndex(c => c.sourceType === e.sourceType && c.sourceId === e.sourceId)
-        const entry: EmbeddingEntry = {
-          id: e.sourceId,
-          sourceType: e.sourceType,
-          sourceId: e.sourceId,
-          fileId: e.fileId,
-          embedding: new Float32Array(e.embedding),
-          model: e.model,
-          dimension: e.embedding.length,
-        }
-        if (existingIdx >= 0) {
-          allCache[existingIdx] = entry
-        } else {
-          allCache.push(entry)
-        }
-      }
-    })
+    // 批量写入可能包含不同模型/维度，直接清空向量缓存比增量维护多键缓存更安全
+    this.invalidateEmbeddingCaches()
   }
 
   /**
@@ -1838,6 +2123,16 @@ class KMSSearchEngineService {
     this.searchCache.clear()
   }
 
+  invalidateEmbeddingCaches(): void {
+    this.embeddingCache?.clear()
+  }
+
+  invalidateAllCaches(): void {
+    this.indexGeneration++
+    this.searchCache.clear()
+    this.embeddingCache?.clear()
+  }
+
   private insertFtsRow(indexId: string, fileId: string, sourceType: SourceType, sourceId: string, title: string, content: string, keywords: string): void {
     // 索引侧中文分词：将连续中文切分为空格分隔的词序列，
     // 使 FTS5 unicode61 tokenizer 能按空格建立正确 token 边界，
@@ -1855,25 +2150,48 @@ class KMSSearchEngineService {
     this.db.prepare('DELETE FROM kms_fts WHERE index_id = ?').run(indexId)
   }
 
+  private expandContentVersionFileIds(fileIds: string[]): string[] {
+    if (fileIds.length === 0) return fileIds
+    const versionRows = this.db.prepare(`
+      SELECT DISTINCT content_version_id
+      FROM kms_files
+      WHERE id IN (${fileIds.map(() => '?').join(',')}) AND content_version_id != ''
+    `).all(...fileIds) as any[]
+    if (versionRows.length === 0) return fileIds
+    const versionIds = versionRows.map(r => r.content_version_id)
+    const canonicalRows = this.db.prepare(`
+      SELECT DISTINCT canonical_file_id
+      FROM kms_content_versions
+      WHERE id IN (${versionIds.map(() => '?').join(',')}) AND canonical_file_id IS NOT NULL
+    `).all(...versionIds) as any[]
+    return [...new Set([...fileIds, ...canonicalRows.map(r => r.canonical_file_id)])]
+  }
+
   private convertFtsResultsToSearchResults(ftsResults: any[], topK: number, queryWords?: string[]): SearchResult[] {
     // 批量预加载所有 fileId 对应的文件信息，避免循环内 N+1 查询
     const fileIds = [...new Set(ftsResults.map(r => r.file_id).filter(Boolean))]
-    const fileCache: Map<string, { name: string; path: string; modified_time?: number }> = new Map()
+    const fileCache: Map<string, { name: string; path: string; modified_time?: number; content_version_id?: string }> = new Map()
     if (fileIds.length > 0) {
       const placeholders = fileIds.map(() => '?').join(',')
       const rows = this.db.prepare(
-        `SELECT id, file_name, file_path, modified_time FROM kms_files WHERE id IN (${placeholders})`
+        `SELECT id, file_name, file_path, modified_time, content_version_id FROM kms_files WHERE id IN (${placeholders})`
       ).all(...fileIds) as any[]
       for (const row of rows) {
-        fileCache.set(row.id, { name: row.file_name || '', path: row.file_path || '', modified_time: row.modified_time })
+        fileCache.set(row.id, {
+          name: row.file_name || '',
+          path: row.file_path || '',
+          modified_time: row.modified_time,
+          content_version_id: row.content_version_id || '',
+        })
       }
     }
     const getFile = (fileId: string) => {
-      return fileCache.get(fileId) ?? { name: '', path: '', modified_time: undefined }
+      return fileCache.get(fileId) ?? { name: '', path: '', modified_time: undefined, content_version_id: '' }
     }
 
     const results: SearchResult[] = []
     const seen = new Set<string>()
+    const seenContent = new Set<string>()
 
     for (const row of ftsResults) {
       const key = `${row.source_type}-${row.source_id}-${row.paragraph_index || 0}`
@@ -1882,6 +2200,9 @@ class KMSSearchEngineService {
 
       const fileInfo = getFile(row.file_id)
       const metadata = this.safeParseJSON(row.metadata_json, {}) as Record<string, any>
+      const contentKey = fileInfo.content_version_id || row.file_id
+      if (seenContent.has(contentKey)) continue
+      seenContent.add(contentKey)
 
       let result: SearchResult
 
@@ -1894,6 +2215,18 @@ class KMSSearchEngineService {
             modified_time: fileInfo.modified_time,
             text: `文件标题匹配: ${row.title}`,
             match_type: 'file_title',
+          }
+          break
+
+        case 'document':
+          result = {
+            file_id: row.file_id,
+            file_name: fileInfo.name,
+            file_path: fileInfo.path,
+            modified_time: fileInfo.modified_time,
+            paragraph_id: row.source_id,
+            text: (row.content || '').substring(0, 400),
+            match_type: 'document',
           }
           break
 
@@ -1945,6 +2278,7 @@ class KMSSearchEngineService {
           continue
       }
 
+      result.content_version_id = fileInfo.content_version_id
       results.push(result)
     }
 
@@ -1959,18 +2293,42 @@ class KMSSearchEngineService {
     return results.slice(0, topK)
   }
 
-  private loadAllEmbeddings(): EmbeddingEntry[] {
-    const cacheKey = '__all__'
+  private loadAllEmbeddings(modelFilter?: string, dimensionFilter?: number): EmbeddingEntry[] {
+    const conditions: string[] = []
+    const params: any[] = []
+    conditions.push('COALESCE(archived, 0) = 0')
+    if (dimensionFilter && dimensionFilter > 0) {
+      conditions.push('dimension = ?')
+      params.push(dimensionFilter)
+    }
+    if (modelFilter) {
+      conditions.push('model = ?')
+      params.push(modelFilter)
+    }
+    const whereClause = ` WHERE ${conditions.join(' AND ')}`
+    const countRow = this.vectorDb.prepare(
+      `SELECT COUNT(*) AS cnt FROM kms_embeddings${whereClause}`
+    ).get(...params) as any
+    if (Number(countRow?.cnt ?? 0) > VECTOR_FALLBACK_MAX_SCAN) {
+      logger.warn(`Skip unbounded JS vector scan: ${countRow.cnt} candidates exceed ${VECTOR_FALLBACK_MAX_SCAN}`)
+      return []
+    }
+
+    const cacheKey = `__all__:${modelFilter || ''}:${dimensionFilter || 0}`
     // Worker 模式下无 embedding 缓存，每次都从 DB 加载（Worker 仅做写入，不读）
     if (this.embeddingCache) {
       const cached = this.embeddingCache.get(cacheKey)
       if (cached) return cached
     }
 
-    const rows = this.vectorDb.prepare('SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings').all() as any[]
+    const rows = this.vectorDb.prepare(
+      `SELECT id, source_type, source_id, file_id, embedding, model, dimension
+       FROM kms_embeddings${whereClause}
+       LIMIT ?`
+    ).all(...params, VECTOR_FALLBACK_MAX_SCAN) as any[]
 
     const entries: EmbeddingEntry[] = rows
-      .filter(row => row.embedding && row.dimension > 0)
+      .filter(row => row.embedding && row.dimension > 0 && row.embedding.length / 4 === row.dimension)
       .map(row => ({
         id: row.id,
         sourceType: row.source_type,
@@ -1994,23 +2352,39 @@ class KMSSearchEngineService {
    * 用于 vectorSearchViaJS 有 fileIds/sourceTypes 过滤时的场景，避免全量加载。
    * 大批量 fileIds（>500）分批查询合并结果，避免 SQLite 参数上限 999。
    */
-  private loadEmbeddingsFiltered(fileIds?: string[], sourceTypes?: string[]): EmbeddingEntry[] {
+  private loadEmbeddingsFiltered(
+    fileIds?: string[],
+    sourceTypes?: string[],
+    modelFilter?: string,
+    dimensionFilter?: number
+  ): EmbeddingEntry[] {
     // sourceTypes 通常只有几种（file_title/file_summary/paragraph/content_paragraph），不会超限
-    // fileIds 可能来自大目录/大合集，需分批
+    // fileIds 可能来自大目录/大合集，需分批；累计达到 fallback 扫描上限后停止
     if (fileIds && fileIds.length > 500) {
       const allEntries: EmbeddingEntry[] = []
       for (let i = 0; i < fileIds.length; i += 500) {
         const batch = fileIds.slice(i, i + 500)
-        const entries = this.loadEmbeddingsFilteredSingle(batch, sourceTypes)
+        const remaining = VECTOR_FALLBACK_MAX_SCAN - allEntries.length
+        if (remaining <= 0) {
+          logger.warn(`Stop filtered JS vector scan at ${VECTOR_FALLBACK_MAX_SCAN} candidates`)
+          break
+        }
+        const entries = this.loadEmbeddingsFilteredSingle(batch, sourceTypes, modelFilter, dimensionFilter, remaining)
         allEntries.push(...entries)
       }
       return allEntries
     }
-    return this.loadEmbeddingsFilteredSingle(fileIds, sourceTypes)
+    return this.loadEmbeddingsFilteredSingle(fileIds, sourceTypes, modelFilter, dimensionFilter, VECTOR_FALLBACK_MAX_SCAN)
   }
 
-  private loadEmbeddingsFilteredSingle(fileIds?: string[], sourceTypes?: string[]): EmbeddingEntry[] {
-    const conditions: string[] = []
+  private loadEmbeddingsFilteredSingle(
+    fileIds?: string[],
+    sourceTypes?: string[],
+    modelFilter?: string,
+    dimensionFilter?: number,
+    limit: number = VECTOR_FALLBACK_MAX_SCAN
+  ): EmbeddingEntry[] {
+    const conditions: string[] = ['COALESCE(archived, 0) = 0']
     const params: any[] = []
     if (fileIds && fileIds.length > 0) {
       const placeholders = fileIds.map(() => '?').join(',')
@@ -2022,15 +2396,24 @@ class KMSSearchEngineService {
       conditions.push(`source_type IN (${placeholders})`)
       params.push(...sourceTypes)
     }
-    const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
+    if (dimensionFilter && dimensionFilter > 0) {
+      conditions.push('dimension = ?')
+      params.push(dimensionFilter)
+    }
+    if (modelFilter) {
+      conditions.push('model = ?')
+      params.push(modelFilter)
+    }
+    const whereClause = ` WHERE ${conditions.join(' AND ')}`
     const rows = this.vectorDb.prepare(
-      `SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings${whereClause}`
-    ).all(...params) as any[]
+      `SELECT id, source_type, source_id, file_id, embedding, model, dimension
+       FROM kms_embeddings${whereClause}
+       LIMIT ?`
+    ).all(...params, limit) as any[]
 
-    // 与 loadAllEmbeddings 保持一致：过滤掉 embedding 为 null 或 dimension<=0 的脏行，
-    // 避免后续 new Float32Array(null.buffer, ...) 或 cosineSimilarity(null) 报错
+    // 与 loadAllEmbeddings 保持一致：过滤掉异常 BLOB 或 dimension<=0 的脏行
     return rows
-      .filter(row => row.embedding && row.dimension > 0)
+      .filter(row => row.embedding && row.dimension > 0 && row.embedding.length / 4 === row.dimension)
       .map(row => ({
         id: row.id,
         sourceType: row.source_type,

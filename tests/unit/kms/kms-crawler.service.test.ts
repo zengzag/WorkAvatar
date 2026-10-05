@@ -146,6 +146,40 @@ describe('crawlDirectory / 异常', () => {
   })
 })
 
+describe('crawlDirectory / 重复内容文件（file_hash 去重复用）', () => {
+  it('两个内容相同的新文件都能注册（同哈希克隆索引）', async () => {
+    fileInIndex('a.txt', '相同内容')
+    fileInIndex('b.txt', '相同内容')
+
+    const r = await crawler.crawlDirectory('d1')
+    expect(r.newFiles).toBe(2)
+    const rows = mainDb.prepare('SELECT file_hash, index_status FROM kms_files ORDER BY file_name').all() as any[]
+    expect(rows.length).toBe(2)
+    expect(rows[0].file_hash).toBe(rows[1].file_hash)
+  })
+
+  it('已索引文件内容改为与另一文件相同：不抛错且注册状态正确', async () => {
+    const fpA = fileInIndex('a.txt', '内容甲')
+    fileInIndex('b.txt', '内容乙')
+    await crawler.crawlDirectory('d1')
+    // 人为降低 DB 端 mtime，保证同长度内容重写也能被识别为修改
+    mainDb.prepare('UPDATE kms_files SET modified_time = 1000').run()
+
+    fs.writeFileSync(fpA, '内容乙')
+    const r = await crawler.crawlDirectory('d1')
+    expect(r.modifiedFiles).toBe(1)
+    const rows = mainDb.prepare('SELECT file_hash FROM kms_files ORDER BY file_name').all() as any[]
+    expect(rows.length).toBe(2)
+    // a.txt 已与 b.txt 同哈希
+    expect(rows[0].file_hash).toBe(rows[1].file_hash)
+  })
+
+  it('file_hash 上不是唯一索引（历史 UNIQUE 索引已废弃）', async () => {
+    const idx = mainDb.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='index' AND name='idx_kms_files_hash_unique'").get() as any
+    expect(idx.c).toBe(0)
+  })
+})
+
 describe('状态与访问', () => {
   it('updateFileStatus / updateFileDataTier 更新记录', async () => {
     fileInIndex('笔记.txt', '内容')

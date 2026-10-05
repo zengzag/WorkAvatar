@@ -25,6 +25,7 @@ import type {
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
+import { isBlockedOpenPath } from '../services/open-path-guard'
 import type { IndexProgress } from '../services/kms/kms-index-manager.service'
 import { createLogger } from '../services/logger'
 import { safeHandle } from './_shared'
@@ -54,8 +55,10 @@ export function registerKMSHandlers(): void {
 
   // 搜索
   safeHandle(IPC_CHANNELS.KMS_SEARCH, async (params: KMSSearchParams) => {
+    // topK 夹取：SQLite LIMIT 非正数语义为"无限行"，负值可一次拉回全表
+    const topK = Math.min(100, Math.max(1, Math.floor(Number(params.topK) || 20)))
     return kmsService.search(params.query, {
-      topK: params.topK,
+      topK,
       fileIds: params.fileIds,
       sourceTypes: params.sourceTypes as any[],
       useSemantic: params.useSemantic,
@@ -173,8 +176,11 @@ export function registerKMSHandlers(): void {
     return kmsService.cleanupDatabase()
   })
 
-  // 打开文件（使用系统默认程序）
+  // 打开文件（使用系统默认程序）：拒绝可执行脚本与敏感路径，防渲染层注入后执行任意程序/读取凭据
   safeHandle(IPC_CHANNELS.KMS_OPEN_FILE, async (filePath: string) => {
+    if (isBlockedOpenPath(filePath)) {
+      return { error: '该路径不允许打开（可执行文件或敏感路径）' }
+    }
     const result = await shell.openPath(filePath)
     if (result) {
       return { error: result }
@@ -182,8 +188,11 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // 打开文件所在目录
+  // 打开文件所在目录：同上校验
   safeHandle(IPC_CHANNELS.KMS_OPEN_FILE_DIR, async (filePath: string) => {
+    if (isBlockedOpenPath(filePath)) {
+      return { error: '该路径不允许打开（可执行文件或敏感路径）' }
+    }
     shell.showItemInFolder(filePath)
     return { success: true }
   })
@@ -413,6 +422,10 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
+  safeHandle(IPC_CHANNELS.KMS_MCP_RESET_API_KEY, async () => {
+    return { success: true, apiKey: kmsMcpService.resetApiKey() }
+  })
+
   safeHandle(IPC_CHANNELS.KMS_MCP_LIST_CATEGORIES, async () => {
     return kmsMcpService.listCategories()
   })
@@ -511,5 +524,26 @@ export function registerKMSHandlers(): void {
   safeHandle(IPC_CHANNELS.KMS_CLEAR_AUTO_STOP_WORDS, async () => {
     const cleared = kmsService.clearAutoStopWords()
     return { success: true, cleared }
+  })
+
+  // ==================== 敏感内容控制（AI 排除级别） ====================
+
+  safeHandle(IPC_CHANNELS.KMS_SET_FILE_AI_EXCLUSION, async (params: { fileId: string; level: 0 | 1 | 2 }) => {
+    kmsService.setFileAiExclusion(params.fileId, params.level)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SET_DIR_AI_EXCLUSION, async (params: { dirId: string; level: 0 | 1 | 2 }) => {
+    kmsService.setIndexDirAiExclusion(params.dirId, params.level)
+    broadcastCollectionsChanged()
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_LIST_AI_EXCLUSIONS, async (params?: { dirId?: string }) => {
+    return kmsService.listAiExclusions(params?.dirId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_PURGE_ARCHIVED_VECTORS, async () => {
+    return kmsService.purgeArchivedColdVectors()
   })
 }

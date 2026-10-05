@@ -64,6 +64,7 @@ export type {
   PluginWorkflowTokenUsage,
   PluginWorkflowRun,
   PluginWorkflowRunEvent,
+  PluginWorkflowDeleteRunResult,
 } from './services'
 export type {
   PluginContributionsApi,

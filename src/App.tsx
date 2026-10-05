@@ -24,6 +24,7 @@ import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores
 import { getPluginNavIcon } from './plugins/loader'
 import { sanitizePluginIconHtml } from './utils/sanitize-icon'
 import { useNotification, useNotificationClick } from './hooks/useNotification'
+import { requestPendingTaskJump } from './utils/pending-task-jump'
 
 const { Sider, Content } = Layout
 
@@ -103,7 +104,7 @@ const App: React.FC = () => {
       try {
         const { conversationId, employeeId } = JSON.parse(id)
         if (employeeId && conversationId) {
-          localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
+          requestPendingTaskJump(employeeId, conversationId)
           navigate('/tasks')
           return
         }

@@ -4,7 +4,7 @@ import { promises as fsp } from 'fs'
 import path from 'path'
 import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
-import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
+import KMSSearchEngineService, { type SearchResult, type SearchOptions, type SourceType } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSIndexWorkerClientService from './kms-index-worker-client.service'
 import KMSAutoIndexService from './kms-auto-index.service'
@@ -13,6 +13,7 @@ import KMSFileReaderService from './kms-file-reader.service'
 import KMSSearchDirWatcherService from './kms-search-dir-watcher.service'
 import KMSKeywordStatsService from './kms-keyword-stats.service'
 import KMSKnowledgeCardService from './kms-knowledge-card.service'
+import KMSContentVersionService from './kms-content-version.service'
 import KMSStopWordsService from './kms-stop-words.service'
 import LLMClientService from '../llm-client.service'
 import { generateId, calculateFileHash } from '../common-utils'
@@ -38,6 +39,8 @@ const logger = createLogger('KMS')
 let _embeddedFileIdsCache: Set<string> | null = null
 let _embeddedFileIdsCacheTime = 0
 const EMBEDDED_FILE_IDS_CACHE_TTL = 60000
+const QUERY_EMBEDDING_CACHE_TTL = 10 * 60 * 1000
+const QUERY_EMBEDDING_CACHE_MAX = 200
 
 /**
  * KMS 顶层服务（外观模式）
@@ -58,6 +61,7 @@ class KMSService {
   private lastProgressNotifyAt: number = 0
   private pendingProgress: IndexProgress | null = null
   private progressFlushTimer: NodeJS.Timeout | null = null
+  private queryEmbeddingCache: Map<string, { embedding: Float32Array; expiresAt: number }> = new Map()
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
@@ -648,7 +652,8 @@ class KMSService {
           INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'cold')
         `).run(fileId, this.manualSourceDirId, filePath, fileName, ext, fileSize, hash, modifiedTime)
-        KMSSearchEngineService.getInstance().cloneIndexData(existingByHash.id, fileId)
+        KMSContentVersionService.getInstance().ensureForFile(existingByHash.id)
+        KMSContentVersionService.getInstance().ensureForFile(fileId)
         duplicated = true
         changed = false
       } else {
@@ -657,6 +662,7 @@ class KMSService {
           INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'cold')
         `).run(fileId, this.manualSourceDirId, filePath, fileName, ext, fileSize, hash, modifiedTime)
+        KMSContentVersionService.getInstance().ensureForFile(fileId)
       }
     }
 
@@ -970,102 +976,181 @@ class KMSService {
    * 搜索范围 = 索引目录中的文件（kms_files）+ 启用的文件搜索目录中的文件（kms_search_dir_files）。
    * 文件搜索目录的文件不参与索引与全文搜索，仅按文件名/路径匹配。
    * 支持与现有搜索相同的过滤条件（dirIds, collectionIds, fileExtensions, timeRangeStart, timeRangeEnd）
+   *
+   * 匹配策略（优化）：
+   * - 查询按空白/标点切分后逐词匹配（词间 AND），避免整句 LIKE 漏召回
+   * - 单个词在任一分支无命中时降级为 OR 匹配（兼顾宽松搜索意图）
+   * - LIKE 通配符按字面转义；支持对 file_path 的整句子串匹配（目录场景）
+   * - 候选集截断 + JS 打分（词命中数 × 匹配率 + 新鲜度平手）后排序
    */
   searchFiles(query: string, options?: SearchOptions): SearchResult[] {
     const startTime = Date.now()
-    const results: SearchResult[] = []
-
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) return []
+    const limit = Math.min(options?.topK ?? 200, 1000)
     // LIKE 通配符转义：用户输入含 %/_ 时按字面匹配（配合 ESCAPE '\'）
-    const likeEscaped = query.replace(/[\\%_]/g, (m) => '\\' + m)
+    const escapeLike = (s: string) => s.replace(/[\\%_]/g, (m) => '\\' + m)
+    // LIKE 子句显式声明 ESCAPE，使 escapeLike 的反斜杠转义生效（SQLite 默认无转义字符）
+    const NAME_LIKE_CLAUSE = "f.file_name LIKE ? ESCAPE '\\'"
+    const PATH_LIKE_CLAUSE = "f.file_path LIKE ? ESCAPE '\\'"
+    const terms = trimmedQuery.split(/[\s,，。；;：:、？?！!/\\()（）【】\[\]{}'"]+/)
+      .map(s => s.trim()).filter(Boolean)
+    // 分隔符组成的查询（如「，」）切分后无有效词，直接返回，避免拼出非法 `()` 子句
+    if (terms.length === 0) return []
+    // 与全文检索一致的 AI 排除过滤：level >= 2 的文件/目录不参与文件名搜索
+    const indexExclusion = 'COALESCE(f.ai_exclusion_level, 0) < 2 AND COALESCE(d.ai_exclusion_level, 0) < 2'
 
-    // 1. 索引目录中的文件（kms_files）
-    let indexSql = `
-      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
-      FROM kms_files f
-      WHERE f.file_name LIKE ? ESCAPE '\\'
+    const selectColumns = `
+      SELECT f.id as file_id, f.file_name, f.file_path, f.modified_time, f.file_ext
     `
-    const indexParams: any[] = [`%${likeEscaped}%`]
+    // 每个词一个 LIKE 参数；整句作为 file_path 子串匹配的额外参数
+    const nameLikeParams = () => terms.map(t => `%${escapeLike(t)}%`)
+    const pathLikeParams = () => [`%${escapeLike(trimmedQuery)}%`]
 
-    if (options?.dirIds && options.dirIds.length > 0) {
-      const placeholders = options.dirIds.map(() => '?').join(',')
-      indexSql += ` AND f.dir_id IN (${placeholders})`
-      indexParams.push(...options.dirIds)
+    const runIndexQuery = (mode: 'and' | 'or'): any[] => {
+      const nameClauses = terms.map(() => NAME_LIKE_CLAUSE).join(mode === 'and' ? ' AND ' : ' OR ')
+      let sql = `
+        ${selectColumns}
+        FROM kms_files f
+        JOIN kms_index_dirs d ON d.id = f.dir_id
+        WHERE (${indexExclusion}) AND ((${nameClauses}) OR ${PATH_LIKE_CLAUSE})
+      `
+      const params: any[] = [...nameLikeParams(), ...pathLikeParams()]
+      if (options?.dirIds && options.dirIds.length > 0) {
+        sql += ` AND d.id IN (${options.dirIds.map(() => '?').join(',')})`
+        params.push(...options.dirIds)
+      }
+      if (options?.fileExtensions && options.fileExtensions.length > 0) {
+        sql += ` AND f.file_ext IN (${options.fileExtensions.map(() => '?').join(',')})`
+        params.push(...options.fileExtensions)
+      }
+      if (options?.timeRangeStart !== undefined) {
+        // 前端传入毫秒，modified_time 存储为 unix 秒
+        sql += ' AND f.modified_time >= ?'
+        params.push(Math.floor(options.timeRangeStart / 1000))
+      }
+      if (options?.timeRangeEnd !== undefined) {
+        sql += ' AND f.modified_time <= ?'
+        params.push(Math.floor(options.timeRangeEnd / 1000))
+      }
+      if (options?.collectionIds && options.collectionIds.length > 0) {
+        sql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${options.collectionIds.map(() => '?').join(',')}))`
+        params.push(...options.collectionIds)
+      }
+      sql += ' LIMIT ?'
+      params.push(limit * 3)
+      return this.db.prepare(sql).all(...params) as any[]
     }
 
-    if (options?.fileExtensions && options.fileExtensions.length > 0) {
-      const placeholders = options.fileExtensions.map(() => '?').join(',')
-      indexSql += ` AND f.file_ext IN (${placeholders})`
-      indexParams.push(...options.fileExtensions)
+    const runSearchDirQuery = (): any[] => {
+      // 文件搜索目录：始终 OR 匹配（目录浏览场景数量小、召回优先）
+      const nameClauses = terms.map(() => NAME_LIKE_CLAUSE).join(' OR ')
+      let sql = `
+        ${selectColumns}
+        FROM kms_search_dir_files f
+        JOIN kms_search_dirs d ON d.id = f.dir_id
+        WHERE d.enabled = 1 AND ((${nameClauses}) OR ${PATH_LIKE_CLAUSE})
+      `
+      const params: any[] = [...nameLikeParams(), ...pathLikeParams()]
+      if (options?.fileExtensions && options.fileExtensions.length > 0) {
+        sql += ` AND f.file_ext IN (${options.fileExtensions.map(() => '?').join(',')})`
+        params.push(...options.fileExtensions)
+      }
+      if (options?.timeRangeStart !== undefined) {
+        sql += ' AND f.modified_time >= ?'
+        params.push(Math.floor(options.timeRangeStart / 1000))
+      }
+      if (options?.timeRangeEnd !== undefined) {
+        sql += ' AND f.modified_time <= ?'
+        params.push(Math.floor(options.timeRangeEnd / 1000))
+      }
+      sql += ' LIMIT ?'
+      params.push(limit * 3)
+      return this.db.prepare(sql).all(...params) as any[]
     }
 
-    if (options?.timeRangeStart !== undefined) {
-      indexSql += ' AND f.modified_time >= ?'
-      // 前端传入毫秒，modified_time 存储为 unix 秒
-      indexParams.push(Math.floor(options.timeRangeStart / 1000))
+    // 索引目录：先尝试逐词 AND 匹配（精度优先），无命中再降级 OR
+    let indexRows = runIndexQuery('and')
+    if (indexRows.length === 0) indexRows = runIndexQuery('or')
+    // 文件搜索目录始终 OR 匹配（不参与 dirIds/collectionIds 筛选）
+    const rows = [...indexRows, ...runSearchDirQuery()]
+
+    // JS 打分：整句子串命中 > 逐词命中数；新鲜度仅作平手降序
+    const seen = new Set<string>()
+    const nowSec = Math.floor(Date.now() / 1000)
+    const scored: Array<{ file_id: string; file_name: string; file_path: string; modified_time: number; score: number }> = []
+    for (const row of rows) {
+      if (seen.has(row.file_id)) continue
+      seen.add(row.file_id)
+      const name = String(row.file_name || '').toLowerCase()
+      const pathLower = String(row.file_path || '').toLowerCase()
+      const queryLower = trimmedQuery.toLowerCase()
+      let hitCount = 0
+      for (const term of terms) {
+        const t = term.toLowerCase()
+        if (name.includes(t) || pathLower.includes(t)) hitCount++
+      }
+      const fullPhrase = name.includes(queryLower) || pathLower.includes(queryLower)
+      const base = fullPhrase ? terms.length + 1 : hitCount
+      if (base === 0) continue
+      const modified = Number(row.modified_time) || 0
+      const freshness = Math.max(0, 1 - Math.max(0, nowSec - modified) / (365 * 86400))
+      scored.push({
+        file_id: row.file_id,
+        file_name: row.file_name,
+        file_path: row.file_path,
+        modified_time: modified,
+        score: base * 1000 + freshness,
+      })
     }
+    scored.sort((a, b) => b.score - a.score)
 
-    if (options?.timeRangeEnd !== undefined) {
-      indexSql += ' AND f.modified_time <= ?'
-      indexParams.push(Math.floor(options.timeRangeEnd / 1000))
+    logger.info(`searchFiles "${query}": ${scored.length} results, ${Date.now() - startTime}ms`)
+    return scored.slice(0, limit).map(s => ({
+      file_id: s.file_id,
+      file_name: s.file_name,
+      file_path: s.file_path,
+      text: s.file_name,
+      match_type: 'file_name' as SourceType,
+      modified_time: s.modified_time,
+    } as SearchResult))
+  }
+
+  private async getQueryEmbeddingCached(query: string, config: KmsEmbeddingConfig): Promise<Float32Array | undefined> {
+    const normalized = query.trim().toLowerCase()
+    const cacheKey = `${config.providerId}\u0000${config.modelName}\u0000${normalized}`
+    const cached = this.queryEmbeddingCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) return cached.embedding
+    if (cached) this.queryEmbeddingCache.delete(cacheKey)
+
+    const embedding = await LLMClientService.getInstance().createEmbedding(
+      config.providerId,
+      query,
+      config.modelName
+    )
+    this.queryEmbeddingCache.delete(cacheKey)
+    this.queryEmbeddingCache.set(cacheKey, { embedding, expiresAt: Date.now() + QUERY_EMBEDDING_CACHE_TTL })
+    while (this.queryEmbeddingCache.size > QUERY_EMBEDDING_CACHE_MAX) {
+      const oldest = this.queryEmbeddingCache.keys().next().value
+      if (!oldest) break
+      this.queryEmbeddingCache.delete(oldest)
     }
-
-    if (options?.collectionIds && options.collectionIds.length > 0) {
-      const placeholders = options.collectionIds.map(() => '?').join(',')
-      indexSql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
-      indexParams.push(...options.collectionIds)
-    }
-
-    results.push(...this.db.prepare(indexSql).all(...indexParams) as SearchResult[])
-
-    // 2. 文件搜索目录中的文件（kms_search_dir_files，仅启用的目录）
-    // 目录筛选（dirIds）与合集筛选（collectionIds）仅作用于索引目录文件
-    let searchSql = `
-      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
-      FROM kms_search_dir_files f
-      JOIN kms_search_dirs d ON d.id = f.dir_id
-      WHERE d.enabled = 1 AND f.file_name LIKE ? ESCAPE '\\'
-    `
-    const searchParams: any[] = [`%${likeEscaped}%`]
-
-    if (options?.fileExtensions && options.fileExtensions.length > 0) {
-      const placeholders = options.fileExtensions.map(() => '?').join(',')
-      searchSql += ` AND f.file_ext IN (${placeholders})`
-      searchParams.push(...options.fileExtensions)
-    }
-
-    if (options?.timeRangeStart !== undefined) {
-      searchSql += ' AND f.modified_time >= ?'
-      searchParams.push(Math.floor(options.timeRangeStart / 1000))
-    }
-
-    if (options?.timeRangeEnd !== undefined) {
-      searchSql += ' AND f.modified_time <= ?'
-      searchParams.push(Math.floor(options.timeRangeEnd / 1000))
-    }
-
-    results.push(...this.db.prepare(searchSql).all(...searchParams) as SearchResult[])
-
-    // 默认限制返回数量，避免大量结果导致前端渲染卡顿
-    const limit = options?.topK ?? 200
-    logger.info(`searchFiles "${query}": ${results.length} results, ${Date.now() - startTime}ms`)
-    return results.slice(0, limit)
+    return embedding
   }
 
   async search(query: string, options?: SearchOptions & { useSemantic?: boolean }): Promise<SearchResult[]> {
     const startTime = Date.now()
     const searchEngine = KMSSearchEngineService.getInstance()
     let queryEmbedding: Float32Array | undefined
+    let activeEmbeddingModel: string | undefined
 
     if (options?.useSemantic) {
       try {
         const embStart = Date.now()
         const embConfig = this.getKmsEmbeddingConfig()
         if (embConfig) {
-          queryEmbedding = await LLMClientService.getInstance().createEmbedding(
-            embConfig.providerId,
-            query,
-            embConfig.modelName
-          )
+          queryEmbedding = await this.getQueryEmbeddingCached(query, embConfig)
+          activeEmbeddingModel = embConfig.modelName
         }
         logger.info(`search embedding generated in ${Date.now() - embStart}ms`)
       } catch (err) {
@@ -1079,9 +1164,10 @@ class KMSService {
     const normalizedOptions = options
       ? {
           ...options,
-          timeRangeStart: options.timeRangeStart !== undefined ? Math.floor(options.timeRangeStart / 1000) : undefined,
-          timeRangeEnd: options.timeRangeEnd !== undefined ? Math.floor(options.timeRangeEnd / 1000) : undefined,
-        }
+        embeddingModel: activeEmbeddingModel,
+        timeRangeStart: options.timeRangeStart !== undefined ? Math.floor(options.timeRangeStart / 1000) : undefined,
+        timeRangeEnd: options.timeRangeEnd !== undefined ? Math.floor(options.timeRangeEnd / 1000) : undefined,
+      }
       : options
     const results = searchEngine.search(query, queryEmbedding, normalizedOptions)
     logger.info(`search engine returned ${results.length} results in ${Date.now() - searchStart}ms`)
@@ -1311,6 +1397,73 @@ class KMSService {
 
   getDatabaseStats(): any {
     return KMSDatabaseService.getInstance().getDatabaseStats()
+  }
+
+  getIndexDiagnostics(): any {
+    return KMSDatabaseService.getInstance().getIndexDiagnostics()
+  }
+
+  backfillContentVersions(limit: number = 1000): { processed: number; versions: number } {
+    return KMSContentVersionService.getInstance().backfillBatch(limit)
+  }
+
+  getContentVersionStats() {
+    return KMSContentVersionService.getInstance().getStats()
+  }
+
+  setFileAiExclusion(fileId: string, level: 0 | 1 | 2): void {
+    this.db.prepare('UPDATE kms_files SET ai_exclusion_level = ?, updated_at = unixepoch() WHERE id = ?').run(level, fileId)
+    if (level >= 2) KMSSearchEngineService.getInstance().deleteEmbeddingsByFilesPublic([fileId])
+  }
+
+  setIndexDirAiExclusion(dirId: string, level: 0 | 1 | 2): void {
+    this.db.prepare('UPDATE kms_index_dirs SET ai_exclusion_level = ?, updated_at = unixepoch() WHERE id = ?').run(level, dirId)
+    if (level >= 2) {
+      const ids = (this.db.prepare('SELECT id FROM kms_files WHERE dir_id = ?').all(dirId) as any[]).map(r => r.id)
+      KMSSearchEngineService.getInstance().deleteEmbeddingsByFilesPublic(ids)
+    }
+  }
+
+  /**
+   * 列出设置了 AI 排除级别的文件与目录（敏感内容 UI）。
+   * 传入 dirId 时仅返回该目录的排除文件与该目录当前级别（含 0 级）。
+   */
+  listAiExclusions(dirId?: string): {
+    files: Array<{ id: string; fileName: string; filePath: string; level: number }>
+    dirs: Array<{ id: string; name: string; dirPath: string; level: number }>
+  } {
+    const files = dirId
+      ? this.db.prepare(`
+          SELECT id, file_name, file_path, ai_exclusion_level AS level
+          FROM kms_files WHERE ai_exclusion_level > 0 AND dir_id = ?
+          ORDER BY ai_exclusion_level DESC, updated_at DESC LIMIT 500
+        `).all(dirId) as any[]
+      : this.db.prepare(`
+          SELECT id, file_name, file_path, ai_exclusion_level AS level
+          FROM kms_files WHERE ai_exclusion_level > 0
+          ORDER BY ai_exclusion_level DESC, updated_at DESC LIMIT 500
+        `).all() as any[]
+    const dirs = dirId
+      ? this.db.prepare(`
+          SELECT id, display_name, dir_path, ai_exclusion_level AS level
+          FROM kms_index_dirs WHERE id = ?
+        `).all(dirId) as any[]
+      : this.db.prepare(`
+          SELECT id, display_name, dir_path, ai_exclusion_level AS level
+          FROM kms_index_dirs WHERE ai_exclusion_level > 0
+          ORDER BY ai_exclusion_level DESC LIMIT 100
+        `).all() as any[]
+    return {
+      files: files.map(r => ({ id: r.id, fileName: r.file_name, filePath: r.file_path, level: r.level })),
+      dirs: dirs.map(r => ({ id: r.id, name: r.display_name || r.dir_path, dirPath: r.dir_path, level: r.level })),
+    }
+  }
+
+  /** 物理删除已归档冷向量 */
+  purgeArchivedColdVectors(): { purged: number; stillArchived: number } {
+    const engine = KMSSearchEngineService.getInstance()
+    const purged = engine.purgeArchivedVectors()
+    return { purged, stillArchived: engine.getArchivedVectorCount() }
   }
 
   cleanupDatabase(): any {

@@ -12,6 +12,7 @@ import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSett
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
+import { subscribePendingTaskJump } from '../utils/pending-task-jump'
 import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import type { AvailableSkill } from '../components/workbench/ChatInput'
@@ -60,6 +61,9 @@ const Tasks: React.FC = () => {
   const pendingSelectConvIdRef = useRef<string | null>(null)
   // 上一次 employee 加载状态，用于检测初始化完成
   const prevEmployeeLoadedRef = useRef(false)
+  // currentEmployeeId 镜像（供事件回调读取最新值）
+  const currentEmployeeIdRef = useRef<string | undefined>(currentEmployeeId)
+  useEffect(() => { currentEmployeeIdRef.current = currentEmployeeId }, [currentEmployeeId])
 
   // 搜索与筛选
   const [searchQuery, setSearchQuery] = useState('')
@@ -181,12 +185,9 @@ const Tasks: React.FC = () => {
       setNewTaskEmployeeId(null)
     }
     if (currentEmployeeId && !ids.has(currentEmployeeId)) {
-      // 模板任务的内联员工（inline:*）不进员工列表，但其会话是有效任务：
-      // 聊天模式下保留选中态以便打开会话；新建任务模式下重置回真实员工
-      const keepInline = taskMode === 'chat' && currentEmployeeId.startsWith('inline:')
-      if (!keepInline) setCurrentEmployeeId(undefined)
+      setCurrentEmployeeId(undefined)
     }
-  }, [employees, employeesLoaded, filterEmployeeId, newTaskEmployeeId, currentEmployeeId, taskMode])
+  }, [employees, employeesLoaded, filterEmployeeId, newTaskEmployeeId, currentEmployeeId])
 
   // 新任务模式下自动选择第一个员工，避免未选员工时发送消息无效
   useEffect(() => {
@@ -374,6 +375,22 @@ const Tasks: React.FC = () => {
       setCurrentEmployeeId(task.employee_id)
     }
   }, [globalTasks, currentEmployeeId, selectConversation])
+
+  // 跨页面"定位任务"跳转消费（全局搜索 / 通知点击发起）
+  useEffect(() => {
+    return subscribePendingTaskJump((jump) => {
+      setTaskMode('chat')
+      if (jump.employeeId === currentEmployeeIdRef.current) {
+        pendingSelectConvIdRef.current = null
+        prevEmployeeLoadedRef.current = true
+        selectConversation(jump.conversationId)
+      } else {
+        pendingSelectConvIdRef.current = jump.conversationId
+        prevEmployeeLoadedRef.current = false
+        setCurrentEmployeeId(jump.employeeId)
+      }
+    })
+  }, [selectConversation])
 
   // 删除任务
   const handleDeleteTask = useCallback(async (taskId: string) => {

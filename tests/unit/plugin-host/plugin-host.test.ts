@@ -127,6 +127,27 @@ vi.mock('../../../electron/main/services/database.service', () => ({
   default: { getInstance: () => ({ getDb: () => mockState.fakeDb }) },
 }))
 
+// 测试环境 Node ABI 与 electron 编译的 better-sqlite3 不兼容：统一 mock（行为仅覆盖插件宿主所需面）
+const mockStateDb = vi.hoisted(() => {
+  const openDatabases: Array<{ close: ReturnType<typeof vi.fn> }> = []
+  class MockDatabase {
+    close = vi.fn()
+    openDbs = openDatabases
+    constructor() { openDatabases.push(this as unknown as { close: ReturnType<typeof vi.fn> }) }
+    pragma = vi.fn()
+    exec = vi.fn()
+    prepare = vi.fn(() => ({
+      get: vi.fn(() => undefined),
+      run: vi.fn(() => ({ changes: 1 })),
+      all: vi.fn(() => []),
+    }))
+    transaction = vi.fn((fn: (...args: never[]) => unknown) => fn)
+  }
+  return { openDatabases, MockDatabase }
+})
+
+vi.mock('better-sqlite3', () => ({ default: mockStateDb.MockDatabase }))
+
 // ====== fixture 工具 ======
 
 type FixtureCfg = {
@@ -142,6 +163,8 @@ type FixtureCfg = {
   throwMessage?: string
   /** 覆盖升级场景：deactivate 标记写到插件目录外（目录会被整体替换），便于断言旧实例确被下线 */
   deactivateMarkerPath?: string
+  /** 触碰插件 KV sqlite（plugin_kv 表，index.db 分库），供连接生命周期测试 */
+  kvSet?: { key: string; value: string }
 }
 
 function makeMainJs(cfg: FixtureCfg): string {
@@ -167,6 +190,7 @@ module.exports = {
     if (config.registerView) ctx.contributions.registerView({ view: 'chat.toolbar', component: {} })
     if (config.createWindow) ctx.services.windows.create({ width: 200, height: 200 })
     if (config.registerShortcut) ctx.contributions.registerGlobalShortcuts([{ accelerator: 'CommandOrControl+Alt+X', handler: () => {} }])
+    if (config.kvSet) { void ctx.storage.set(config.kvSet.key, config.kvSet.value) }
     if (config.throw) throw new Error(config.throwMessage || 'activate boom')
   },
   deactivate() { ${deactLine} },
@@ -894,5 +918,42 @@ describe('shutdown 与渲染端通知', () => {
     host.notifyRendererChanged()
     expect(win1.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.PLUGIN_CHANGED, expect.anything())
     expect(win2.webContents.send).not.toHaveBeenCalled()
+  })
+})
+
+// ====== 插件 KV sqlite 连接生命周期（kvDbs 泄漏回归） ======
+
+describe('插件 KV sqlite 连接生命周期（kvDbs 泄漏回归）', () => {
+  it('使用 plugin kv 的插件 deactivate（禁用）后，对应 kvDb 连接被 close', async () => {
+    writePlugin('kver', { cfg: { kvSet: { key: 'session', value: 'saved' } } })
+    const host = makeHost()
+    host.init()
+    const s = host as any
+    expect(s.kvDbs.has('kver')).toBe(true)
+    const closeSpy = vi.spyOn(s.kvDbs.get('kver'), 'close')
+
+    host.setEnabled('kver', false)
+
+    expect(closeSpy).toHaveBeenCalled()
+    expect(s.kvDbs.has('kver')).toBe(false)
+
+    // 重新启用 → 连接惰性重开（不发 warnings），数据仍可写入同一 db
+    host.setEnabled('kver', true)
+    expect(s.kvDbs.has('kver')).toBe(true)
+    expect(mockStateDb.openDatabases.length).toBe(2) // 旧库已关、新库打开
+  })
+
+  it('shutdown 关闭全部 KV 专用连接（含未下线插件）', async () => {
+    writePlugin('kva', { cfg: { kvSet: { key: 'boot', value: 'kept' } } })
+    const host = makeHost()
+    host.init()
+    const s = host as any
+    expect(s.kvDbs.has('kva')).toBe(true)
+    const closeSpy = vi.spyOn(s.kvDbs.get('kva'), 'close')
+
+    host.shutdown()
+
+    expect(closeSpy).toHaveBeenCalled()
+    expect(s.kvDbs.has('kva')).toBe(false)
   })
 })

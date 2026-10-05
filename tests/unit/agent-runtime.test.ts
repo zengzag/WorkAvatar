@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { broadcastRunEvent, fakeDb, chatStream, setDelegationRows, setSubAgentRuns, resetSubAgentRuns } = vi.hoisted(() => {
+const { broadcastRunEvent, fakeDb, chatStream, setDelegationRows, setSubAgentRuns, resetSubAgentRuns, getSubAgentRuns } = vi.hoisted(() => {
   // 委托设置查询返回行（可被单测覆写），默认：supervisor1 开启委托且 target1 在可委托列表中
   let delegationRows: Array<{ id: string; delegation_json?: string | null }> = [
     { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['target1'], acceptDelegation: true }) },
@@ -56,13 +56,22 @@ const { broadcastRunEvent, fakeDb, chatStream, setDelegationRows, setSubAgentRun
             conversation_id: args[4] || '', status: args[5], inputs_json: args[6], result_json: args[7],
             usage_json: args[8], error: args[9] || '', started_at: args[10] ?? null, ended_at: args[11] ?? null,
           })
-        } else if (sql.includes("SET status = 'failed'") && sql.includes('执行中断')) {
+        } else if (sql.includes("SET status = 'failed'") && sql.includes('执行中断') && sql.includes('run_id = ?')) {
           // launchFollowup 僵尸 run 标记失败
           const row = subAgentRunRows.find(r => r.run_id === args[1])
           if (row) { row.status = 'failed'; row.error = row.error || '执行中断（应用重启）'; row.ended_at = args[0] }
+        } else if (sql.includes("status IN ('running', 'queued')")) {
+          // recoverStaleRuns：批量沉降僵尸（无 runId 参数，全表匹配）
+          for (const row of subAgentRunRows) {
+            if (row.status === 'running' || row.status === 'queued') {
+              row.status = 'failed'
+              row.error = row.error || '执行中断（应用重启）'
+              row.ended_at = args[0] ?? null
+            }
+          }
         } else if (sql.includes('UPDATE sub_agent_runs')) {
-          // persistRun 更新（12 参：parent_conv, employee, parent_run, conv, status, inputs, result, usage, error, started, ended, runId）
-          const row = subAgentRunRows.find(r => r.run_id === args[11])
+          // persistRun 更新（15 参：parent_conv, employee, parent_run, conv, status, inputs, result, usage, error, started, ended, ephemeral, lifecycle, lastActivity, runId）
+          const row = subAgentRunRows.find(r => r.run_id === args[14])
           if (row) {
             row.conversation_id = args[3] || row.conversation_id
             row.status = args[4]
@@ -88,6 +97,7 @@ const { broadcastRunEvent, fakeDb, chatStream, setDelegationRows, setSubAgentRun
     setDelegationRows: (rows: Array<{ id: string; delegation_json?: string | null }>) => { delegationRows = rows },
     setSubAgentRuns: (rows: typeof subAgentRunRows) => { subAgentRunRows = rows },
     resetSubAgentRuns: () => { subAgentRunRows = [] },
+    getSubAgentRuns: () => subAgentRunRows,
   }
 })
 
@@ -125,12 +135,20 @@ vi.mock('../../electron/main/services/common-utils', () => ({
 }))
 
 import SubAgentRuntime from '../../electron/main/services/agent-runtime/runtime'
+import EmployeeRegistryService from '../../electron/main/services/employee-registry.service'
 
 describe('SubAgentRuntime', () => {
   let runtime: SubAgentRuntime
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // 重置 chatStream 并恢复默认实现：mockImplementation 的测试用例不污染后续用例
+    chatStream.mockReset()
+    chatStream.mockImplementation(async (_params: any, callbacks: any, _signal?: AbortSignal) => {
+      callbacks.onChunk?.('子员工完成了检索')
+      callbacks.onToolResult?.({ name: 'report_generated_files', generatedFiles: [{ path: '/tmp/out.docx', name: 'out.docx', ext: 'docx', size: 10, mtime: 1 }], success: true })
+      callbacks.onDone?.({ tokenUsage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } })
+    })
     setDelegationRows([
       { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['target1'], acceptDelegation: true }) },
       { id: 'target1', delegation_json: '' },
@@ -524,5 +542,212 @@ describe('SubAgentRuntime', () => {
     const params = chatStream.mock.calls.at(-1)![0] as any
     expect(params.messages[0].content).toContain('旧任务')
     expect(params.messages[1].content).toContain('执行中断（应用重启）')
+  })
+
+  it('tokenUsage 多轮累加：gate 纠偏轮用量不覆盖第一轮', async () => {
+    let calls = 0
+    chatStream.mockImplementation(async (_params: any, callbacks: any) => {
+      calls++
+      callbacks.onDone?.({ tokenUsage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } })
+    })
+    const launched = runtime.launchSubAgent(baseInput())
+    const runId = launched.runId!
+    // 一项任务留在台账 → 触发纠偏轮（MAX_GATE_ROUNDS=2），共 3 次 streamOnce
+    runtime.createTask(runId, '不收尾的任务')
+    const outcomes = await runtime.awaitRuns([runId], 3000)
+    expect(outcomes[0].success).toBe(true)
+    expect(calls).toBe(3)
+    expect(outcomes[0].tokenUsage).toEqual({ promptTokens: 300, completionTokens: 60, totalTokens: 360 })
+  })
+
+  // ---- 阶段一/三/四：临时子智能体、后台通知、任务台账、结构化结果 ----
+
+  it('临时子智能体：跳过委托设置校验，生成 inline 员工并在结束时下线', async () => {
+    // 目标设置明确拒绝被委托：临时角色路径不受影响
+    setDelegationRows([
+      { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: [], acceptDelegation: true }) },
+    ])
+    const registry = EmployeeRegistryService.getInstance()
+    const registerSpy = vi.spyOn(registry, 'registerInlineEmployee')
+    const unregisterSpy = vi.spyOn(registry, 'unregisterInlineEmployee')
+    try {
+      const launched = runtime.launchSubAgent({
+        ...baseInput(),
+        targetEmployeeId: '',
+        ephemeral: { name: '财报分析师', systemPrompt: '你是财报分析专家', tools: ['file_read'] },
+      })
+      expect(launched.success).toBe(true)
+      expect(launched.targetEmployeeName).toBe('财报分析师')
+      expect(launched.targetEmployeeId).toMatch(/^inline:sub-.+/)
+
+      // 子会话归属 inline 员工
+      await runtime.awaitRuns([launched.runId!], 2000)
+      expect(registerSpy).toHaveBeenCalledTimes(1)
+      expect(registerSpy.mock.calls[0][0].id).toBe(launched.targetEmployeeId)
+      expect(registerSpy.mock.calls[0][0].rules).toBe('你是财报分析专家')
+      expect(unregisterSpy).toHaveBeenCalledWith(launched.targetEmployeeId)
+      const run = runtime.getRun(launched.runId!)!
+      expect(run.lifecycle).toBe('ephemeral')
+      expect(run.ephemeral?.name).toBe('财报分析师')
+    } finally {
+      registerSpy.mockRestore()
+      unregisterSpy.mockRestore()
+    }
+  })
+
+  it('临时子智能体：指令注入角色契约且注册员工带工具白名单与提示词', async () => {
+    const launched = runtime.launchSubAgent({
+      ...baseInput(),
+      targetEmployeeId: '',
+      ephemeral: { name: '调研员', systemPrompt: '你是行业调研员，只做只读检索', tools: ['web_search'], skills: ['sk1'] },
+    })
+    await runtime.awaitRuns([launched.runId!], 2000)
+    const params = chatStream.mock.calls.at(-1)![0] as any
+    expect(params.employee_id).toBe(launched.targetEmployeeId)
+    expect(params.messages[0].content).toContain('Delegation contract (mandatory)')
+
+    const registry = EmployeeRegistryService.getInstance()
+    // run 已结束、员工已下线：通过 register 的入参断言字段构造
+    const emp = registry.toInlineRegisteredEmployee(launched.targetEmployeeId!, {
+      name: '调研员', systemPrompt: '你是行业调研员，只做只读检索', tools: ['web_search'], skills: ['sk1'],
+    })
+    expect(emp.rules).toBe('你是行业调研员，只做只读检索')
+    expect(emp.defaultTools).toEqual(['web_search'])
+    expect(emp.defaultSkills).toEqual(['sk1'])
+    expect(emp.source).toBe('inline')
+  })
+
+  it('临时子智能体：委托链含同名 key 时拒绝（防环）', () => {
+    const launched = runtime.launchSubAgent({
+      ...baseInput(),
+      targetEmployeeId: '',
+      delegationChain: ['inline:sub-caiwu-abc123'],
+      ephemeral: { name: '财报', key: 'caiwu', systemPrompt: 'x' },
+    })
+    expect(launched.success).toBe(false)
+    expect(launched.error).toContain('委托环')
+  })
+
+  it('slugifyInlineKey：小写归一、非法字符转连字符、限长 63、空结果回退', () => {
+    const registry = EmployeeRegistryService.getInstance()
+    expect(registry.slugifyInlineKey('Data-Analyst 01')).toBe('data-analyst-01')
+    expect(registry.slugifyInlineKey('!!!')).toBe('role')
+    expect(registry.slugifyInlineKey('财报分析师')).toBe('role')
+    expect(registry.slugifyInlineKey('a'.repeat(100))).toHaveLength(63)
+  })
+
+  it('后台派发：立即返回 + 终态通知入队 + readNotifications 读取即清空', async () => {
+    const launched = runtime.launchSubAgent({ ...baseInput(), runInBackground: true })
+    expect(launched.success).toBe(true)
+    // 后台派发不阻塞：launch 后 run 仍处于 queued/running
+    expect(['queued', 'running']).toContain(runtime.getRun(launched.runId!)!.status)
+
+    const outcomes = await runtime.awaitRuns([launched.runId!], 2000)
+    expect(outcomes[0].success).toBe(true)
+
+    const notices = runtime.readNotifications('conv-supervisor-1')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatchObject({
+      runId: launched.runId,
+      status: 'completed',
+      targetEmployeeName: '资料员工',
+    })
+    expect(notices[0].generatedFiles.some(f => f.path === '/tmp/out.docx')).toBe(true)
+    // 读取即清空
+    expect(runtime.readNotifications('conv-supervisor-1')).toHaveLength(0)
+  })
+
+  it('任务台账 + 完成门：未收尾项触发纠偏轮（≤2 次）并计入未完成清单', async () => {
+    let calls = 0
+    chatStream.mockImplementation(async (_params: any, callbacks: any) => {
+      calls++
+      callbacks.onChunk?.(`第${calls}轮输出`)
+      callbacks.onDone?.({})
+    })
+    const launched = runtime.launchSubAgent(baseInput())
+    const runId = launched.runId!
+    // 委托后登记两项（delegate 工具同款调用路径）
+    expect(runtime.createTask(runId, '梳理要点').success).toBe(true)
+    expect(runtime.createTask(runId, '生成文档').success).toBe(true)
+
+    const outcomes = await runtime.awaitRuns([runId], 3000)
+    expect(outcomes[0].success).toBe(true)
+    // 首轮 + 2 轮完成门纠偏 = 3 次
+    expect(calls).toBe(3)
+    // 完成门提示词含未收尾项
+    const gateCall = chatStream.mock.calls[1][0] as any
+    expect(gateCall.messages.at(-1).content).toContain('Completion gate')
+    expect(gateCall.messages.at(-1).content).toContain('梳理要点')
+    // gate 纠偏轮带第一轮 assistant 上下文（续聊而非失忆）
+    const roles = gateCall.messages.map((m: any) => m.role)
+    expect(roles[roles.length - 2]).toBe('assistant')
+    expect(roles[roles.length - 1]).toBe('user')
+    expect(gateCall.messages.at(-2).content).toContain('第1轮输出')
+    // 结果携带未收尾清单
+    expect(outcomes[0].output).toContain('未收尾任务项')
+    expect(outcomes[0].result?.incompleteTasks).toEqual(['梳理要点', '生成文档'])
+  })
+
+  it('任务台账：子会话收尾全部任务后不触发完成门', async () => {
+    let calls = 0
+    chatStream.mockImplementation(async (_params: any, callbacks: any) => {
+      calls++
+      callbacks.onChunk?.('done')
+      callbacks.onDone?.({})
+    })
+    const launched = runtime.launchSubAgent(baseInput())
+    const runId = launched.runId!
+    runtime.createTask(runId, '唯一任务')
+    // 子会话启动后立即把任务收尾（task_item_update 同款调用）
+    expect(runtime.updateTask(runId, 't1', 'completed').success).toBe(true)
+    const outcomes = await runtime.awaitRuns([runId], 3000)
+    expect(outcomes[0].success).toBe(true)
+    expect(calls).toBe(1)
+    expect(outcomes[0].result?.incompleteTasks).toEqual([])
+  })
+
+  it('结构化交付物：submit 后进入结果（output/structured）', async () => {
+    const launched = runtime.launchSubAgent({
+      ...baseInput(),
+      outputSchema: { type: 'object', properties: { score: { type: 'number' } } },
+    })
+    const runId = launched.runId!
+    // 模拟子会话上报（submit_structured_result 工具同款调用）
+    expect(runtime.recordStructuredResult(runId, { score: 97 }).success).toBe(true)
+
+    const outcomes = await runtime.awaitRuns([runId], 2000)
+    expect(outcomes[0].result?.structured).toEqual({ score: 97 })
+    expect(outcomes[0].output).toContain('结构化结果')
+    expect(outcomes[0].output).toContain('"score"')
+  })
+
+  it('recoverStaleRuns：派发前把 DB 僵尸 running/queued 沉降为 failed', async () => {
+    setSubAgentRuns([
+      {
+        run_id: 'zombie', parent_conversation_id: 'conv-supervisor-1', employee_id: 'target1', parent_run_id: '',
+        conversation_id: 'convZ', status: 'running', inputs_json: '{}', result_json: '{}',
+        usage_json: '{}', error: '', started_at: 1, ended_at: null,
+      },
+    ])
+    // 单例的 recovered 标记可能已被同文件更早的派发置位：重置以触发本次恢复
+    ;(runtime as any).recovered = false
+    const launched = runtime.launchSubAgent(baseInput())
+    expect(launched.success).toBe(true)
+    const zombie = getSubAgentRuns().find(r => r.run_id === 'zombie')!
+    expect(zombie.status).toBe('failed')
+    expect(zombie.error).toContain('应用重启')
+    await runtime.awaitRuns([launched.runId!], 2000)
+  })
+
+  it('deriveLiveness：终态 idle；最近有活动 progressing；久无活动 stalled', async () => {
+    const launched = runtime.launchSubAgent(baseInput())
+    const runId = launched.runId!
+    expect(runtime.deriveLiveness(runtime.getRun(runId)!)).toBe('progressing')
+    // 回拨 lastActivityAt 超过停滞窗口（6 分钟）
+    const entry = (runtime as any).entries.get(runId)
+    entry.run.lastActivityAt = Date.now() - 7 * 60_000
+    expect(runtime.deriveLiveness(runtime.getRun(runId)!)).toBe('stalled')
+    await runtime.awaitRuns([runId], 2000)
+    expect(runtime.deriveLiveness(runtime.getRun(runId)!)).toBe('idle')
   })
 })

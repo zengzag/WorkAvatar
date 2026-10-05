@@ -2,11 +2,11 @@ import React, { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Button, Switch, Popconfirm, Empty, Typography, Space, Card, theme,
-  Modal, Input, Checkbox, Tag, Tooltip, App,
+  Modal, Input, Checkbox, Tag, Tooltip, App, Select, Spin,
 } from 'antd'
 import {
   FolderOpenOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
-  FileTextOutlined, FileImageOutlined,
+  FileTextOutlined, FileImageOutlined, SafetyOutlined,
 } from '@ant-design/icons'
 
 const { Title, Text, Paragraph } = Typography
@@ -21,6 +21,13 @@ interface IndexDir {
   file_count?: number
   created_at: number
   updated_at: number
+}
+
+interface ExcludedFile {
+  id: string
+  fileName: string
+  filePath: string
+  level: number
 }
 
 interface KMSDirPanelProps {
@@ -52,10 +59,54 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
   const [recursive, setRecursive] = useState(true)
   const [selectedExts, setSelectedExts] = useState<string[]>([])
   const [allExts, setAllExts] = useState(true)
+  const [aiExclusionLevel, setAiExclusionLevel] = useState<number>(0)
+  const [excludedFiles, setExcludedFiles] = useState<ExcludedFile[]>([])
+  const [originalExcluded, setOriginalExcluded] = useState<Record<string, number>>({})
+  const [originalDirLevel, setOriginalDirLevel] = useState<number>(0)
+  const [loadingExclusions, setLoadingExclusions] = useState(false)
 
   const parseExts = useCallback((extStr: string): string[] => {
     if (!extStr || !extStr.trim()) return []
     return extStr.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+  }, [])
+
+  const levelOptions = [
+    { value: 0, label: t('kms.sensitive.level0') },
+    { value: 1, label: t('kms.sensitive.level1') },
+    { value: 2, label: t('kms.sensitive.level2') },
+  ]
+
+  const resetExclusions = useCallback(() => {
+    setAiExclusionLevel(0)
+    setExcludedFiles([])
+    setOriginalExcluded({})
+    setOriginalDirLevel(0)
+    setLoadingExclusions(false)
+  }, [])
+
+  const loadDirExclusions = useCallback(async (dirId: string) => {
+    setLoadingExclusions(true)
+    try {
+      const result = await window.electronAPI.kms.listAiExclusions({ dirId })
+      if (result && !result.error) {
+        const files: ExcludedFile[] = Array.isArray(result.files) ? result.files : []
+        setExcludedFiles(files)
+        setOriginalExcluded(Object.fromEntries(files.map(f => [f.id, f.level])))
+        const level = Array.isArray(result.dirs) && result.dirs.length > 0 ? result.dirs[0].level : 0
+        setAiExclusionLevel(level)
+        setOriginalDirLevel(level)
+      }
+    } catch (err) {
+      console.error('Failed to load AI exclusions:', err)
+    } finally {
+      setLoadingExclusions(false)
+    }
+  }, [])
+
+  const handleExcludedFileLevelChange = useCallback((fileId: string, level: number) => {
+    setExcludedFiles(prev => level === 0
+      ? prev.filter(f => f.id !== fileId)
+      : prev.map(f => (f.id === fileId ? { ...f, level } : f)))
   }, [])
 
   const handleAddDir = useCallback(async () => {
@@ -77,13 +128,14 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
         setRecursive(true)
         setSelectedExts([])
         setAllExts(true)
+        resetExclusions()
         setModalOpen(true)
       }
     } catch (err: any) {
       console.error('Failed to open directory picker:', err)
       message.error(t('kms.dirPickerFailed') + (err?.message ? `: ${err.message}` : ''))
     }
-  }, [message, t])
+  }, [message, t, resetExclusions])
 
   const handleEditDir = useCallback((dir: IndexDir) => {
     const exts = parseExts(dir.file_extensions)
@@ -93,8 +145,10 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     setRecursive(dir.recursive === 1)
     setSelectedExts(exts)
     setAllExts(exts.length === 0)
+    resetExclusions()
     setModalOpen(true)
-  }, [parseExts])
+    loadDirExclusions(dir.id)
+  }, [parseExts, resetExclusions, loadDirExclusions])
 
   const handleSaveDir = useCallback(async () => {
     const finalExts = allExts ? [] : selectedExts
@@ -104,7 +158,24 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
         recursive,
         fileExtensions: finalExts,
       })
-      message.success(t('kms.dirConfigSaved'))
+      try {
+        if (aiExclusionLevel !== originalDirLevel) {
+          await window.electronAPI.kms.setDirAiExclusion({ dirId: editingDir.id, level: aiExclusionLevel as 0 | 1 | 2 })
+        }
+        const currentMap: Record<string, number> = {}
+        for (const f of excludedFiles) currentMap[f.id] = f.level
+        const fileIds = Array.from(new Set([...Object.keys(originalExcluded), ...Object.keys(currentMap)]))
+        for (const fileId of fileIds) {
+          const next = currentMap[fileId] ?? 0
+          if (next !== (originalExcluded[fileId] ?? 0)) {
+            await window.electronAPI.kms.setFileAiExclusion({ fileId, level: next as 0 | 1 | 2 })
+          }
+        }
+        message.success(t('kms.dirConfigSaved'))
+      } catch (err: any) {
+        console.error('Failed to save AI exclusions:', err)
+        message.error(t('kms.sensitive.saveFailed') + (err?.message ? `: ${err.message}` : ''))
+      }
       setModalOpen(false)
     } else {
       try {
@@ -115,7 +186,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
         message.error(t('kms.dirAddFailed') + (err?.message ? `: ${err.message}` : ''))
       }
     }
-  }, [editingDir, pendingDirPath, displayName, recursive, allExts, selectedExts, onUpdateDir, onAddDir, message, t])
+  }, [editingDir, pendingDirPath, displayName, recursive, allExts, selectedExts, aiExclusionLevel, originalDirLevel, excludedFiles, originalExcluded, onUpdateDir, onAddDir, message, t])
 
   const handleAllExtsChange = useCallback((checked: boolean) => {
     setAllExts(checked)
@@ -243,6 +314,61 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
             ))}
           </div>
         </div>
+
+        {/* 敏感内容控制（AI 排除级别），仅编辑已有目录时可用 */}
+        {editingDir && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <SafetyOutlined style={{ color: token.colorWarning }} />
+              <Text style={{ fontSize: 13, fontWeight: 500 }}>{t('kms.sensitive.title')}</Text>
+            </div>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+              {t('kms.sensitive.desc')}
+            </Text>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+              <Text style={{ fontSize: 12 }}>{t('kms.sensitive.dirLevel')}</Text>
+              <Select
+                size="small"
+                style={{ width: 180, flexShrink: 0 }}
+                value={aiExclusionLevel}
+                onChange={setAiExclusionLevel}
+                options={levelOptions}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: 500 }}>{t('kms.sensitive.fileLevel')}</Text>
+              {excludedFiles.length > 0 && (
+                <Tag color="orange" style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 5px' }}>
+                  {excludedFiles.length}
+                </Tag>
+              )}
+            </div>
+            {loadingExclusions ? (
+              <div style={{ textAlign: 'center', padding: '8px 0' }}><Spin size="small" /></div>
+            ) : excludedFiles.length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.sensitive.noFiles')}</Text>
+            ) : (
+              <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                {excludedFiles.map(file => (
+                  <div key={file.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <Text style={{ fontSize: 12, minWidth: 0 }} ellipsis={{ tooltip: file.filePath }}>
+                      {file.fileName}
+                    </Text>
+                    <Select
+                      size="small"
+                      style={{ width: 180, flexShrink: 0 }}
+                      value={file.level}
+                      onChange={(v) => handleExcludedFileLevelChange(file.id, v)}
+                      options={levelOptions}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   )

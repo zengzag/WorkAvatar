@@ -334,7 +334,38 @@ class EmployeeRegistryService {
     this.broadcastEmployeeChanged()
   }
 
-  // ====== 模板内联员工（Workflow ephemeral roles）：仅运行期间存在，不进员工库列表 ======
+  // ====== 模板内联员工（Workflow ephemeral roles / 委托临时子智能体）：仅运行期间存在，不进员工库列表 ======
+
+  /** slug 化 key：小写字母数字连字符，连续连字符合并、首尾裁剪，空结果回退 'role'（限长 63） */
+  slugifyInlineKey(raw: string): string {
+    const slug = raw.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
+    return slug || 'role'
+  }
+
+  /**
+   * 由临时子智能体规格构造注册员工对象（宿主与 workflow 运行时共用的转换单一来源）。
+   * spec.key/spec.name 不改变入参；id 由调用方给定（保证跨 run 唯一）。
+   */
+  toInlineRegisteredEmployee(employeeId: string, spec: { name: string; description?: string; systemPrompt: string; tools?: string[]; skills?: string[] }): RegisteredEmployee {
+    return {
+      id: employeeId,
+      source: 'inline',
+      source_key: employeeId.replace(/^inline:/, ''),
+      name: spec.name,
+      description: spec.description || '临时子智能体（仅本次运行存在）',
+      rules: spec.systemPrompt,
+      profile_json: JSON.stringify({ roleName: spec.name }),
+      avatar_type: 'default',
+      memory_enabled: false,
+      arch_version: 1,
+      total_tasks: 0,
+      total_approvals: 0,
+      created_at: 0,
+      updated_at: 0,
+      defaultTools: spec.tools,
+      defaultSkills: spec.skills,
+    }
+  }
 
   /**
    * 注册模板内联员工（id 规则 `inline:<key>`）。

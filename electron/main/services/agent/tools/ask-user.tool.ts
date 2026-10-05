@@ -1,5 +1,25 @@
-import type { ToolDefinition } from './types'
+import type { ToolDefinition, ToolHandlerContext } from './types'
 import UnifiedInteractionService, { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
+
+/** 中止错误信息（等待期间 signal abort 抛出，catch 据此识别为取消而非失败） */
+const ABORT_MESSAGE = '用户已停止生成'
+
+/**
+ * 与中止信号竞速：等待期间 signal abort 立即失败，
+ * 不悬挂在交互等待（最长 305s）上，后到的交互响应被丢弃（由服务自身超时兜底清理）。
+ */
+function waitWithAbort(request: Promise<any>, signal?: AbortSignal): Promise<any> {
+  if (!signal) return request
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new Error(ABORT_MESSAGE))
+    if (signal.aborted) { onAbort(); return }
+    signal.addEventListener('abort', onAbort, { once: true })
+    request.then(
+      (value) => { signal.removeEventListener('abort', onAbort); resolve(value) },
+      (err) => { signal.removeEventListener('abort', onAbort); reject(err) },
+    )
+  })
+}
 
 export const askUserTool: ToolDefinition = {
   id: 'ask_user',
@@ -47,8 +67,13 @@ export const askUserTool: ToolDefinition = {
     },
     required: ['type', 'message']
   },
-  handler: async (args: any) => {
+  handler: async (args: any, context?: ToolHandlerContext) => {
+    const signal = context?.signal
     try {
+      // signal 已中止：立即失败，不发起交互
+      if (signal?.aborted) {
+        return { success: false, error: '用户已停止生成，交互已取消', cancelled: true }
+      }
       const interactionService = UnifiedInteractionService.getInstance()
       const type = String(args.type || 'confirm')
       const message = String(args.message || '')
@@ -86,7 +111,7 @@ export const askUserTool: ToolDefinition = {
         request.defaultValue = args.default_value || 'no'
       }
 
-      const response = await interactionService.request(request)
+      const response = await waitWithAbort(interactionService.request(request), signal)
 
       if (response.cancelled) {
         const reason = response.timedOut
@@ -118,7 +143,11 @@ export const askUserTool: ToolDefinition = {
           return { success: false, error: `不支持的交互类型: ${type}` }
       }
     } catch (error: any) {
-      return { success: false, error: `询问用户失败: ${error.message || error}` }
+      const msg = error?.message || String(error)
+      if (msg === ABORT_MESSAGE) {
+        return { success: false, error: '用户已停止生成，交互已取消', cancelled: true }
+      }
+      return { success: false, error: `询问用户失败: ${msg}` }
     }
   },
   source: 'builtin',

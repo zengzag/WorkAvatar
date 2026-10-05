@@ -70,9 +70,9 @@ describe('kms-search-helpers / buildFtsQuery', () => {
 })
 
 describe('kms-search-helpers / buildLikeWhereClause', () => {
-  it('无选项返回恒真条件', () => {
+  it('无选项也追加敏感资料过滤', () => {
     const r = buildLikeWhereClause()
-    expect(r.whereClause).toBe('1=1')
+    expect(r.whereClause).toContain('ai_exclusion_level')
     expect(r.params).toEqual([])
   })
 
@@ -105,9 +105,9 @@ describe('kms-search-helpers / buildLikeWhereClause', () => {
     expect(r.whereClause).not.toContain('>=')
   })
 
-  it('空数组选项不生成条件', () => {
+  it('空数组选项仅保留敏感资料过滤', () => {
     const r = buildLikeWhereClause({ fileIds: [], sourceTypes: [] })
-    expect(r.whereClause).toBe('1=1')
+    expect(r.whereClause).toContain('ai_exclusion_level')
     expect(r.params).toEqual([])
   })
 })
@@ -252,8 +252,10 @@ describe('kms-search-helpers / buildLikeWhereClause 边界补充', () => {
 })
 
 describe('kms-search-helpers / buildFtsWhereClause 边界补充', () => {
-  it('无选项返回恒真条件', () => {
-    expect(buildFtsWhereClause()).toEqual({ whereClause: '1=1', params: [] })
+  it('无选项也追加敏感资料过滤', () => {
+    const r = buildFtsWhereClause()
+    expect(r.whereClause).toContain('ai_exclusion_level')
+    expect(r.params).toEqual([])
   })
 
   it('仅 timeRangeEnd 时同样追加关联与上界', () => {
@@ -266,7 +268,8 @@ describe('kms-search-helpers / buildFtsWhereClause 边界补充', () => {
 
   it('timeRangeStart 为 0 时同样追加关联表与条件', () => {
     const r = buildFtsWhereClause({ timeRangeStart: 0 })
-    expect(r.whereClause).toBe('1=1 AND f.id = kms_fts.file_id AND f.modified_time >= ?')
+    expect(r.whereClause).toContain('1=1 AND f.id = kms_fts.file_id AND f.modified_time >= ?')
+    expect(r.whereClause).toContain('ai_exclusion_level')
     expect(r.params).toEqual([0])
   })
 

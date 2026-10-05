@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest'
-import { isPrivateOrLocalTarget } from '../../../electron/main/services/agent/tools/web-fetch.tool'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { isPrivateOrLocalTarget, resolveRedirectTarget, fetchWithGuardedRedirects } from '../../../electron/main/services/agent/tools/web-fetch.tool'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+/** 构造仅含实现所需字段的假 Response */
+const mkResponse = (status: number, location?: string) => ({
+  status,
+  headers: { get: (k: string) => (k.toLowerCase() === 'location' ? (location ?? null) : null) },
+  body: { cancel: vi.fn(async () => {}) },
+}) as unknown as Response
 
 describe('agent/tools/web-fetch / isPrivateOrLocalTarget（SSRF 防护）', () => {
   it('拒绝 localhost 与内网域名', () => {
@@ -51,5 +62,55 @@ describe('agent/tools/web-fetch / isPrivateOrLocalTarget（SSRF 防护）', () =
 
   it('空主机名拒绝', () => {
     expect(isPrivateOrLocalTarget('')).toBe(true)
+  })
+})
+
+describe('agent/tools/web-fetch / 重定向防护（防 30x 跳向内网绕过 SSRF）', () => {
+  it('resolveRedirectTarget 拒绝内网/本机目标', () => {
+    expect(() => resolveRedirectTarget('http://127.0.0.1/x', 'https://a.com/', 0)).toThrow()
+    expect(() => resolveRedirectTarget('http://169.254.169.254/latest', 'https://a.com/', 0)).toThrow()
+    expect(() => resolveRedirectTarget('http://[::ffff:127.0.0.1]/', 'https://a.com/', 0)).toThrow()
+    expect(() => resolveRedirectTarget('http://localhost/', 'https://a.com/', 0)).toThrow()
+  })
+
+  it('resolveRedirectTarget 拒绝非法协议与无效 Location', () => {
+    expect(() => resolveRedirectTarget('file:///etc/passwd', 'https://a.com/', 0)).toThrow()
+    expect(() => resolveRedirectTarget('ftp://a.com/x', 'https://a.com/', 0)).toThrow()
+    expect(() => resolveRedirectTarget('http://[::bad', 'https://a.com/', 0)).toThrow()
+  })
+
+  it('resolveRedirectTarget 放行公网目标并支持相对路径解析', () => {
+    expect(resolveRedirectTarget('https://b.com/x', 'https://a.com/', 0).href).toBe('https://b.com/x')
+    expect(resolveRedirectTarget('/next', 'https://a.com/dir/', 0).href).toBe('https://a.com/next')
+  })
+
+  it('resolveRedirectTarget 超过跳数上限拒绝', () => {
+    expect(() => resolveRedirectTarget('https://b.com/', 'https://a.com/', 5)).toThrow(/上限/)
+  })
+
+  it('fetchWithGuardedRedirects 拒绝 302 跳向内网', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => mkResponse(302, 'http://127.0.0.1/')))
+    await expect(fetchWithGuardedRedirects('https://evil.com/')).rejects.toThrow()
+  })
+
+  it('fetchWithGuardedRedirects 正常跟随外网 302 链，且全程 redirect=manual', async () => {
+    const f = vi.fn(async (url: string) => (url === 'https://a.com/' ? mkResponse(302, 'https://b.com/') : mkResponse(200)))
+    vi.stubGlobal('fetch', f)
+    const res = await fetchWithGuardedRedirects('https://a.com/')
+    expect(res.status).toBe(200)
+    expect(f).toHaveBeenCalledTimes(2)
+    expect(f.mock.calls[0][1]).toMatchObject({ redirect: 'manual' })
+  })
+
+  it('fetchWithGuardedRedirects 超过 5 跳拒绝', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => { n++; return mkResponse(302, `https://h${n}.com/`) }))
+    await expect(fetchWithGuardedRedirects('https://a.com/')).rejects.toThrow(/上限/)
+  })
+
+  it('fetchWithGuardedRedirects 无 Location 的 3xx 原样返回', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => mkResponse(301)))
+    const res = await fetchWithGuardedRedirects('https://a.com/')
+    expect(res.status).toBe(301)
   })
 })

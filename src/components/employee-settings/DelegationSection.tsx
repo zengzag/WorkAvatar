@@ -7,13 +7,13 @@ import {
   Typography,
   Checkbox,
   Tag,
-  Avatar,
   App,
   theme,
 } from 'antd'
-import { TeamOutlined, RobotOutlined } from '@ant-design/icons'
+import { TeamOutlined } from '@ant-design/icons'
 import type { Employee } from '../../types'
 import { parseEmployeeDelegation, type EmployeeDelegationConfig } from '../../types'
+import EmployeeAvatar from '../common/EmployeeAvatar'
 
 const { Text, Paragraph } = Typography
 
@@ -56,6 +56,10 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
       id: e.id,
       name: e.name,
       description: e.description,
+      avatar_type: e.avatar_type,
+      avatar_icon: e.avatar_icon,
+      avatar_color: e.avatar_color,
+      source: e.source,
       accepting: parseEmployeeDelegation(e.delegation_json).acceptDelegation,
     })),
     [employees],
@@ -146,10 +150,13 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
                         disabled={!c.accepting}
                         onChange={(e) => handleToggleTarget(c.id, e.target.checked)}
                       />
-                      <Avatar
+                      <EmployeeAvatar
+                        employeeId={c.id}
+                        avatarType={c.avatar_type}
+                        avatarIcon={c.avatar_icon}
+                        avatarColor={c.avatar_color}
+                        source={c.source}
                         size={32}
-                        icon={<RobotOutlined />}
-                        style={{ backgroundColor: token.colorPrimaryBg, color: token.colorPrimary, flexShrink: 0 }}
                       />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

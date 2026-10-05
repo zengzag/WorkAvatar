@@ -7,22 +7,23 @@ import {
   Button,
   Select,
   Space,
-  Avatar,
   Row,
   Col,
   App,
   theme,
+  ColorPicker,
 } from 'antd'
 import {
   SaveOutlined,
-  UserOutlined,
-  RobotOutlined,
-  FileTextOutlined,
-  SettingOutlined,
   FolderOpenOutlined,
   DeleteOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
+import EmployeeAvatar, {
+  EMPLOYEE_AVATAR_ICONS,
+  AVATAR_COLOR_PRESETS,
+  renderEmployeeAvatarIcon,
+} from '../common/EmployeeAvatar'
 
 const { TextArea } = Input
 
@@ -51,13 +52,20 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   const { token } = theme.useToken()
   const [generating, setGenerating] = useState(false)
 
-  // 头像样式配置，颜色使用主题语义 token 以适配明暗主题
-  const avatarOptions = useMemo(() => [
-    { value: 'default', icon: <RobotOutlined />, color: token.colorPrimary, label: t('employeeSettings.avatarDefault') },
-    { value: 'business', icon: <UserOutlined />, color: token.colorSuccess, label: t('employeeSettings.avatarBusiness') },
-    { value: 'document', icon: <FileTextOutlined />, color: token.colorWarning, label: t('employeeSettings.avatarDocument') },
-    { value: 'settings', icon: <SettingOutlined />, color: token.colorInfo, label: t('employeeSettings.avatarSettings') },
-  ], [token, t])
+  // 头像图标选项（预览统一走 EmployeeAvatar，保证与实际渲染一致）
+  const iconOptions = useMemo(() => EMPLOYEE_AVATAR_ICONS.map((key) => ({
+    value: key,
+    label: (
+      <Space size={6}>
+        {renderEmployeeAvatarIcon(key, 14)}
+        {t(`employeeSettings.avatarIcon_${key}`)}
+      </Space>
+    ),
+  })), [t])
+
+  // 实时预览：跟随表单里的图标 / 颜色
+  const avatarIcon = Form.useWatch('avatar_icon', form) as string | undefined
+  const avatarColor = Form.useWatch('avatar_color', form) as string | undefined
 
   /** 用 LLM 根据名称、规则、工具与技能生成简短描述，填入表单（未保存的表单值优先） */
   const handleGenerateDescription = useCallback(async () => {
@@ -115,8 +123,8 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   return (
     <Card>
       <Form form={form} layout="vertical" onFinish={onSave}>
-        <Row gutter={24}>
-          <Col span={16}>
+        <Row gutter={20}>
+          <Col span={10}>
             <Form.Item
               name="name"
               label={t('employeeSettings.employeeName')}
@@ -125,20 +133,30 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
               <Input placeholder={t('employeeSettings.namePlaceholder')} disabled={readonly} />
             </Form.Item>
           </Col>
-          <Col span={8}>
-            <Form.Item name="avatar_type" label={t('employeeSettings.avatarStyle')}>
-              <Select disabled={readonly}>
-                {avatarOptions.map((opt) => (
-                  <Select.Option key={opt.value} value={opt.value}>
-                    <Space>
-                      <Avatar size="small" style={{ backgroundColor: opt.color }}>
-                        {opt.icon}
-                      </Avatar>
-                      {opt.label}
-                    </Space>
-                  </Select.Option>
-                ))}
-              </Select>
+          <Col span={14}>
+            <Form.Item label={t('employeeSettings.avatarStyle')}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <EmployeeAvatar avatarIcon={avatarIcon} avatarColor={avatarColor} size={32} shape="square" />
+                <div style={{ width: 1, height: 24, background: token.colorBorderSecondary }} />
+                <Form.Item name="avatar_icon" noStyle>
+                  <Select disabled={readonly} style={{ width: 116 }} options={iconOptions} />
+                </Form.Item>
+                <span style={{ fontSize: 12, color: token.colorTextTertiary, whiteSpace: 'nowrap' }}>
+                  {t('employeeSettings.avatarColor')}
+                </span>
+                <Form.Item
+                  name="avatar_color"
+                  noStyle
+                  getValueFromEvent={(color: any) => (typeof color === 'string' ? color : color?.toHexString?.() ?? color)}
+                >
+                  <ColorPicker
+                    disabled={readonly}
+                    format="hex"
+                    style={{ width: 40, height: 32, borderRadius: 6 }}
+                    presets={[{ label: t('employeeSettings.avatarColorPresets'), colors: AVATAR_COLOR_PRESETS }]}
+                  />
+                </Form.Item>
+              </div>
             </Form.Item>
           </Col>
         </Row>

@@ -315,20 +315,18 @@ class SkillRegistryService {
       const extractDir = path.join(this.skillsDir, '_temp_' + Date.now())
       fs.mkdirSync(extractDir, { recursive: true })
 
-      zip.extractAllTo(extractDir, true)
-
-      const topLevel = fs.readdirSync(extractDir)
-      let skillDir = extractDir
-
-      if (topLevel.length === 1 && fs.statSync(path.join(extractDir, topLevel[0])).isDirectory()) {
-        skillDir = path.join(extractDir, topLevel[0])
+      try {
+        zip.extractAllTo(extractDir, true)
+        const topLevel = fs.readdirSync(extractDir)
+        let skillDir = extractDir
+        if (topLevel.length === 1 && fs.statSync(path.join(extractDir, topLevel[0])).isDirectory()) {
+          skillDir = path.join(extractDir, topLevel[0])
+        }
+        return await this.installFromDirectory(skillDir)
+      } finally {
+        // 无论成功失败都清理临时解压目录
+        fs.rmSync(extractDir, { recursive: true, force: true })
       }
-
-      const result = await this.installFromDirectory(skillDir)
-
-      fs.rmSync(extractDir, { recursive: true, force: true })
-
-      return result
     } catch (error: any) {
       return { success: false, error: error.message }
     }

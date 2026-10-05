@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Modal, Button, Spin, Typography, Space, Tooltip, theme, Alert } from 'antd'
+import { Modal, Button, Spin, Typography, Space, Tooltip, theme, Alert, Select, App } from 'antd'
 import {
   FileOutlined, FolderOpenOutlined, ArrowUpOutlined, ArrowDownOutlined,
 } from '@ant-design/icons'
@@ -50,12 +50,14 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const { message } = App.useApp()
   const { Text } = Typography
 
   const [content, setContent] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [truncated, setTruncated] = useState(false)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
+  const [aiExclusionLevel, setAiExclusionLevel] = useState<number>(0)
   const contentRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<HTMLDivElement[]>([])
 
@@ -111,6 +113,34 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
       lineRefs.current = []
     }
   }, [open, currentResult?.file_id, loadContent])
+
+  // 当前文件的 AI 排除级别
+  const refreshAiExclusion = useCallback(async () => {
+    try {
+      const exclusions = await window.electronAPI.kms.listAiExclusions()
+      const files: Array<{ id: string; level?: number }> = Array.isArray(exclusions?.files) ? exclusions.files : []
+      const found = files.find(f => f.id === currentFileId)
+      setAiExclusionLevel(found?.level ?? 0)
+    } catch (err) {
+      console.error('Failed to load AI exclusions:', err)
+    }
+  }, [currentFileId])
+
+  useEffect(() => {
+    if (open && currentFileId) refreshAiExclusion()
+  }, [open, currentFileId, refreshAiExclusion])
+
+  const handleAiExclusionChange = useCallback(async (level: number) => {
+    if (!currentFileId) return
+    try {
+      await window.electronAPI.kms.setFileAiExclusion({ fileId: currentFileId, level: level as 0 | 1 | 2 })
+      setAiExclusionLevel(level)
+      message.success(t(level >= 2 ? 'kms.sensitive.fileExcluded' : 'kms.sensitive.saved'))
+    } catch (err: any) {
+      console.error('Failed to set file AI exclusion:', err)
+      message.error(t('kms.sensitive.saveFailed') + (err?.message ? `: ${err.message}` : ''))
+    }
+  }, [currentFileId, message, t])
 
   useEffect(() => {
     if (!open || !currentResult || loading || !content) return
@@ -236,6 +266,18 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
           )}
         </div>
         <Space size={4}>
+          <Tooltip title={t('kms.sensitive.selectTooltip')}>
+            <Select
+              size="small"
+              style={{ width: 140 }}
+              value={currentFileId ? (aiExclusionLevel ?? 0) : 0}
+              onChange={handleAiExclusionChange}
+              options={[
+                { value: 0, label: t('kms.sensitive.level0') },
+                { value: 2, label: t('kms.sensitive.level2') },
+              ]}
+            />
+          </Tooltip>
           <Tooltip title={t('kms.openFile')}>
             <Button
               size="small"

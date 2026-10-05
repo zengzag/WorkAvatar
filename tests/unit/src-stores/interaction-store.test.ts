@@ -18,7 +18,6 @@ describe('stores/interaction.store', () => {
     respondCalls.length = 0
     useInteractionStore.setState({ queue: [], currentRequest: null })
   })
-
   it('首个请求直接成为 currentRequest', () => {
     useInteractionStore.getState().enqueue(req('1'))
     expect(useInteractionStore.getState().currentRequest?.id).toBe('1')
@@ -61,5 +60,28 @@ describe('stores/interaction.store', () => {
     s.cancelCurrent()
     expect(respondCalls).toEqual([{ id: '1', cancelled: true }])
     expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
+  })
+
+  it('响应上报失败（异步 reject）时仍弹出下一个请求，不阻塞弹窗流程', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const originalRespond = (globalThis as any).window.electronAPI.interaction.respond
+    // 第一次响应模拟异步失败，恢复后续响应
+    let call = 0
+    ;(globalThis as any).window.electronAPI.interaction.respond = vi.fn((payload: any) => {
+      call += 1
+      if (call === 1) return Promise.reject(new Error('ipc down'))
+      return originalRespond(payload)
+    })
+
+    const s = useInteractionStore.getState()
+    s.enqueue(req('1'))
+    s.enqueue(req('2'))
+    s.respond({ confirmed: true, cancelled: false })
+    // 弹窗状态不关心 IPC 是否成功，立即切换到下一个
+    expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(warnSpy).toHaveBeenCalled()
+    ;(globalThis as any).window.electronAPI.interaction.respond = originalRespond
+    warnSpy.mockRestore()
   })
 })

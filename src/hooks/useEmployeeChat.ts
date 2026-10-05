@@ -250,6 +250,46 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     resolveConvCache(convId).delete(convId)
   }
 
+  // branch/comparison 等列表级变更：非 updater 内的持久化收口
+  // （updater 必须纯：IPC 写在 updater 里会被并发重试/StrictMode 双调用重复执行）
+  const commitMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
+    const targetCache = resolveConvCache(convId)
+    const prev = targetCache.get(convId) || []
+    const next = updater(prev)
+    if (next !== prev) {
+      targetCache.set(convId, next)
+    }
+    if (convId === activeConversationIdRef.current) {
+      setMessages(next)
+    }
+    window.electronAPI.conversation.update({
+      id: convId,
+      messages_json: JSON.stringify(next),
+      message_count: next.length,
+    }).catch(() => {})
+  }
+
+  // IPC 发起失败：后端没有 sessionId/不会再推送 onDone/onError，占位消息必须就地收尾
+  const finalizeFailedStreamStart = (convId: string, messageId: string, err: unknown) => {
+    const errorText = t('workbench.errorMsg', { error: err instanceof Error ? err.message : String(err) })
+    updateConvMessages(convId, (prev) => prev.map((m) => {
+      if (m.id !== messageId) return m
+      return {
+        ...m,
+        isStreaming: false,
+        isError: true,
+        segments: [...(m.segments || []), {
+          id: `${m.id}_start_err_${Date.now()}`,
+          type: 'answer' as const,
+          content: errorText,
+          isStreaming: false,
+          timestamp: Date.now(),
+          completedAt: Date.now(),
+        }],
+      }
+    }))
+  }
+
   /**
    * 后端运行中会话重建：renderer 重载/异常导致前端丢失运行跟踪后，
    * 查询后端仍未结束的流式会话，为其重建 streamState 与会话内占位 assistant 消息，
@@ -928,6 +968,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentModels.delete(convId)
       _persistentDefaultModels.delete(convId)
       _persistentCollectionIds.delete(convId)
+      _persistentContextStats.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -956,6 +997,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         _persistentModels.delete(convId)
         _persistentDefaultModels.delete(convId)
       _persistentCollectionIds.delete(convId)
+      _persistentContextStats.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -999,6 +1041,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         _persistentModels.delete(conv.id)
         _persistentDefaultModels.delete(conv.id)
         _persistentCollectionIds.delete(conv.id)
+        _persistentContextStats.delete(conv.id)
       }
 
       await window.electronAPI.conversation.deleteAll(id)
@@ -1284,8 +1327,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           if (result?.sessionId) {
             streamStatesRef.current.set(result.sessionId, streamState)
           }
-        } catch {
+        } catch (err) {
           streamState.isStreaming = false
+          finalizeFailedStreamStart(targetConvId, assistantMessageId, err)
           const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === targetConvId && s.isStreaming)
           if (!anyStreaming) {
             setIsStreaming(false)
@@ -1355,8 +1399,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         if (result?.sessionId) {
           streamStatesRef.current.set(result.sessionId, streamState)
         }
-      } catch {
+      } catch (err) {
         streamState.isStreaming = false
+        finalizeFailedStreamStart(targetConvId, assistantMessageId, err)
         setIsStreaming(false)
         isStreamingRef.current = false
       }
@@ -1743,21 +1788,13 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const handleSwitchBranch = (msgId: string, branchIndex: number) => {
     const convId = activeConversationIdRef.current
     if (!convId) return
-    updateConvMessages(convId, (prev) => {
-      const newMessages = prev.map(m => {
-        if (m.id !== msgId) return m
-        const branches = m.branches || []
-        const maxIndex = branches.length
-        if (branchIndex < 0 || branchIndex > maxIndex) return m
-        return { ...m, activeBranchIndex: branchIndex }
-      })
-      window.electronAPI.conversation.update({
-        id: convId,
-        messages_json: JSON.stringify(newMessages),
-        message_count: newMessages.length,
-      }).catch(() => {})
-      return newMessages
-    })
+    commitMessages(convId, (prev) => prev.map(m => {
+      if (m.id !== msgId) return m
+      const branches = m.branches || []
+      const maxIndex = branches.length
+      if (branchIndex < 0 || branchIndex > maxIndex) return m
+      return { ...m, activeBranchIndex: branchIndex }
+    }))
   }
 
   // 从消息处创建分支任务：复制到该条（含本条）的所有上下文，复用原任务工作区目录（保持 KV cache 前缀一致）
@@ -1907,13 +1944,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     if (comparisonMessageIds.length > 1) {
       if (!comparisonMessageIds.includes(msgId) || comparisonMessageIds.length <= 1) return
       const newIds = comparisonMessageIds.filter(id => id !== msgId)
-      updateConvMessages(convId, (prev) => {
-        const newMessages = prev.filter(m => m.id !== msgId)
-        window.electronAPI.conversation.update({
-          id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
-        }).catch(() => {})
-        return newMessages
-      })
+      commitMessages(convId, (prev) => prev.filter(m => m.id !== msgId))
       if (newIds.length <= 1) {
         setIsComparisonMode(false)
         setComparisonMessageIds([])
@@ -1968,13 +1999,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     // 只剩一个回复（无 branch）→ 关闭对比，保留为本体
     if (newBranches.length === 0) {
       const finalMsg: MessageWithThought = { ...baseMsg, branches: undefined, activeBranchIndex: undefined }
-      updateConvMessages(convId, (prev) => {
-        const newMessages = prev.map(m => m.id === targetMsgId ? finalMsg : m)
-        window.electronAPI.conversation.update({
-          id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
-        }).catch(() => {})
-        return newMessages
-      })
+      commitMessages(convId, (prev) => prev.map(m => m.id === targetMsgId ? finalMsg : m))
       setIsComparisonMode(false)
       setComparisonMessageIds([])
       return
@@ -2005,13 +2030,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     })
 
     const newTargetMsg: MessageWithThought = { ...baseMsg, _comparisonBranchMsgs: newBranchMsgs }
-    updateConvMessages(convId, (prev) => {
-      const newMessages = prev.map(m => m.id === targetMsgId ? newTargetMsg : m)
-      window.electronAPI.conversation.update({
-        id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
-      }).catch(() => {})
-      return newMessages
-    })
+    commitMessages(convId, (prev) => prev.map(m => m.id === targetMsgId ? newTargetMsg : m))
   }
 
   useEffect(() => {

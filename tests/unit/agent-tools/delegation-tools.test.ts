@@ -11,6 +11,7 @@ const runtimeState = vi.hoisted(() => ({
   sendInputs: [] as any[],
   sendResult: { success: true } as any,
   inbox: [] as any[],
+  createTaskCalls: [] as Array<{ runId: string; title: string }>,
 }))
 
 vi.mock('../../../electron/main/services/agent-runtime/runtime', () => ({
@@ -33,6 +34,10 @@ vi.mock('../../../electron/main/services/agent-runtime/runtime', () => ({
         return runtimeState.sendResult
       },
       readMessages: () => runtimeState.inbox,
+      createTask: (runId: string, title: string) => {
+        runtimeState.createTaskCalls.push({ runId, title })
+        return { success: true, taskId: 't1' }
+      },
     }),
   },
 }))
@@ -71,6 +76,7 @@ function reset() {
   runtimeState.sendInputs = []
   runtimeState.sendResult = { success: true }
   runtimeState.inbox = []
+  runtimeState.createTaskCalls = []
   dbState.name = '主管小张'
   dbState.throwErr = false
 }
@@ -218,7 +224,66 @@ describe('agent/tools/delegate_to_employee', () => {
     expect(delegateTool.onDemand).toBe(false)
     expect(delegateTool.noRetry).toBe(true)
     expect(delegateTool.timeoutMs).toBe(5 * 60 * 1000)
-    expect(delegateTool.parameters.required).toEqual(['target_employee_id', 'instruction'])
+    expect(delegateTool.parameters.required).toEqual(['instruction'])
+  })
+
+  it('委托目标三选一：缺失/多选被拒绝，ephemeral_role 与 subagent_profile_id 正确下传', async () => {
+    // 无任何目标
+    const none = await run(PARENT, () => delegateTool.handler!({ instruction: '做' }) as Promise<any>)
+    expect(none.success).toBe(false)
+    expect(none.error).toContain('三选一')
+    // 多目标
+    const multi = await run(PARENT, () => delegateTool.handler!({
+      target_employee_id: 'e1', ephemeral_role: { name: 'x', system_prompt: 'y' }, instruction: '做',
+    }) as Promise<any>)
+    expect(multi.error).toContain('只能三选一')
+    // 临时角色
+    runtimeState.launchQueue = [{ success: true, runId: 'r9', targetEmployeeName: '临时A' }]
+    await run(PARENT, () => delegateTool.handler!({
+      ephemeral_role: { name: '分析师', system_prompt: '你是分析师', tools: ['file_read'] }, instruction: '做',
+    }) as Promise<any>)
+    expect(runtimeState.launchInputs[0]).toMatchObject({
+      targetEmployeeId: '',
+      ephemeral: { name: '分析师', systemPrompt: '你是分析师', tools: ['file_read'] },
+    })
+    // 子智能体模板（mock SubAgentProfileService）
+    const { default: profileService } = await import('../../../electron/main/services/sub-agent-profile.service')
+    const getSpy = vi.spyOn(profileService.getInstance(), 'get').mockReturnValue({
+      id: 'sap-1', name: '模板A', description: '', system_prompt: '模板提示词',
+      tools_json: '[]', skills_json: '[]', provider_id: null, model_id: null,
+      source: 'user', created_at: 1, updated_at: 1,
+    })
+    await run(PARENT, () => delegateTool.handler!({
+      subagent_profile_id: 'sap-1', instruction: '做',
+    }) as Promise<any>)
+    expect(runtimeState.launchInputs.at(-1)!.ephemeral).toMatchObject({ name: '模板A', systemPrompt: '模板提示词' })
+    getSpy.mockRestore()
+  })
+
+  it('ephemeral_role 缺少 name/system_prompt 返回可修正错误', async () => {
+    const res = await run(PARENT, () => delegateTool.handler!({ ephemeral_role: { name: 'x' }, instruction: '做' }) as Promise<any>)
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('system_prompt')
+  })
+
+  it('run_in_background=true 时立即返回不阻塞（不调用 awaitRuns）', async () => {
+    runtimeState.launchQueue = [{ success: true, runId: 'rb1', targetEmployeeName: '小王' }]
+    const res = await run(PARENT, () => delegateTool.handler!({
+      target_employee_id: 'e1', instruction: '做', run_in_background: true,
+    }) as Promise<any>)
+    expect(res).toMatchObject({ success: true, background: true, delegationId: 'rb1' })
+    expect(res.output).toContain('read_run_notifications')
+    expect(runtimeState.awaitCalls).toHaveLength(0)
+  })
+
+  it('task_items 登记到运行台账（createTask 按项调用）', async () => {
+    runtimeState.launchQueue = [{ success: true, runId: 'r1', targetEmployeeName: '小王' }]
+    runtimeState.outcomes = [{ runId: 'r1', success: true, output: 'ok' }]
+    await run(PARENT, () => delegateTool.handler!({
+      target_employee_id: 'e1', instruction: '做', task_items: ['梳理要点', '生成文档', '', 123],
+    }) as Promise<any>)
+    expect(runtimeState.createTaskCalls.map(c => c.title)).toEqual(['梳理要点', '生成文档'])
+    expect(runtimeState.createTaskCalls.every(c => c.runId === 'r1')).toBe(true)
   })
 })
 
@@ -314,7 +379,7 @@ describe('agent/tools/launch_agents', () => {
     })
   })
 
-  it('逐项校验：缺少 target_employee_id / instruction 记为失败并保留索引', async () => {
+  it('逐项校验：目标缺失/多选与缺 instruction 记为失败并保留索引', async () => {
     runtimeState.launchQueue = [{ success: true, runId: 'r1', targetEmployeeName: '甲' }]
     const res = await run(PARENT, () => launchAgentsTool.handler!({
       tasks: [
@@ -322,20 +387,41 @@ describe('agent/tools/launch_agents', () => {
         { target_employee_id: 123, instruction: 'bad-id' },
         { target_employee_id: 'e2', instruction: '   ' },
         { target_employee_id: 'e3' },
-        {},
+        { target_employee_id: 'e4', ephemeral_role: { name: 'x', system_prompt: 'y' }, instruction: 'multi' },
       ],
     }) as Promise<any>)
     expect(res.success).toBe(true)
     expect(res.runIds).toEqual(['r1'])
     expect(res.failed).toEqual([
-      { index: 1, error: '缺少 target_employee_id' },
+      { index: 1, error: expect.stringContaining('三选一') },
       { index: 2, error: '缺少 instruction' },
       { index: 3, error: '缺少 instruction' },
-      { index: 4, error: '缺少 target_employee_id' },
+      { index: 4, error: expect.stringContaining('只能三选一') },
     ])
     expect(res.output).toContain('已并行派发 1 个子任务')
     expect(res.output).toContain('请随后调用 await_agents(run_ids) 等待结果')
-    expect(res.output).toContain('2. 缺少 target_employee_id')
+    expect(res.output).toContain('2. 缺少委托目标')
+  })
+
+  it('ephemeral_role 子任务并行派发：规格透传与 run_in_background', async () => {
+    runtimeState.launchQueue = [
+      { success: true, runId: 'ra', targetEmployeeName: '临时A' },
+      { success: true, runId: 'rb', targetEmployeeName: '临时B' },
+    ]
+    const res = await run(PARENT, () => launchAgentsTool.handler!({
+      tasks: [
+        { ephemeral_role: { name: '调研员', system_prompt: '你是调研员' }, instruction: '调研A' },
+        { target_employee_id: 'e1', instruction: '任务B' },
+      ],
+      run_in_background: true,
+    }) as Promise<any>)
+    expect(res.success).toBe(true)
+    expect(res.runIds).toEqual(['ra', 'rb'])
+    expect(res.output).toContain('已在后台并行派发')
+    expect(res.output).not.toContain('await_agents')
+    expect(runtimeState.launchInputs[0].ephemeral).toMatchObject({ name: '调研员', systemPrompt: '你是调研员' })
+    expect(runtimeState.launchInputs[1].targetEmployeeId).toBe('e1')
+    expect(runtimeState.launchInputs.every(i => i.runInBackground === true)).toBe(true)
   })
 
   it('全部失败时列出失败明细（不输出「全部子任务派发失败」兜底分支）', async () => {

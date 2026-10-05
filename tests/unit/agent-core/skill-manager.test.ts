@@ -100,12 +100,14 @@ describe('agent/skill-manager / getSkillsXml', () => {
     expect(mgr.getSkillsXml()).toBe('<skills>\n<skill name="a">DA</skill>\n<skill name="b">DB</skill>\n</skills>')
   })
 
-  it('description 含换行 / 引号 / Unicode 时原样注入', () => {
+  it('description 含换行 / 引号 / Unicode 时 XML 字符转义注入（不破坏 <skills> 结构）', () => {
     h.installed = [skill({ name: '写作"助手"', description: '第一行\n第二行 — 中文' })]
     const mgr = new SkillManager()
     mgr.discoverSkills()
-    expect(mgr.getSkillsXml()).toContain('name="写作"助手""')
+    // 引号转义为 &quot;，换行/普通 Unicode 保留
+    expect(mgr.getSkillsXml()).toContain('name="写作&quot;助手&quot;"')
     expect(mgr.getSkillsXml()).toContain('第一行\n第二行 — 中文')
+    expect(mgr.getSkillsXml()).not.toContain('name="写作"助手""')
   })
 })
 

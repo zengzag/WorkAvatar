@@ -125,17 +125,30 @@ const DelegationSegmentInner: React.FC<{
       <Text style={{
         fontSize: 12,
         color: token.colorTextSecondary,
-        flex: '1 1 auto',
-        minWidth: 0,
+        flexShrink: 0,
         whiteSpace: 'nowrap',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
       }}>
         {t('workbench.delegationTo')}{' '}
         <span style={{ color: token.colorText, fontWeight: 500 }}>
           {seg.targetEmployeeName || t('workbench.delegationUnknown')}
         </span>
       </Text>
+      {seg.targetEmployeeId?.startsWith('inline:') && (
+        <Tooltip title={t('workbench.delegationEphemeral')}>
+          <span style={{
+            flexShrink: 0,
+            fontSize: 10,
+            lineHeight: '16px',
+            padding: '0 5px',
+            borderRadius: 4,
+            color: token.colorPrimary,
+            border: `1px solid ${token.colorPrimaryBorder}`,
+            background: token.colorPrimaryBg,
+          }}>
+            {t('workbench.delegationEphemeral')}
+          </span>
+        </Tooltip>
+      )}
       {instruction && (
         <Tooltip title={instruction}>
           <Text style={{

@@ -1,6 +1,63 @@
 /** 员工来源：user=用户创建（DB 落库） / builtin=宿主内置（运行时注册） / plugin=插件声明（运行时注册） / inline=模板任务内联角色（仅运行期） */
 export type EmployeeSource = 'user' | 'builtin' | 'plugin' | 'inline'
 
+/**
+ * 临时子智能体规格（阶段一）：由主管 LLM 经 delegate_to_employee / launch_agents
+ * 的 ephemeral_role 参数现场声明，run 期注册为 inline 员工、run 结束下线。
+ * 与 workflow 模板节点的 PluginWorkflowEphemeralRole（camelCase）同构，可在宿主侧互转。
+ */
+export interface EphemeralSubAgentSpec {
+  /** 稳定 key（slug）：用于生成 inline id；缺省由 name 派生 */
+  key?: string
+  name: string
+  description?: string
+  /** 角色系统提示词（自包含：身份/职责/输出要求/约束），子会话看不到主管对话 */
+  systemPrompt: string
+  /** 宿主内置工具 id 白名单；缺省使用子会话默认工具集 */
+  tools?: string[]
+  /** 技能 id 列表 */
+  skills?: string[]
+  /** 可选模型覆盖（缺省继承主管解析结果） */
+  providerId?: string
+  modelId?: string
+}
+
+/** 工具层入参（snake_case）→ 内部 EphemeralSubAgentSpec；校验必填并生成可修正错误文案 */
+export function parseEphemeralRoleInput(raw: unknown): { spec?: EphemeralSubAgentSpec; error?: string } {
+  if (!raw || typeof raw !== 'object') return { error: 'ephemeral_role 缺失或格式无效' }
+  const o = raw as Record<string, unknown>
+  const name = typeof o.name === 'string' ? o.name.trim() : ''
+  const systemPrompt = typeof o.system_prompt === 'string' ? o.system_prompt.trim() : ''
+  if (!name) return { error: 'ephemeral_role.name 不能为空' }
+  if (!systemPrompt) return { error: 'ephemeral_role.system_prompt 不能为空（子会话看不到主管对话，角色设定必须自包含）' }
+  const spec: EphemeralSubAgentSpec = {
+    name,
+    systemPrompt,
+    description: typeof o.description === 'string' ? o.description.trim() : undefined,
+    tools: Array.isArray(o.tools) ? o.tools.filter((x): x is string => typeof x === 'string') : undefined,
+    skills: Array.isArray(o.skills) ? o.skills.filter((x): x is string => typeof x === 'string') : undefined,
+    key: typeof o.key === 'string' ? o.key : undefined,
+    providerId: typeof o.provider_id === 'string' ? o.provider_id : undefined,
+    modelId: typeof o.model_id === 'string' ? o.model_id : undefined,
+  }
+  return { spec }
+}
+
+/** 可复用子智能体模板（阶段二，sub_agent_profiles 表） */
+export interface SubAgentProfile {
+  id: string
+  name: string
+  description: string
+  system_prompt: string
+  tools_json: string
+  skills_json: string
+  provider_id?: string | null
+  model_id?: string | null
+  source: 'user' | 'builtin'
+  created_at: number
+  updated_at: number
+}
+
 export interface Employee {
   id: string
   workspace_path?: string
@@ -9,6 +66,10 @@ export interface Employee {
   rules: string
   profile_json: string
   avatar_type: string
+  /** 自定义头像图标 key（robot/user/team/... 空=按 avatar_type 预设或默认） */
+  avatar_icon?: string
+  /** 自定义头像颜色 hex（空=按 id 自动配色） */
+  avatar_color?: string
   default_skill_id?: string
   /** 员工来源，缺省视为 user（旧数据兼容） */
   source?: EmployeeSource

@@ -53,18 +53,38 @@ export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolM
       // 删除会导致自定义超时（如交互工具 305s）在第二次尝试时丢失、回退到默认 30s。
       // 该字段仅存在于派发给中间件的参数副本上，不会传给工具 handler。
       const timeoutMs = _args._timeoutMs ?? defaultTimeoutMs
+      // 中止信号（dispatcher 注入的 _signal）：用户停止生成时立即失败，不等 handler/超时
+      const signal: AbortSignal | undefined = _args._signal
+
+      /** 中止收敛结果：resolve 失败结果而非 reject，避免被当作异常经过 retry/formatUncaughtError 包装 */
+      const abortedResult = (): ToolCallResult => ({
+        success: false,
+        error: `工具 "${toolName}" 已被中止（用户停止生成）`,
+        toolName,
+      })
+
+      // 进入时已中止：直接失败，不触发 next
+      if (signal?.aborted) {
+        return abortedResult()
+      }
 
       let timer: NodeJS.Timeout | undefined
+      let onAbort: (() => void) | undefined
       try {
-        const result = await Promise.race([
-          next(),
-          new Promise<ToolCallResult>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`)), timeoutMs)
-          }),
-        ])
-        return result
+        const promises: Array<Promise<ToolCallResult>> = [next()]
+        if (signal) {
+          promises.push(new Promise<ToolCallResult>((resolve) => {
+            onAbort = () => resolve(abortedResult())
+            signal.addEventListener('abort', onAbort, { once: true })
+          }))
+        }
+        promises.push(new Promise<ToolCallResult>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`)), timeoutMs)
+        }))
+        return await Promise.race(promises)
       } finally {
         if (timer) clearTimeout(timer)
+        if (signal && onAbort) signal.removeEventListener('abort', onAbort)
       }
     },
   }

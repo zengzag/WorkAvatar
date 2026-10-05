@@ -45,6 +45,7 @@ vi.mock('../../../electron/main/services/path.service', () => ({
 import { DatabaseSync } from 'node:sqlite'
 import KMSDatabaseService from '../../../electron/main/services/kms/kms-database.service'
 import KMSSearchEngineService from '../../../electron/main/services/kms/kms-search-engine.service'
+import KMSContentVersionService from '../../../electron/main/services/kms/kms-content-version.service'
 
 let mainDb: any
 let engine: KMSSearchEngineService
@@ -53,6 +54,7 @@ beforeEach(async () => {
   state.root = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-kmsengine-'))
   ;(KMSDatabaseService as any).instance = undefined
   ;(KMSSearchEngineService as any).instance = undefined
+  ;(KMSContentVersionService as any).instance = undefined
 
   KMSDatabaseService.getInstance()
   await new Promise<void>(r => setImmediate(r)) // 构造函数安排的孤儿清理
@@ -66,6 +68,7 @@ afterEach(() => {
   try { KMSDatabaseService.getInstance().close() } catch { /* closed */ }
   ;(KMSDatabaseService as any).instance = undefined
   ;(KMSSearchEngineService as any).instance = undefined
+  ;(KMSContentVersionService as any).instance = undefined
   fs.rmSync(state.root, { recursive: true, force: true })
 })
 
@@ -121,15 +124,52 @@ describe('检索', () => {
     expect(results[0].match_type).toBe('file_name')
   })
 
+  it('fileNameSearch：token 同步后可由 backfill 诊断到缺失项', () => {
+    const before = (mainDb.prepare('SELECT COUNT(*) AS c FROM kms_file_name_tokens WHERE file_id = ?').get('f1') as any).c
+    engine.syncFileNameTokens('f1', '季度报告.docx', '/dir/季度报告.docx')
+    const after = (mainDb.prepare('SELECT COUNT(*) AS c FROM kms_file_name_tokens WHERE file_id = ?').get('f1') as any).c
+    expect(after).toBeGreaterThan(before)
+    const syncedTokenRows = mainDb.prepare('SELECT token FROM kms_file_name_tokens WHERE file_id = ?').all('f1') as any[]
+    expect(syncedTokenRows.map(r => r.token)).toContain('季度')
+  })
+
   it('fileNameSearch：无命中返回空', () => {
-    seedFile('f1', 'a.docx')
+    seedFile('f2', '其它.docx')
     expect(engine.fileNameSearch('zzz', { topK: 10 })).toEqual([])
+  })
+
+  it('fileNameSearch：敏感目录文件不返回', () => {
+    mainDb.prepare('UPDATE kms_index_dirs SET ai_exclusion_level = 2 WHERE id = ?').run('d1')
+    expect(engine.fileNameSearch('季度', { topK: 10 })).toEqual([])
   })
 
   it('search：无 queryEmbedding 时走 ftsSearch', () => {
     seedFile('f1', '报告.docx')
     engine.indexFileTitle('f1', '报告.docx', '/dir/报告.docx')
     expect(engine.search('报告')).toHaveLength(1)
+  })
+})
+
+describe('文档级向量源与内容版本', () => {
+  it('indexFileDocument：创建 document 搜索行并关联 content version', () => {
+    seedFile('f1', '规范.docx')
+    const versionId = KMSContentVersionService.getInstance().ensureForFile('f1')
+    engine.indexFileDocument('f1', '规范.docx', '/dir/规范.docx', '这是一份付款规范正文')
+
+    const row = mainDb.prepare("SELECT source_id, content_version_id FROM kms_search_index WHERE file_id='f1' AND source_type='document'").get()
+    expect(row.source_id).toBe('doc:f1')
+    expect(row.content_version_id).toBe(versionId)
+  })
+
+  it('backfillBatch：按相同 hash 建立内容版本', () => {
+    seedFile('a', 'a.docx')
+    seedFile('b', 'b.docx')
+    mainDb.prepare("UPDATE kms_files SET file_hash='same' WHERE id IN ('a','b')").run()
+    const result = KMSContentVersionService.getInstance().backfillBatch(10)
+    expect(result.processed).toBe(2)
+    expect(result.versions).toBe(1)
+    const versions = mainDb.prepare('SELECT DISTINCT content_version_id FROM kms_files WHERE id IN (?, ?)').all('a', 'b') as any[]
+    expect(versions).toHaveLength(1)
   })
 })
 
@@ -168,6 +208,57 @@ describe('向量', () => {
 
   it('vectorSearch：库为空返回空', () => {
     expect(engine.vectorSearch(new Float32Array([1, 0]), { topK: 5 })).toEqual([])
+  })
+
+  it('vectorSearch：非活动模型不参与检索，旧模型原始向量仍保留', () => {
+    seedFile('f1', 'f.docx')
+    engine.storeEmbedding('file_title', 'f1', 'f1', new Float32Array([1, 0]), 'model-a')
+
+    expect(engine.vectorSearch(new Float32Array([1, 0]), {
+      topK: 5,
+      embeddingModel: 'model-b',
+    })).toEqual([])
+
+    const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
+    expect(vectorDb.prepare("SELECT COUNT(*) AS c FROM kms_embeddings WHERE model='model-a'").get().c).toBe(1)
+  })
+
+  it('vectorSearch：切换活动模型后只返回新模型候选', () => {
+    seedFile('f1', 'old.docx')
+    seedFile('f2', 'new.docx')
+    engine.storeEmbedding('file_title', 'f1', 'f1', new Float32Array([1, 0]), 'model-a')
+    engine.activateVectorModel('model-b', 2)
+    engine.storeEmbedding('file_title', 'f2', 'f2', new Float32Array([1, 0]), 'model-b')
+
+    const results = engine.vectorSearch(new Float32Array([1, 0]), {
+      topK: 5,
+      embeddingModel: 'model-b',
+    })
+    expect(results).toHaveLength(1)
+    expect(results[0].fileId).toBe('f2')
+    expect(results[0].model).toBeUndefined()
+
+    const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
+    expect(vectorDb.prepare('SELECT COUNT(*) AS c FROM kms_embeddings').get().c).toBe(2)
+  })
+
+  it('vectorSearch：JS fallback 过滤低于阈值的弱相似结果', () => {
+    seedFile('f1', 'weak.docx')
+    engine.storeEmbedding('file_title', 'f1', 'f1', new Float32Array([0.1, 0.995]), 'm')
+
+    const results = engine.vectorSearch(new Float32Array([1, 0]), { topK: 5 })
+    expect(results).toEqual([])
+  })
+
+  it('getIndexDiagnostics：输出规模诊断和活动向量模型', () => {
+    seedFile('f1', 'f.docx')
+    engine.storeEmbedding('file_title', 'f1', 'f1', new Float32Array([1, 0]), 'diag-model')
+
+    const diagnostics = KMSDatabaseService.getInstance().getIndexDiagnostics()
+    expect(diagnostics.files.total).toBe(1)
+    expect(diagnostics.vectors.total).toBe(1)
+    expect(diagnostics.vectors.active.active_model).toBe('diag-model')
+    expect(diagnostics.vectors.active.active_dimension).toBe('2')
   })
 })
 

@@ -10,6 +10,7 @@ import { registerMcpHandlers } from './mcp.handlers'
 import { registerPluginHandlers } from './plugin.handlers'
 import { registerAttachmentHandlers } from './attachment.handlers'
 import { registerSnapshotHandlers } from './snapshot.handlers'
+import { registerSubagentHandlers } from './subagent.handlers'
 import AttachmentService from '../services/attachment.service'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
@@ -45,6 +46,7 @@ export function registerIpcHandlers() {
   registerPluginHandlers()
   registerAttachmentHandlers()
   registerSnapshotHandlers()
+  registerSubagentHandlers()
 
   // 附件后台维护（存量 base64 迁移为附件引用 + 孤儿文件 GC，异步不阻塞启动）
   AttachmentService.getInstance().startupMaintenance()

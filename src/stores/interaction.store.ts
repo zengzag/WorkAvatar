@@ -59,6 +59,13 @@ interface InteractionActions {
   cancelCurrent: () => void
 }
 
+/** 弹窗响应上报主进程，失败仅告警不阻塞弹窗流程 */
+function reportResponse(payload: { id: string; cancelled: boolean } & Record<string, unknown>) {
+  Promise.resolve(window.electronAPI.interaction.respond(payload)).catch((err) => {
+    console.warn('[interaction] respond IPC failed:', payload.id, err)
+  })
+}
+
 export const useInteractionStore = create<InteractionState & InteractionActions>()(
   immer((set, get) => ({
     queue: [],
@@ -66,6 +73,9 @@ export const useInteractionStore = create<InteractionState & InteractionActions>
 
     enqueue: (request) => {
       set((state) => {
+        // 按 request.id 去重：currentRequest 与待弹队列重复入队会形成幽灵弹窗
+        if (state.currentRequest?.id === request.id) return
+        if (state.queue.some((q) => q.id === request.id)) return
         if (!state.currentRequest) {
           state.currentRequest = request
         } else {
@@ -78,10 +88,7 @@ export const useInteractionStore = create<InteractionState & InteractionActions>
       const current = get().currentRequest
       if (!current) return
 
-      window.electronAPI.interaction.respond({
-        id: current.id,
-        ...response,
-      })
+      reportResponse({ id: current.id, ...response })
 
       set((state) => {
         state.currentRequest = state.queue.length > 0 ? state.queue.shift()! : null
@@ -92,10 +99,7 @@ export const useInteractionStore = create<InteractionState & InteractionActions>
       const current = get().currentRequest
       if (!current) return
 
-      window.electronAPI.interaction.respond({
-        id: current.id,
-        cancelled: true,
-      })
+      reportResponse({ id: current.id, cancelled: true })
 
       set((state) => {
         state.currentRequest = state.queue.length > 0 ? state.queue.shift()! : null

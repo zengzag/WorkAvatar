@@ -1,11 +1,12 @@
 import fs from 'fs'
 import path from 'path'
-import type { GeneratedFileInfo, ThinkingLevel } from '../../../shared/types'
+import type { GeneratedFileInfo, ThinkingLevel, EphemeralSubAgentSpec } from '../../../shared/types'
 import { parseEmployeeDelegation } from '../../../shared/types'
 import DatabaseService from '../database.service'
 import MemoryRefinementService from '../memory-refinement.service'
 import WorkspaceManagerService from '../workspace-manager.service'
 import EmployeeAgentService from '../employee-agent.service'
+import EmployeeRegistryService from '../employee-registry.service'
 import { interactionContext } from '../unified-interaction.service'
 import { broadcastRunEvent } from '../../ipc/agent-run-events'
 import { generateId } from '../common-utils'
@@ -20,6 +21,7 @@ import type {
   LaunchSubAgentInput,
   LaunchSubAgentResult,
   LaunchFollowupInput,
+  AgentRunLiveness,
 } from './types'
 
 const logger = createLogger('SubAgentRuntime')
@@ -59,6 +61,32 @@ const SUBAGENT_CONTRACT = [
   '4. Do not ask the end user questions. If additional input from the parent agent is required, state it in Blockers and finish with status "Partially completed".',
 ].join('\n')
 
+/** liveness 停滞阈值：运行中 run 最近一次事件超过该窗口判定为 stalled（无事件即无进展） */
+const LIVENESS_STALL_MS = 6 * 60_000
+/** 完成门重试上限：子会话存在未收尾任务时的收尾纠偏轮数上限 */
+const MAX_GATE_ROUNDS = 2
+/** 每个会话保留的主管通知条数上限 */
+const MAX_NOTIFICATIONS_PER_CONV = 50
+
+/** 后台 run 完成后投递给主管会话的通知 */
+export interface SupervisorNotification {
+  runId: string
+  targetEmployeeId: string
+  targetEmployeeName: string
+  status: AgentRunStatus
+  summary: string
+  generatedFiles: GeneratedFileInfo[]
+  error?: string
+  completedAt: number
+}
+
+/** 派发时挂给子会话的任务项（任务台账，阶段四；完成后用于完成门） */
+export interface SubTaskItem {
+  id: string
+  title: string
+  status: 'open' | 'in_progress' | 'completed' | 'blocked'
+}
+
 interface RunEntry {
   run: AgentRun
   controller: AbortController
@@ -78,6 +106,12 @@ interface RunEntry {
   onEvent?: (eventType: string, data: any) => void
   /** 平级协作邮箱：send_message 写、read_messages 读 */
   inbox: Array<{ id: string; fromEmployeeName: string; content: string; sentAt: number }>
+  /** 临时角色注册的 inline 员工 id（settle 时下线；追问重建） */
+  ephemeralId?: string
+  /** 结构化交付物捕获（submit_structured_result 上报） */
+  structuredCapture?: unknown
+  /** 任务台账（子会话内 open/in_progress/completed/blocked） */
+  tasks: SubTaskItem[]
 }
 
 function isTerminal(status: AgentRunStatus): boolean {
@@ -85,7 +119,7 @@ function isTerminal(status: AgentRunStatus): boolean {
 }
 
 /** 把 run 结构化为可供主管 LLM 消费的结果（文本 + 结构化字段） */
-export function formatRunOutput(run: AgentRun): string {
+export function formatRunOutput(run: AgentRun, extras?: { structured?: unknown; incompleteTasks?: string[] }): string {
   const lines: string[] = []
   lines.push(`已委托 ${run.employeeName} 完成任务。`)
   if (run.summary) {
@@ -97,6 +131,12 @@ export function formatRunOutput(run: AgentRun): string {
     for (const f of files) {
       lines.push(`- ${f.path}`)
     }
+  }
+  if (extras?.incompleteTasks && extras.incompleteTasks.length > 0) {
+    lines.push(`未收尾任务项：${extras.incompleteTasks.join('；')}`)
+  }
+  if (extras?.structured !== undefined) {
+    lines.push(`结构化结果（structured JSON）：\n${typeof extras.structured === 'string' ? extras.structured : JSON.stringify(extras.structured)}`)
   }
   if (run.error) {
     lines.push(`错误：${run.error}`)
@@ -122,6 +162,10 @@ class SubAgentRuntime {
   private activeCount = 0
   /** 内存中保留的 run 条目上限（仅淘汰已终态，防止长会话内存膨胀） */
   private readonly MAX_MEMORY_ENTRIES = 100
+  /** 主管通知队列（conversationId → 后台 run 终态通知，read_run_notifications 读取清空） */
+  private notifications = new Map<string, SupervisorNotification[]>()
+  /** 启动僵尸恢复是否已执行（每进程一次） */
+  private recovered = false
 
   private constructor() {}
 
@@ -178,8 +222,8 @@ class SubAgentRuntime {
     return { valid, errors }
   }
 
-  private async buildSubMessages(instruction: string, contextFiles: string[]): Promise<Array<{ role: string; content: string }>> {
-    let content = `${instruction.trim()}\n\n${SUBAGENT_CONTRACT}\n\nIf the parent sent additional instructions through send_message, call read_messages to check for the latest requirements before finishing.`
+  private async buildSubMessages(instruction: string, contextFiles: string[], suffix?: string): Promise<Array<{ role: string; content: string }>> {
+    let content = `${instruction.trim()}\n\n${SUBAGENT_CONTRACT}${suffix ? `\n\n${suffix}` : ''}\n\nIf the parent sent additional instructions through send_message, call read_messages to check for the latest requirements before finishing.`
     if (contextFiles.length > 0) {
       const parts: string[] = [content, '', '--- Context files ---']
       for (const fp of contextFiles) {
@@ -345,9 +389,93 @@ class SubAgentRuntime {
     return messages
   }
 
+  // ====== 任务台账（阶段四）+ 结构化交付物 + 主管通知 ======
+
+  /** 创建任务项（launch_tools 的 task_item_create 调用；绑定 delegationId 即当前 run） */
+  createTask(runId: string, title: string): { success: boolean; taskId?: string; error?: string } {
+    const entry = this.entries.get(runId)
+    if (!entry) return { success: false, error: 'run 不存在或已结束，无法登记任务' }
+    const titleTrim = String(title || '').trim()
+    if (!titleTrim) return { success: false, error: '任务标题不能为空' }
+    if (entry.tasks.length >= 20) return { success: false, error: '任务项数量超限（最多 20 个）' }
+    const item: SubTaskItem = { id: `t${entry.tasks.length + 1}`, title: titleTrim, status: 'open' }
+    entry.tasks.push(item)
+    this.emit(runId, 'task_item', { ...item })
+    return { success: true, taskId: item.id }
+  }
+
+  /** 更新任务项状态（task_item_update） */
+  updateTask(runId: string, taskId: string, status: SubTaskItem['status']): { success: boolean; error?: string } {
+    const entry = this.entries.get(runId)
+    if (!entry) return { success: false, error: 'run 不存在或已结束' }
+    const item = entry.tasks.find(t => t.id === taskId)
+    if (!item) return { success: false, error: `任务项不存在: ${taskId}` }
+    item.status = status
+    this.emit(runId, 'task_item', { ...item })
+    return { success: true }
+  }
+
+  listTasks(runId: string): SubTaskItem[] {
+    return [...(this.entries.get(runId)?.tasks || [])]
+  }
+
+  /** 子会话经 submit_structured_result 上报结构化交付物 */
+  recordStructuredResult(runId: string, value: unknown): { success: boolean; error?: string } {
+    const entry = this.entries.get(runId)
+    if (!entry) return { success: false, error: '当前上下文未关联有效委托运行，无法上报结构化结果' }
+    entry.structuredCapture = value
+    this.emit(runId, 'structured_result', value)
+    return { success: true }
+  }
+
+  /** 主管会话读取后台 run 的终态通知（读取即清空） */
+  readNotifications(conversationId: string): SupervisorNotification[] {
+    const list = this.notifications.get(conversationId)
+    if (!list || list.length === 0) return []
+    this.notifications.delete(conversationId)
+    return list
+  }
+
+  private pushNotification(convId: string, notice: SupervisorNotification): void {
+    if (!convId) return
+    const list = this.notifications.get(convId) || []
+    list.push(notice)
+    if (list.length > MAX_NOTIFICATIONS_PER_CONV) list.splice(0, list.length - MAX_NOTIFICATIONS_PER_CONV)
+    this.notifications.set(convId, list)
+    this.emit(notice.runId, 'notification', notice)
+  }
+
+  /** 运行活性派生：终态→idle；最近事件超过停滞窗口→stalled；否则 progressing */
+  deriveLiveness(run: AgentRun): AgentRunLiveness {
+    if (isTerminal(run.status)) return 'idle'
+    const last = run.lastActivityAt || (run.startedAt ? run.startedAt * 1000 : 0)
+    if (!last || Date.now() - last > LIVENESS_STALL_MS) return 'stalled'
+    return 'progressing'
+  }
+
+  /**
+   * 启动僵尸恢复（每进程首次派发前调用）：应用重启后 DB 中残留 running/queued 的 run
+   * 已无执行主体，统一标记 failed（错误说明应用重启），避免永远显示运行中。
+   */
+  recoverStaleRuns(): void {
+    if (this.recovered) return
+    this.recovered = true
+    try {
+      const db = DatabaseService.getInstance().getDb()
+      const info = db.prepare(
+        `UPDATE sub_agent_runs SET status = 'failed', error = COALESCE(NULLIF(error, ''), '执行中断（应用重启）'),
+           ended_at = ? WHERE status IN ('running', 'queued') AND ended_at IS NULL`
+      ).run(Math.floor(Date.now() / 1000))
+      if (info.changes > 0) logger.warn(`恢复僵尸子任务运行 ${info.changes} 条（应用重启）`)
+    } catch (err: any) {
+      logger.warn('recoverStaleRuns failed:', err?.message || err)
+    }
+  }
+
   private emit(runId: string, eventType: string, data: any): void {
     const entry = this.entries.get(runId)
     if (!entry) return
+    if (!isTerminal(entry.run.status)) entry.run.lastActivityAt = Date.now()
     // chunk/thought 高频事件在日志中合并追加，避免占满 ring buffer 挤掉结构化事件（start/tool/result）
     const last = entry.eventLog[entry.eventLog.length - 1]
     if ((eventType === 'chunk' || eventType === 'thought')
@@ -407,6 +535,26 @@ class SubAgentRuntime {
       run.autoDetectedFiles = this.dedupArtifacts(run.generatedFiles, [...run.autoDetectedFiles, ...descendant.auto])
     }
     this.persistRun(run)
+    // 后台派发：投递主管通知（前端收打扰小，由主管在下一轮经 read_run_notifications 获取）
+    if (run.runInBackground && run.parentConversationId) {
+      this.pushNotification(run.parentConversationId, {
+        runId: run.runId,
+        targetEmployeeId: run.employeeId,
+        targetEmployeeName: run.employeeName,
+        status: run.status,
+        summary: run.summary || '',
+        generatedFiles: [...run.generatedFiles, ...run.autoDetectedFiles],
+        error: run.error,
+        completedAt: Date.now(),
+      })
+    }
+    // 临时角色下线（run 结束；追问时由 executeRun 按 ephemeral_json 重建）
+    if (entry.ephemeralId) {
+      try {
+        EmployeeRegistryService.getInstance().unregisterInlineEmployee(entry.ephemeralId)
+      } catch { /* ignore */ }
+      entry.ephemeralId = undefined
+    }
     if (status === 'cancelled') {
       this.emit(runId, 'cancelled', { runId })
       this.emit(runId, 'error', { error: run.error || '已取消' })
@@ -434,33 +582,44 @@ class SubAgentRuntime {
   private persistRun(run: AgentRun): void {
     try {
       const db = DatabaseService.getInstance().getDb()
+      const entry = this.entries.get(run.runId)
       const inputs: any = { instruction: run.instruction, contextFiles: run.contextFiles }
       if (run.followupOfRunId) inputs.followupOfRunId = run.followupOfRunId
+      if (run.runInBackground) inputs.runInBackground = true
       const result: any = {
         summary: run.summary,
         generatedFiles: run.generatedFiles,
         autoDetectedFiles: run.autoDetectedFiles,
+        structured: entry?.structuredCapture,
+        incompleteTasks: entry?.tasks.filter(t => t.status === 'open' || t.status === 'in_progress').map(t => t.title),
       }
       const existing = db.prepare('SELECT run_id FROM sub_agent_runs WHERE run_id = ?').get(run.runId) as { run_id: string } | undefined
       if (existing) {
         db.prepare(
           `UPDATE sub_agent_runs SET parent_conversation_id = ?, employee_id = ?, parent_run_id = ?, conversation_id = ?,
-             status = ?, inputs_json = ?, result_json = ?, usage_json = ?, error = ?, started_at = ?, ended_at = ? WHERE run_id = ?`
+             status = ?, inputs_json = ?, result_json = ?, usage_json = ?, error = ?, started_at = ?, ended_at = ?,
+             ephemeral_json = ?, lifecycle = ?, last_activity_at = ? WHERE run_id = ?`
         ).run(
           run.parentConversationId, run.employeeId, run.parentRunId || '', run.conversationId || '',
           run.status,
           JSON.stringify(inputs), JSON.stringify(result), JSON.stringify(run.tokenUsage || {}),
-          run.error || '', run.startedAt || null, run.endedAt || null, run.runId,
+          run.error || '', run.startedAt || null, run.endedAt || null,
+          run.ephemeral ? JSON.stringify(run.ephemeral) : null,
+          run.lifecycle || (run.ephemeral ? 'ephemeral' : 'persistent'),
+          run.lastActivityAt || null, run.runId,
         )
       } else {
         db.prepare(
           `INSERT INTO sub_agent_runs (run_id, parent_conversation_id, employee_id, parent_run_id, conversation_id, status,
-             inputs_json, result_json, usage_json, error, started_at, ended_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             inputs_json, result_json, usage_json, error, started_at, ended_at, ephemeral_json, lifecycle, last_activity_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           run.runId, run.parentConversationId, run.employeeId, run.parentRunId || '', run.conversationId || '', run.status,
           JSON.stringify(inputs), JSON.stringify(result), JSON.stringify(run.tokenUsage || {}),
           run.error || '', run.startedAt || null, run.endedAt || null,
+          run.ephemeral ? JSON.stringify(run.ephemeral) : null,
+          run.lifecycle || (run.ephemeral ? 'ephemeral' : 'persistent'),
+          run.lastActivityAt || null,
         )
       }
     } catch (err: any) {
@@ -470,10 +629,42 @@ class SubAgentRuntime {
 
   private launchInternal(input: LaunchSubAgentInput): LaunchSubAgentResult {
     const db = DatabaseService.getInstance().getDb()
-    const target = db.prepare('SELECT id, name, avatar_type FROM employees WHERE id = ?').get(input.targetEmployeeId) as
-      | { id: string; name: string; avatar_type?: string }
-      | undefined
-    const targetName = target?.name || input.targetEmployeeId
+    const isEphemeral = !!input.ephemeral
+    const runId = generateId()
+
+    // 目标员工解析：临时角色优先（现场生成 inline 员工，不经员工库）
+    let targetEmployeeId = input.targetEmployeeId
+    let targetName: string
+    let targetAvatar: string | undefined
+    if (isEphemeral) {
+      const spec = input.ephemeral!
+      const registry = EmployeeRegistryService.getInstance()
+      const slug = registry.slugifyInlineKey(spec.key || spec.name)
+      targetEmployeeId = `inline:sub-${slug}-${runId.slice(0, 6).toLowerCase()}`
+      targetName = spec.name
+      // 临时角色归属 key 参与委托环检测（与父链上的内联 key 比对）
+      if (input.delegationChain.some(id => id.replace(/^inline:/, '').startsWith(`sub-${slug}`))) {
+        return { success: false, error: `检测到委托环：临时角色 ${spec.name} 已在委托链中`, targetEmployeeName: targetName }
+      }
+    } else {
+      // 自委托防护（优先于目标存在性/设置校验，保持既有错误语义）
+      if (input.targetEmployeeId === input.parentEmployeeId) {
+        return { success: false, error: '不能委托给自己', targetEmployeeName: input.targetEmployeeId }
+      }
+      const target = db.prepare('SELECT id, name, avatar_type FROM employees WHERE id = ?').get(input.targetEmployeeId) as
+        | { id: string; name: string; avatar_type?: string }
+        | undefined
+      targetName = target?.name || input.targetEmployeeId
+      targetAvatar = target?.avatar_type
+      if (!target) {
+        return { success: false, error: `目标员工不存在: ${input.targetEmployeeId}`, targetEmployeeName: targetName }
+      }
+      // 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托
+      const settingsError = this.validateDelegationSettings(input.parentEmployeeId, input.targetEmployeeId, targetName)
+      if (settingsError) {
+        return { success: false, error: settingsError, targetEmployeeName: targetName }
+      }
+    }
 
     // 递归防护
     if (input.delegationDepth >= 3) {
@@ -482,28 +673,15 @@ class SubAgentRuntime {
     if (input.delegationChain.includes(input.targetEmployeeId)) {
       return { success: false, error: '检测到委托环：目标员工已在委托链中', targetEmployeeName: targetName }
     }
-    if (input.targetEmployeeId === input.parentEmployeeId) {
-      return { success: false, error: '不能委托给自己', targetEmployeeName: targetName }
-    }
-    if (!target) {
-      return { success: false, error: `目标员工不存在: ${input.targetEmployeeId}`, targetEmployeeName: targetName }
-    }
 
-    // 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托
-    const settingsError = this.validateDelegationSettings(input.parentEmployeeId, input.targetEmployeeId, targetName)
-    if (settingsError) {
-      return { success: false, error: settingsError, targetEmployeeName: targetName }
-    }
-
-    const runId = generateId()
     const run: AgentRun = {
       runId,
       parentConversationId: input.parentConversationId,
       parentSessionId: input.parentSessionId,
       parentRunId: input.parentRunId,
-      employeeId: input.targetEmployeeId,
-      employeeName: target.name,
-      employeeAvatarType: target.avatar_type,
+      employeeId: targetEmployeeId,
+      employeeName: targetName,
+      employeeAvatarType: targetAvatar,
       status: 'queued',
       instruction: input.instruction,
       contextFiles: input.contextFiles,
@@ -511,9 +689,13 @@ class SubAgentRuntime {
       conversationId: input.conversationId,
       generatedFiles: [],
       autoDetectedFiles: [],
+      ephemeral: input.ephemeral,
+      lifecycle: isEphemeral ? 'ephemeral' : 'persistent',
+      runInBackground: input.runInBackground === true,
+      outputSchema: input.outputSchema,
     }
     this.enqueueRun(run, input)
-    return { success: true, runId, targetEmployeeName: target.name }
+    return { success: true, runId, targetEmployeeName: targetName, targetEmployeeId }
   }
 
   /** 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托 */
@@ -547,29 +729,33 @@ class SubAgentRuntime {
 
     // 1) 解析原 run：内存优先，回落 DB（重启或内存淘汰后仍可追问）
     const memEntry = this.entries.get(input.followupOfRunId)
-    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string }
+    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string; ephemeral?: EphemeralSubAgentSpec }
     if (memEntry) {
       const r = memEntry.run
       origin = {
         runId: r.runId, conversationId: r.conversationId || '', employeeId: r.employeeId,
         parentConversationId: r.parentConversationId, parentRunId: r.parentRunId, status: r.status,
+        ephemeral: r.ephemeral,
       }
       if (!isTerminal(r.status)) {
         return { success: false, error: '原委托仍在执行中，请等待完成后再追问' }
       }
     } else {
       const row = db.prepare(
-        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status
+        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status, ephemeral_json
          FROM sub_agent_runs WHERE run_id = ?`
       ).get(input.followupOfRunId) as
-        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string }
+        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string; ephemeral_json?: string }
         | undefined
       if (!row) {
         return { success: false, error: `未找到委托记录: ${input.followupOfRunId}（请使用 delegate_to_employee / followup_delegation 返回的 delegationId）` }
       }
+      let ephemeral: EphemeralSubAgentSpec | undefined
+      try { if (row.ephemeral_json) ephemeral = JSON.parse(row.ephemeral_json) } catch { /* ignore */ }
       origin = {
         runId: row.run_id, conversationId: row.conversation_id || '', employeeId: row.employee_id,
         parentConversationId: row.parent_conversation_id || '', parentRunId: row.parent_run_id || undefined, status: row.status,
+        ephemeral,
       }
       // 重启后内存丢失的僵尸 run（DB 仍为 running/queued）：标记失败后允许追问，子会话历史仍可续用
       if (origin.status === 'running' || origin.status === 'queued') {
@@ -620,6 +806,8 @@ class SubAgentRuntime {
       autoDetectedFiles: [],
       conversationId: origin.conversationId,
       followupOfRunId: origin.runId,
+      ephemeral: origin.ephemeral,
+      lifecycle: origin.ephemeral ? 'ephemeral' : 'persistent',
     }
     this.enqueueRun(run, input)
     return { success: true, runId, targetEmployeeName: target.name }
@@ -643,6 +831,7 @@ class SubAgentRuntime {
       parentEmployeeId: input.parentEmployeeId,
       onEvent: input.onEvent,
       inbox: [],
+      tasks: [],
     }
     this.entries.set(run.runId, entry)
     this.persistRun(run)
@@ -652,6 +841,7 @@ class SubAgentRuntime {
 
   /** 派发一个子会话运行。校验失败返回 error；成功立即返回 runId（异步排队执行） */
   launchSubAgent(input: LaunchSubAgentInput): LaunchSubAgentResult {
+    this.recoverStaleRuns()
     const validated = this.validateContextFiles(input.contextFiles || [], input.parentConversationId, input.parentEmployeeId)
     if (validated.errors.length > 0) {
       return { success: false, error: validated.errors.join('\n') }
@@ -687,12 +877,16 @@ class SubAgentRuntime {
 
   private buildOutcome(run: AgentRun): AgentRunOutcome {
     if (run.status === 'completed') {
+      const entry = this.entries.get(run.runId)
       return {
         runId: run.runId,
         employeeName: run.employeeName,
         status: run.status,
         success: true,
-        output: formatRunOutput(run),
+        output: formatRunOutput(run, {
+          structured: entry?.structuredCapture,
+          incompleteTasks: entry?.tasks.filter(t => t.status === 'open' || t.status === 'in_progress').map(t => t.title),
+        }),
         tokenUsage: run.tokenUsage,
         conversationId: run.conversationId,
         result: {
@@ -700,6 +894,8 @@ class SubAgentRuntime {
           generatedFiles: run.generatedFiles,
           autoDetectedFiles: run.autoDetectedFiles,
           tokenUsage: run.tokenUsage,
+          structured: entry?.structuredCapture,
+          incompleteTasks: entry?.tasks.filter(t => t.status === 'open' || t.status === 'in_progress').map(t => t.title),
         },
       }
     }
@@ -745,7 +941,7 @@ class SubAgentRuntime {
       const run = entry.run
       if (params?.employeeId && run.employeeId !== params.employeeId) continue
       if (params?.parentConversationId && run.parentConversationId !== params.parentConversationId) continue
-      result.push({ ...run, eventLog: [...entry.eventLog] })
+      result.push({ ...run, eventLog: [...entry.eventLog], liveness: this.deriveLiveness(run) })
     }
     result.sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))
     return result
@@ -764,6 +960,8 @@ class SubAgentRuntime {
         const inputs = safeParse(r.inputs_json)
         const result = safeParse(r.result_json)
         const usage = safeParse(r.usage_json)
+        let ephemeral: EphemeralSubAgentSpec | undefined
+        try { if (r.ephemeral_json) ephemeral = JSON.parse(r.ephemeral_json) } catch { /* ignore */ }
         return {
           runId: r.run_id,
           parentConversationId: r.parent_conversation_id,
@@ -784,6 +982,11 @@ class SubAgentRuntime {
           startedAt: r.started_at,
           endedAt: r.ended_at,
           eventLog: [],
+          ephemeral,
+          lifecycle: ephemeral ? 'ephemeral' : 'persistent',
+          lastActivityAt: r.last_activity_at || undefined,
+          runInBackground: inputs.runInBackground === true,
+          outputSchema: undefined,
         }
       })
     } catch {
@@ -906,6 +1109,18 @@ class SubAgentRuntime {
     let subError: string | null = null
     let reportedFiles: GeneratedFileInfo[] = []
 
+    // 临时子智能体：执行前注册 inline 员工（settle 时下线；含追问轮重建）
+    if (run.ephemeral) {
+      try {
+        EmployeeRegistryService.getInstance().registerInlineEmployee(
+          EmployeeRegistryService.getInstance().toInlineRegisteredEmployee(run.employeeId, run.ephemeral)
+        )
+        entry.ephemeralId = run.employeeId
+      } catch (err: any) {
+        logger.warn(`临时角色注册失败 ${run.employeeId}:`, err?.message || err)
+      }
+    }
+
     this.beginRun(runId, {
       targetEmployeeId: run.employeeId,
       targetEmployeeName: run.employeeName,
@@ -914,12 +1129,101 @@ class SubAgentRuntime {
       followupOfRunId: run.followupOfRunId,
     })
 
+    /** 单轮流式执行（完成门重试会多次调用）；callbacks 闭包复用 finalAnswer 等累积状态 */
+    const streamOnce = async (messages: Array<{ role: string; content: string }>, providerId: string, modelId: string) => {
+      await interactionContext.run(
+        {
+          sessionId: generateId(),
+          employeeId: targetEmployeeId,
+          conversationId: subConvId,
+          // 嵌套委托链记录：深度 +1，链上追加发起方员工（防环守卫只在运行时层生效）
+          delegationDepth: entry.delegationDepth + 1,
+          delegationChain: [...entry.delegationChain, entry.parentEmployeeId],
+          parentSessionId,
+          delegationId: runId,
+          abortSignal: entry.controller.signal,
+          enableThinking: entry.enableThinking,
+          highPermission: entry.highPermission,
+        },
+        async () => {
+          await EmployeeAgentService.getInstance().chatStream(
+            {
+              employee_id: targetEmployeeId,
+              provider_id: providerId,
+              model_id: modelId,
+              messages,
+              conversation_id: subConvId,
+              minimal_mode: false,
+              enable_thinking: entry.enableThinking,
+              use_skills: true,
+              high_permission: entry.highPermission,
+            },
+            {
+              onChunk: (chunk: string) => {
+                if (entry.controller.signal.aborted) return
+                finalAnswer += chunk
+                this.emit(runId, 'chunk', chunk)
+              },
+              onThought: (thought: string) => {
+                if (entry.controller.signal.aborted) return
+                this.emit(runId, 'thought', thought)
+              },
+              onToolCallDelta: (d: any) => {
+                if (entry.controller.signal.aborted) return
+                this.emit(runId, 'tool_call_delta', d)
+              },
+              onToolCall: (tc: any) => {
+                if (entry.controller.signal.aborted) return
+                this.emit(runId, 'tool_call', { ...tc, delegationId: runId })
+              },
+              onToolResult: (tr: any) => {
+                if (entry.controller.signal.aborted) return
+                // 产物 L1：被动采集 report_generated_files 声明清单
+                if (tr?.name === 'report_generated_files' && Array.isArray(tr.generatedFiles) && tr.generatedFiles.length > 0) {
+                  reportedFiles.push(...tr.generatedFiles)
+                }
+                this.emit(runId, 'tool_result', { ...tr, delegationId: runId })
+              },
+              onToolProgress: (p: any) => {
+                if (entry.controller.signal.aborted) return
+                this.emit(runId, 'tool_progress', p)
+              },
+              onDone: (metadata?: any) => {
+                tokenUsage = mergeTokenUsage(tokenUsage, metadata?.tokenUsage)
+                this.emit(runId, 'status', { status: entry.controller.signal.aborted ? 'cancelled' : 'completed' })
+              },
+              onError: (error: string) => {
+                subError = error
+                this.emit(runId, 'error', { error, delegationId: runId })
+              },
+            },
+            entry.controller.signal
+          )
+        }
+      )
+    }
+
+    // 完成门提示词：列出未收尾任务项，要求子员工继续收尾
+    const buildGatePrompt = (): string => {
+      const open = entry.tasks.filter(t => t.status === 'open' || t.status === 'in_progress')
+      return [
+        'Completion gate: your task ledger still has unfinished items.',
+        ...open.map(t => `- [${t.id}] (${t.status}) ${t.title}`),
+        'Open task items until none remain (use task_item_update to mark each completed or blocked), then submit your final Delegation Receipt.',
+      ].join('\n')
+    }
+
     try {
       const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
       if (!resolved) {
         subError = '无可用 LLM 提供商（请在设置中配置默认模型）'
       } else {
-        const { providerId, modelId } = resolved
+        let { providerId, modelId } = resolved
+        // 临时角色可选模型覆盖：providerId+modelId 成对才生效（无效则继承主管解析结果）
+        if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
+          providerId = run.ephemeral.providerId
+          modelId = run.ephemeral.modelId
+        }
         const ws = WorkspaceManagerService.getInstance()
         if (run.conversationId) {
           // 追问轮：复用原子会话与任务工作区，历史轮上下文注入 messages
@@ -937,82 +1241,50 @@ class SubAgentRuntime {
           beforeSnapshot = this.snapshotWorkspace(subWorkspace)
         }
 
-        let subMessages = await this.buildSubMessages(run.instruction, run.contextFiles || [])
+        // 结构化交付契约（output_schema）：强制子员工调用 submit_structured_result 上报机器可读结果
+        const structuredSuffix = run.outputSchema
+          ? [
+              'Structured output (mandatory): this delegation requires a machine-readable result.',
+              'Before your final reply, call the `submit_structured_result` tool ONCE with the complete JSON result conforming EXACTLY to this JSON Schema:',
+              JSON.stringify(run.outputSchema),
+              'If some fields cannot be filled, still call it with a best-effort object and explain the gaps in the Blockers section of your receipt.',
+            ].join('\n\n')
+          : ''
+        const ledgerSuffix = [
+          'Task ledger: the parent may attach task items to this delegation.',
+          'If task items were attached, update each one via task_item_update (completed or blocked) before finishing.',
+        ].join('\n')
+
+        let subMessages = await this.buildSubMessages(run.instruction, run.contextFiles || [], [structuredSuffix, ledgerSuffix].filter(Boolean).join('\n\n'))
         if (run.followupOfRunId && subConvId) {
           const history = this.loadFollowupHistory(subConvId, run.runId)
           subMessages = [...history, ...subMessages]
         }
 
-        await interactionContext.run(
-          {
-            sessionId: generateId(),
-            employeeId: targetEmployeeId,
-            conversationId: subConvId,
-            // 嵌套委托链记录：深度 +1，链上追加发起方员工（防环守卫只在运行时层生效）
-            delegationDepth: entry.delegationDepth + 1,
-            delegationChain: [...entry.delegationChain, entry.parentEmployeeId],
-            parentSessionId,
-            delegationId: runId,
-            abortSignal: entry.controller.signal,
-            enableThinking: entry.enableThinking,
-            highPermission: entry.highPermission,
-          },
-          async () => {
-            await EmployeeAgentService.getInstance().chatStream(
-              {
-                employee_id: targetEmployeeId,
-                provider_id: providerId,
-                model_id: modelId,
-                messages: subMessages,
-                conversation_id: subConvId,
-                minimal_mode: false,
-                enable_thinking: entry.enableThinking,
-                use_skills: true,
-                high_permission: entry.highPermission,
-              },
-              {
-                onChunk: (chunk: string) => {
-                  if (entry.controller.signal.aborted) return
-                  finalAnswer += chunk
-                  this.emit(runId, 'chunk', chunk)
-                },
-                onThought: (thought: string) => {
-                  if (entry.controller.signal.aborted) return
-                  this.emit(runId, 'thought', thought)
-                },
-                onToolCallDelta: (d: any) => {
-                  if (entry.controller.signal.aborted) return
-                  this.emit(runId, 'tool_call_delta', d)
-                },
-                onToolCall: (tc: any) => {
-                  if (entry.controller.signal.aborted) return
-                  this.emit(runId, 'tool_call', { ...tc, delegationId: runId })
-                },
-                onToolResult: (tr: any) => {
-                  if (entry.controller.signal.aborted) return
-                  // 产物 L1：被动采集 report_generated_files 声明清单
-                  if (tr?.name === 'report_generated_files' && Array.isArray(tr.generatedFiles) && tr.generatedFiles.length > 0) {
-                    reportedFiles.push(...tr.generatedFiles)
-                  }
-                  this.emit(runId, 'tool_result', { ...tr, delegationId: runId })
-                },
-                onToolProgress: (p: any) => {
-                  if (entry.controller.signal.aborted) return
-                  this.emit(runId, 'tool_progress', p)
-                },
-                onDone: (metadata?: any) => {
-                  tokenUsage = metadata?.tokenUsage
-                  this.emit(runId, 'status', { status: entry.controller.signal.aborted ? 'cancelled' : 'completed' })
-                },
-                onError: (error: string) => {
-                  subError = error
-                  this.emit(runId, 'error', { error, delegationId: runId })
-                },
-              },
-              entry.controller.signal
-            )
+        await streamOnce(subMessages, providerId, modelId)
+
+        // 完成门（MiMo 语义）：台账仍有未收尾项时注入纠偏轮，最多 MAX_GATE_ROUNDS 次
+        // 第一轮的回答与关键工具产出固化为一条 assistant 上下文置于 gatePrompt 前，纠偏轮才能"续聊"而非失忆
+        const buildGateContext = (): Array<{ role: string; content: string }> => {
+          const parts: string[] = []
+          if (finalAnswer.trim()) parts.push(finalAnswer.trim().slice(0, 4000))
+          if (entry.structuredCapture !== undefined && entry.structuredCapture !== null) {
+            parts.push(`Structured result: ${JSON.stringify(entry.structuredCapture).slice(0, 2000)}`)
           }
-        )
+          if (reportedFiles.length) {
+            parts.push(`Generated files:\n${reportedFiles.map(f => `- ${f.path}`).join('\n')}`)
+          }
+          return parts.length ? [{ role: 'assistant', content: ['[First-round progress]', ...parts].join('\n') }] : []
+        }
+        for (let gate = 0; gate < MAX_GATE_ROUNDS; gate++) {
+          if (entry.controller.signal.aborted || subError) break
+          if (!entry.tasks.some(t => t.status === 'open' || t.status === 'in_progress')) break
+          await streamOnce(
+            [...subMessages, ...buildGateContext(), { role: 'user', content: buildGatePrompt() }],
+            providerId,
+            modelId,
+          )
+        }
       }
     } catch (err: any) {
       if (!entry.controller.signal.aborted) {
@@ -1059,6 +1331,18 @@ class SubAgentRuntime {
       tokenUsage,
     })
   }
+}
+
+/** tokenUsage 对象级累加：字段级求和，任一侧缺省字段沿用另一方；两侧均无数据返回 undefined */
+function mergeTokenUsage(a: AgentRunTokenUsage | undefined, b: AgentRunTokenUsage | undefined): AgentRunTokenUsage | undefined {
+  if (!a) return b ? { ...b } : undefined
+  if (!b) return a
+  const out: AgentRunTokenUsage = { ...a }
+  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens'] as const) {
+    const val = b[key]
+    if (val !== undefined) out[key] = (a[key] || 0) + val
+  }
+  return out
 }
 
 function safeParse(json: string): any {

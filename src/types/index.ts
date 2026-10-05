@@ -1,5 +1,6 @@
 export type {
   Employee,
+  EmployeeSource,
   Skill,
   Conversation,
   ParseResult,

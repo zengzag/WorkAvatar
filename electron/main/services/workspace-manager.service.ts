@@ -115,6 +115,8 @@ class WorkspaceManagerService {
     workspace_path?: string | null
     memory_enabled?: boolean
     avatar_type?: string
+    avatar_icon?: string
+    avatar_color?: string
     delegation_json?: string
   }): Employee | null {
     const employee = this.getEmployee(id)
@@ -127,6 +129,7 @@ class WorkspaceManagerService {
       'name', 'description', 'rules', 'profile_json',
       'default_skill_id',
       'memory_enabled', 'workspace_path', 'avatar_type',
+      'avatar_icon', 'avatar_color',
       'delegation_json'
     ]
 
@@ -636,6 +639,7 @@ class WorkspaceManagerService {
         WHERE conversations_fts MATCH ?
           AND c.status = 'active'
           AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
+          AND c.employee_id NOT LIKE 'inline:%'
           ${employeePlaceholders}
         ORDER BY title_score DESC, f.rank ASC
         LIMIT ?
@@ -679,6 +683,7 @@ class WorkspaceManagerService {
           JOIN employees e ON e.id = c.employee_id
           WHERE c.status = 'active'
             AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
+            AND c.employee_id NOT LIKE 'inline:%'
             ${employeePlaceholders}
             AND (${andClause})
           ORDER BY title_score DESC, content_hits DESC, COALESCE(c.last_message_at, c.created_at) DESC
@@ -707,12 +712,13 @@ class WorkspaceManagerService {
 /**
  * 构建 FTS5 MATCH 表达式：
  * - 英文 token 追加 * 实现前缀匹配
- * - 中文 token 逐字拆分后用空格连接（FTS5 隐式 AND，要求所有字出现但不要求连续）
- *   避免 FTS5 将整个中文串当作 phrase（要求连续）导致短查询结果反常偏少
+ * - 中文 token 逐字拆分后每字追加 * 前缀匹配：unicode61 将连续汉字归并为单 token，
+ *   仅逐字拆分（要求存在"知/识/库"三个独立完整 token）几乎永不命中；
+ *   每字加 * 后按"以该字开头"匹配 token，可命中完整词组 token
  * - 仅保留字母/数字/CJK，剔除全部 FTS5 语法字符（: , ; { } [ ] < > ~ & | ! " * ^ - 等），
  *   防止含标点查询触发 fts5 syntax error
  */
-function buildFtsQuery(query: string): string {
+export function buildFtsQuery(query: string): string {
   const cleaned = query.replace(/[^\p{L}\p{N}\s]/gu, '').trim()
   if (!cleaned) return ''
   const tokens = cleaned.split(/\s+/).filter((t) => t.length > 0)
@@ -721,8 +727,8 @@ function buildFtsQuery(query: string): string {
       if (/^[a-zA-Z0-9]+$/.test(tok) && tok.length >= 2) {
         return `${tok}*`
       }
-      // 中文逐字拆分，用空格连接 → FTS5 隐式 AND（所有字都出现即可，不要求连续）
-      return tok.split('').join(' ')
+      // 中文逐字拆分，每字追加 * 前缀匹配
+      return tok.split('').map((ch) => `${ch}*`).join(' ')
     })
     .join(' ')
 }

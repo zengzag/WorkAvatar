@@ -6,6 +6,7 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
   DEFAULT_CONFIG,
+  createDefaultMcpApiKey,
 } from './kms-mcp-types'
 import type {
   KMSMCPToolCategoryInfo,
@@ -75,6 +76,19 @@ class KMSMCPService {
 
   updateConfig(config: Partial<KMSMCPConfig>): void {
     this.config = { ...this.config, ...config }
+    // 端口夹取，越界值会让 start() 总是失败
+    if (Number.isFinite(this.config.port)) {
+      this.config.port = Math.min(65535, Math.max(1, Math.floor(Number(this.config.port))))
+    }
+    if (!this.config.apiKey || this.config.apiKey.trim().length < 16) {
+      this.config.apiKey = createDefaultMcpApiKey()
+    }
+  }
+
+  resetApiKey(): string {
+    const apiKey = createDefaultMcpApiKey()
+    this.config.apiKey = apiKey
+    return apiKey
   }
 
   getStatus(): { running: boolean; port: number; url: string } {
@@ -251,13 +265,13 @@ class KMSMCPService {
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.method === 'OPTIONS') {
-      this.setCORSHeaders(res)
+      this.setCORSHeaders(req, res)
       res.writeHead(204)
       res.end()
       return
     }
 
-    this.setCORSHeaders(res)
+    this.setCORSHeaders(req, res)
 
     if (req.method !== 'POST') {
       this.sendJsonRpcError(res, 405, -32600, 'Method not allowed', null)
@@ -269,13 +283,12 @@ class KMSMCPService {
       return
     }
 
-    if (this.config.apiKey) {
-      const authHeader = req.headers['authorization'] || ''
-      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-      if (token !== this.config.apiKey) {
-        this.sendJsonRpcError(res, 401, -32001, 'Unauthorized: invalid API key', null)
-        return
-      }
+    const authHeader = req.headers['authorization'] || ''
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+    if (!token || token !== this.config.apiKey) {
+      logger.warn(`Rejected MCP request from ${req.socket.remoteAddress || 'unknown'}: invalid API key`)
+      this.sendJsonRpcError(res, 401, -32001, 'Unauthorized: invalid API key', null)
+      return
     }
 
     const sessionId = req.headers['mcp-session-id'] as string | undefined
@@ -498,10 +511,26 @@ class KMSMCPService {
     }
   }
 
-  private setCORSHeaders(res: http.ServerResponse) {
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id')
+  private setCORSHeaders(req: http.IncomingMessage, res: http.ServerResponse) {
+    const origin = String(req.headers.origin || '')
+    // 浏览器跨域请求必须带 Authorization；仅允许本机/受信任 Origin，避免 drive-by CSRF。
+    const allowedLocalOrigins = [
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'file://',
+    ]
+    const isLocalBrowserOrigin = allowedLocalOrigins.some(o => origin === o || origin.startsWith(o))
+    if (origin && !isLocalBrowserOrigin) {
+      res.setHeader('Vary', 'Origin')
+      return
+    }
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Vary', 'Origin')
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id')
+      res.setHeader('Access-Control-Max-Age', '600')
+    }
   }
 
   /** 发送 JSON-RPC 错误响应 */

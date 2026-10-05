@@ -19,6 +19,9 @@ const logger = createLogger('KMS-KnowledgeCard')
 
 /** 卡片归档天数：90天未被搜索/查看且非置顶 → 归档 */
 const CARD_ARCHIVE_DAYS = 90
+const CARD_EVAL_DEBOUNCE_MS = 45_000
+const CARD_LLM_HOURLY_BUDGET = 10
+const CARD_LLM_DAILY_BUDGET = 30
 
 /** 从 agent loop 跟踪的访问文件构建引用 */
 function buildCitationsFromAccessedFiles(files: AccessedFile[]): KnowledgeCardCitation[] {
@@ -59,9 +62,14 @@ class KMSKnowledgeCardService {
   private static instance: KMSKnowledgeCardService
   /** 正在生成/刷新的关键词，防止并发重复生成 */
   private generatingKeywords = new Set<string>()
+  private evaluationInFlight = false
+  private lastAutoEvaluationAt = 0
+  private llmCallTimes: number[] = []
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
+    // 启动即清理历史上崩溃残留的 __refreshing__ 卡片（原先只在 refreshCard 时触发）
+    this.recoverInterruptedRefresh()
   }
 
   static getInstance(): KMSKnowledgeCardService {
@@ -461,58 +469,97 @@ class KMSKnowledgeCardService {
     }
   }
 
+  private pruneLlmBudget(): void {
+    const now = Date.now()
+    this.llmCallTimes = this.llmCallTimes.filter(t => now - t < 24 * 60 * 60 * 1000)
+  }
+
+  private canConsumeLlmCall(): boolean {
+    this.pruneLlmBudget()
+    const now = Date.now()
+    const hourlyCount = this.llmCallTimes.filter(t => now - t < 60 * 60 * 1000).length
+    if (hourlyCount >= CARD_LLM_HOURLY_BUDGET) return false
+    if (this.llmCallTimes.length >= CARD_LLM_DAILY_BUDGET) return false
+    return true
+  }
+
+  private consumeLlmCall(): void {
+    this.llmCallTimes.push(Date.now())
+  }
+
   async evaluateCards(force: boolean = false): Promise<{ generated: number; refreshed: number; archived: number }> {
     const settings = getKmsSettings()
     if (!settings.searchParams.enableKnowledgeCards) return { generated: 0, refreshed: 0, archived: 0 }
+    if (this.evaluationInFlight) return { generated: 0, refreshed: 0, archived: 0 }
+    if (!force && Date.now() - this.lastAutoEvaluationAt < CARD_EVAL_DEBOUNCE_MS) {
+      return { generated: 0, refreshed: 0, archived: 0 }
+    }
+
+    this.evaluationInFlight = true
+    if (!force) this.lastAutoEvaluationAt = Date.now()
 
     let generated = 0
     let refreshed = 0
     let archived = 0
 
     try {
-      const threshold = settings.searchParams.knowledgeCardThreshold || 5
-      const hotKeywords = KMSKeywordStatsService.getInstance().findHotKeywordsWithoutCards(threshold)
-      for (const kw of hotKeywords.slice(0, 5)) {
-        try {
-          const result = await this.generateCard(kw.keyword, kw.displayKeyword)
-          if (result.success) generated++
-        } catch (err: any) {
-          logger.warn(`Auto-generate card for "${kw.keyword}" failed:`, err?.message || err)
-        }
-      }
-    } catch (err: any) {
-      logger.warn('Auto-generate cards failed:', err?.message || err)
-    }
-
-    if (force || settings.searchParams.autoRefreshStaleCards) {
       try {
-        const staleCards = this.db.prepare("SELECT id FROM kms_knowledge_cards WHERE status = 'stale' ORDER BY updated_at ASC LIMIT 3").all() as any[]
-        for (const c of staleCards) {
+        const threshold = settings.searchParams.knowledgeCardThreshold || 5
+        const hotKeywords = KMSKeywordStatsService.getInstance().findHotKeywordsWithoutCards(threshold)
+        for (const kw of hotKeywords.slice(0, 5)) {
+          if (!this.canConsumeLlmCall()) {
+            logger.warn('Skip knowledge card generation: hourly/daily LLM budget reached')
+            break
+          }
           try {
-            const result = await this.refreshCard(c.id)
-            if (result.success) refreshed++
+            this.consumeLlmCall()
+            const result = await this.generateCard(kw.keyword, kw.displayKeyword)
+            if (result.success) generated++
           } catch (err: any) {
-            logger.warn(`Refresh card ${c.id} failed:`, err?.message || err)
+            logger.warn(`Auto-generate card for "${kw.keyword}" failed:`, err?.message || err)
           }
         }
       } catch (err: any) {
-        logger.warn('Auto-refresh stale cards failed:', err?.message || err)
+        logger.warn('Auto-generate cards failed:', err?.message || err)
       }
-    }
 
-    try {
-      const now = Math.floor(Date.now() / 1000)
-      const archiveCutoff = now - CARD_ARCHIVE_DAYS * 86400
-      const result = this.db.prepare(`UPDATE kms_knowledge_cards SET status = 'archived', updated_at = unixepoch() WHERE status = 'active' AND pinned = 0 AND updated_at < ?`).run(archiveCutoff)
-      archived = result.changes
-    } catch (err: any) {
-      logger.warn('Archive old cards failed:', err?.message || err)
-    }
+      if (force || settings.searchParams.autoRefreshStaleCards) {
+        try {
+          const staleCards = this.db.prepare("SELECT id FROM kms_knowledge_cards WHERE status = 'stale' ORDER BY updated_at ASC LIMIT 3").all() as any[]
+          for (const c of staleCards) {
+            if (!this.canConsumeLlmCall()) {
+              logger.warn('Skip stale knowledge card refresh: hourly/daily LLM budget reached')
+              break
+            }
+            try {
+              this.consumeLlmCall()
+              const result = await this.refreshCard(c.id)
+              if (result.success) refreshed++
+            } catch (err: any) {
+              logger.warn(`Refresh card ${c.id} failed:`, err?.message || err)
+            }
+          }
+        } catch (err: any) {
+          logger.warn('Auto-refresh stale cards failed:', err?.message || err)
+        }
+      }
 
-    if (generated > 0 || refreshed > 0 || archived > 0) {
-      logger.info(`Card evaluation: generated=${generated}, refreshed=${refreshed}, archived=${archived}`)
+      try {
+        const now = Math.floor(Date.now() / 1000)
+        const archiveCutoff = now - CARD_ARCHIVE_DAYS * 86400
+        const result = this.db.prepare(`UPDATE kms_knowledge_cards SET status = 'archived', updated_at = unixepoch() WHERE status = 'active' AND pinned = 0 AND updated_at < ?`).run(archiveCutoff)
+        archived = result.changes
+      } catch (err: any) {
+        logger.warn('Archive old cards failed:', err?.message || err)
+      }
+
+      if (generated > 0 || refreshed > 0 || archived > 0) {
+        logger.info(`Card evaluation: generated=${generated}, refreshed=${refreshed}, archived=${archived}`)
+      }
+      return { generated, refreshed, archived }
+    } finally {
+      this.evaluationInFlight = false
     }
-    return { generated, refreshed, archived }
   }
 }
 

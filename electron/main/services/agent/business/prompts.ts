@@ -163,25 +163,36 @@ export function buildCapabilitiesPrompt(params: {
   return lines.join('\n')
 }
 
-/** Delegation 多员工协作能力文本（随员工稳定上下文注入） */
+/**
+ * Delegation 多员工协作能力文本（随员工稳定上下文注入）。
+ * delegationTargets 为空但 delegationEnabled 时仍注入临时角色说明（开启委托即注册工具）。
+ */
 export function buildDelegationPrompt(
-  delegationTargets: Array<{ id: string; name: string; description?: string; role?: string }>
+  delegationTargets: Array<{ id: string; name: string; description?: string; role?: string }>,
+  delegationEnabled?: boolean
 ): string | undefined {
-  if (delegationTargets.length === 0) return undefined
-  const listText = delegationTargets
-    .map(e => {
-      const desc = e.description?.trim() || e.role?.trim()
-      return `- ${e.name} (id=${e.id})${desc ? `: ${desc}` : ''}`
-    })
-    .join('\n')
+  const targetsText = delegationTargets.length > 0
+    ? ['Available delegatees (select the employee whose capabilities best match the task):',
+      delegationTargets.map(e => {
+        const desc = e.description?.trim() || e.role?.trim()
+        return `- ${e.name} (id=${e.id})${desc ? `: ${desc}` : ''}`
+      }).join('\n')]
+    : delegationEnabled
+      ? ['Available delegatees: none pre-registered. When no existing employee fits the task, create an ephemeral sub-agent instead; reuse a persisted sub-agent profile (list_subagent_profiles) when one exists.']
+      : []
+  if (targetsText.length === 0) return undefined
   return [
     'Delegation (multi-employee collaboration):',
-    'Available delegatees (select the employee whose capabilities best match the task):',
-    listText,
+    ...targetsText,
     'Delegation tools:',
-    '- delegate_to_employee: delegate a single sub-task and wait synchronously for its result.',
+    '- delegate_to_employee: delegate a single sub-task and wait synchronously for its result (or run_in_background for async).',
     '- launch_agents + await_agents: dispatch multiple independent sub-tasks in parallel, then await and aggregate their results.',
     '- followup_delegation: ask follow-up questions or request revisions on a completed delegation; the sub-agent retains the original task context and supports multi-turn collaboration.',
+    'Choosing the executor (reuse-first):',
+    '1. Prefer an available delegatee whose capabilities match; only create an ephemeral sub-agent (ephemeral_role) when none fits.',
+    '2. Ephemeral sub-agents are one-off workers created on demand: give a concise duty name and a fully self-contained system_prompt (identity, responsibilities, output requirements, constraints). They never see this conversation and disappear when the task ends.',
+    '3. Reuse a persisted sub-agent profile (subagent_profile_id, query via list_subagent_profiles) instead of re-declaring the same ephemeral role repeatedly.',
+    '4. Narrow the ephemeral tool allowlist (tools) only when the task truly needs a restricted capability (e.g. read-only research).',
     'Workflow for complex tasks:',
     '1. Plan: split the task into independent, clearly bounded sub-tasks.',
     '2. Parallelize: dispatch every independent sub-task in a single launch_agents call rather than one by one.',

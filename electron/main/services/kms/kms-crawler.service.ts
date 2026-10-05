@@ -413,7 +413,10 @@ class KMSCrawlerService {
       .run(tier, fileId)
   }
 
-  logFileAccess(fileId: string, accessType: 'search_hit' | 'read' | 'summary_view'): void {
+  logFileAccess(
+    fileId: string,
+    accessType: 'search_hit' | 'read' | 'summary_view' | 'open_preview' | 'open_native' | 'llm_cited' | 'copy_path' | 'favorite' | 'pin'
+  ): void {
     const exists = this.db.prepare('SELECT 1 FROM kms_files WHERE id = ?').get(fileId)
     if (!exists) return
 
@@ -423,7 +426,10 @@ class KMSCrawlerService {
     ).run(id, fileId, accessType)
   }
 
-  logFileAccessBatch(fileIds: string[], accessType: 'search_hit' | 'read' | 'summary_view'): void {
+  logFileAccessBatch(
+    fileIds: string[],
+    accessType: 'search_hit' | 'read' | 'summary_view' | 'open_preview' | 'open_native' | 'llm_cited' | 'copy_path' | 'favorite' | 'pin'
+  ): void {
     if (fileIds.length === 0) return
     const uniqueIds = [...new Set(fileIds)]
     const placeholders = uniqueIds.map(() => '?').join(',')
@@ -438,8 +444,8 @@ class KMSCrawlerService {
    * 批量获取文件访问统计（单次聚合查询，避免 N+1）
    * 大数组自动分批，避免 SQLite 参数上限（SQLITE_MAX_VARIABLE_NUMBER 默认 999）
    */
-  getFileAccessStatsBatch(fileIds: string[], days: number = 30): Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }> {
-    const result = new Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }>()
+  getFileAccessStatsBatch(fileIds: string[], days: number = 30): Map<string, { hitCount: number; readCount: number; engagementScore: number; lastAccessed: number | null }> {
+    const result = new Map<string, { hitCount: number; readCount: number; engagementScore: number; lastAccessed: number | null }>()
     if (fileIds.length === 0) return result
     const since = Math.floor(Date.now() / 1000) - days * 86400
 
@@ -451,17 +457,25 @@ class KMSCrawlerService {
       const rows = this.db.prepare(`
         SELECT file_id,
                SUM(CASE WHEN access_type = 'search_hit' AND accessed_at >= ? THEN 1 ELSE 0 END) AS hit_count,
-               SUM(CASE WHEN access_type = 'read'        AND accessed_at >= ? THEN 1 ELSE 0 END) AS read_count,
+               SUM(CASE WHEN access_type IN ('read', 'open_preview', 'open_native') AND accessed_at >= ? THEN 1 ELSE 0 END) AS read_count,
+               SUM(CASE
+                 WHEN access_type IN ('favorite', 'pin') AND accessed_at >= ? THEN 5
+                 WHEN access_type IN ('llm_cited', 'open_native') AND accessed_at >= ? THEN 3
+                 WHEN access_type IN ('read', 'open_preview', 'copy_path', 'summary_view') AND accessed_at >= ? THEN 2
+                 WHEN access_type = 'search_hit' AND accessed_at >= ? THEN 1
+                 ELSE 0
+               END) AS engagement_score,
                MAX(accessed_at) AS last_accessed
         FROM kms_access_log
         WHERE file_id IN (${placeholders})
         GROUP BY file_id
-      `).all(since, since, ...batch) as any[]
+      `).all(since, since, since, since, since, since, ...batch) as any[]
 
       for (const row of rows) {
         result.set(row.file_id, {
           hitCount: row.hit_count || 0,
           readCount: row.read_count || 0,
+          engagementScore: row.engagement_score || 0,
           lastAccessed: row.last_accessed || null,
         })
       }
@@ -470,7 +484,7 @@ class KMSCrawlerService {
     // 确保 所有请求的 fileId 都有条目（即使无访问记录）
     for (const id of fileIds) {
       if (!result.has(id)) {
-        result.set(id, { hitCount: 0, readCount: 0, lastAccessed: null })
+        result.set(id, { hitCount: 0, readCount: 0, engagementScore: 0, lastAccessed: null })
       }
     }
     return result
@@ -563,6 +577,29 @@ class KMSCrawlerService {
     return results
   }
 
+  private assignContentVersionByHash(fileId: string, hash: string, fileSize: number, canonicalFileId?: string): string {
+    const existing = this.db.prepare('SELECT id FROM kms_content_versions WHERE exact_hash = ?').get(hash) as any
+    let versionId: string
+    if (existing) {
+      versionId = existing.id
+      this.db.prepare(`
+        UPDATE kms_content_versions
+        SET last_seen_at = unixepoch(),
+            canonical_file_id = COALESCE(?, canonical_file_id),
+            file_size = CASE WHEN ? > 0 THEN ? ELSE file_size END
+        WHERE id = ?
+      `).run(canonicalFileId || null, fileSize, fileSize, versionId)
+    } else {
+      versionId = generateId()
+      this.db.prepare(`
+        INSERT INTO kms_content_versions (id, exact_hash, canonical_file_id, file_size, status)
+        VALUES (?, ?, ?, ?, 'active')
+      `).run(versionId, hash, canonicalFileId || fileId, fileSize)
+    }
+    this.db.prepare('UPDATE kms_files SET content_version_id = ? WHERE id = ?').run(versionId, fileId)
+    return versionId
+  }
+
   /**
    * 注册新文件到数据库（使用预计算的哈希，避免重复读取文件内容）
    * - 如果 file_path 已存在（重叠目录场景），直接跳过
@@ -590,12 +627,14 @@ class KMSCrawlerService {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'cold')
       `).run(id, dirId, diskFile.filePath, diskFile.fileName, ext, diskFile.fileSize, hash, diskFile.modifiedTime)
 
-      KMSSearchEngineService.getInstance().cloneIndexData(existingFile.id, id)
+      this.assignContentVersionByHash(existingFile.id, hash, diskFile.fileSize)
+      this.assignContentVersionByHash(id, hash, diskFile.fileSize, existingFile.id)
     } else {
       this.db.prepare(`
         INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'cold')
       `).run(id, dirId, diskFile.filePath, diskFile.fileName, ext, diskFile.fileSize, hash, diskFile.modifiedTime)
+      this.assignContentVersionByHash(id, hash, diskFile.fileSize)
     }
   }
 
@@ -614,7 +653,8 @@ class KMSCrawlerService {
       this.db.prepare(`
         UPDATE kms_files SET file_hash = ?, modified_time = ?, file_size = ?, index_status = 'completed', updated_at = unixepoch() WHERE id = ?
       `).run(newHash, modifiedTime, fileSize, fileId)
-      searchEngine.cloneIndexData(existingFile.id, fileId)
+      this.assignContentVersionByHash(existingFile.id, newHash, fileSize)
+      this.assignContentVersionByHash(fileId, newHash, fileSize, existingFile.id)
     } else {
       this.db.prepare(`
         UPDATE kms_files SET file_hash = ?, modified_time = ?, file_size = ?, index_status = 'modified', updated_at = unixepoch() WHERE id = ?

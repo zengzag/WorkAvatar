@@ -165,6 +165,8 @@ describe('employee-export-config / buildConfigData', () => {
       description: 'D',
       rules: '',
       avatar_type: 'default',
+      avatar_icon: '',
+      avatar_color: '',
       profile_json: '',
       memory_enabled: false,
       default_skill_id: null,
@@ -457,16 +459,16 @@ describe('employee-export-config / applyImportData 细节', () => {
     }))
     const insert = mockState.log.find(l => l.sql === 'insert-employee')!
     expect(insert.args[0]).toBe(r.employeeId)
-    expect(insert.args[6]).toBe(0)
-    expect(insert.args[7]).toBeNull()
+    expect(insert.args[8]).toBe(0)
+    expect(insert.args[9]).toBeNull()
 
     mockState.log.length = 0
     service.importConfigFromData(validConfig({
       employee: { ...validConfig().employee, memory_enabled: true, default_skill_id: 'sk-1' },
     }))
     const insert2 = mockState.log.find(l => l.sql === 'insert-employee')!
-    expect(insert2.args[6]).toBe(1)
-    expect(insert2.args[7]).toBe('sk-1')
+    expect(insert2.args[8]).toBe(1)
+    expect(insert2.args[9]).toBe('sk-1')
   })
 })
 

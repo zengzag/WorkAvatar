@@ -121,3 +121,9 @@ export type {
   FileChangeItem,
   SnapshotRevertResult,
 } from './channels/snapshot'
+export type {
+  SubAgentProfileCreateParams,
+  SubAgentProfileUpdateParams,
+  SubAgentProfileResult,
+} from './channels/subagent'
+export type { SubAgentProfile } from './types'

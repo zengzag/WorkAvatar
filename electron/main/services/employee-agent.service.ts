@@ -11,6 +11,10 @@ import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import { PROMPT_FORMAT_MARKER } from './agent/business/prompts'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
+import {
+  listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool, cancelSubagentTool,
+  readRunNotificationsTool, taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
+} from './agent/tools/subagent-tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import { createMemorySearchTool } from './agent/tools/memory-search.tool'
@@ -229,8 +233,8 @@ class EmployeeAgentService {
       : undefined
 
     // 委托能力：由员工委托设置驱动（不再是可配置工具）。
-    // 开启且选择了目标时：委托类工具（串行/并行）注册给 agent，可委托员工列表注入上下文信息 [DELEGATION] 段。
-    // 目标列表过滤：不存在的员工 + 明确拒绝被委托的员工（运行时 launchSubAgent 仍会做最终校验）。
+    // 开启委托即注册委托类工具（允许 targetIds 为空：此时可派发临时子智能体/模板）。
+    // targets 过滤：不存在的员工 + 明确拒绝被委托的员工（运行时 launchSubAgent 仍会做最终校验）。
     const delegation = parseEmployeeDelegation(emp.delegation_json)
     const delegationTargets = delegation.enabled && delegation.targetIds.length > 0
       ? this.queryDelegationTargets(delegation.targetIds)
@@ -263,6 +267,7 @@ class EmployeeAgentService {
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       delegationTargets,
+      delegationEnabled: delegation.enabled === true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
         // 稳定不变的环境信息（系统环境）保留在 system prompt；
@@ -277,7 +282,7 @@ class EmployeeAgentService {
 
     const agentOptions: BaseAgentOptions = {
       memoryConfig: {
-        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 128000),
+        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 256 * 1024),
         strategy: modelConfig?.memory_strategy ?? 'sliding_window_with_summary',
         recentTurnsToKeep: modelConfig?.recent_turns_to_keep ?? 10,
       },
@@ -304,10 +309,15 @@ class EmployeeAgentService {
     const toolModes = this.getEmployeeToolModes(employeeId, memoryEnabled)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
-    // 委托类工具（串行委托 + 并行派发 + 追问）：仅当委托能力开启且存在有效目标时注册，
-    // 不走 employee_tools 三态配置（对应员工设置抽屉的「委托」Tab）
-    if (delegationTargets.length > 0) {
-      agent.registerTools([delegateTool, followupTool, launchAgentsTool, awaitAgentsTool])
+    // 委托类工具（串行委托 + 并行派发 + 追问 + 运行观测/台账/结构化上报）：
+    // 开启委托即注册（targets 可为空，此时支持临时子智能体/模板），不走 employee_tools 三态配置
+    if (delegation.enabled) {
+      agent.registerTools([
+        delegateTool, followupTool, launchAgentsTool, awaitAgentsTool,
+        listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool,
+        cancelSubagentTool, readRunNotificationsTool,
+        taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
+      ])
     }
 
     // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置

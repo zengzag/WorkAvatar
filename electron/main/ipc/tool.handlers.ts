@@ -346,6 +346,9 @@ export function registerToolHandlers(
     if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) {
       return { success: false, error: 'registered employee tool config is read-only' }
     }
+    if (!isValidToolMode(params.mode)) {
+      return { success: false, error: `非法的工具模式: ${params.mode}` }
+    }
     const mode = params.mode
     assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
@@ -360,6 +363,9 @@ export function registerToolHandlers(
     // 注册员工（内置/插件）工具配置只读，禁止写入
     if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) {
       return { success: false, error: 'registered employee tool config is read-only' }
+    }
+    if (!isValidToolMode(params.mode)) {
+      return { success: false, error: `非法的工具模式: ${params.mode}` }
     }
     const categoryDef = buildToolCategoryDefs().find(c => c.id === params.category_id)
     if (!categoryDef) {

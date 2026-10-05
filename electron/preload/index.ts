@@ -77,6 +77,10 @@ import type {
   PluginMessageActionInfo,
   FileChangeItem,
   SnapshotRevertResult,
+  SubAgentProfile,
+  SubAgentProfileCreateParams,
+  SubAgentProfileUpdateParams,
+  SubAgentProfileResult,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -435,6 +439,11 @@ const electronAPI = {
     addStopWord: (word: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_STOP_WORD, word),
     deleteStopWord: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_STOP_WORD, id),
     clearAutoStopWords: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_AUTO_STOP_WORDS),
+    // 敏感内容控制（AI 排除级别）
+    setFileAiExclusion: (params: { fileId: string; level: 0 | 1 | 2 }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SET_FILE_AI_EXCLUSION, params),
+    setDirAiExclusion: (params: { dirId: string; level: 0 | 1 | 2 }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SET_DIR_AI_EXCLUSION, params),
+    listAiExclusions: (params?: { dirId?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_AI_EXCLUSIONS, params),
+    purgeArchivedVectors: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_PURGE_ARCHIVED_VECTORS),
   },
 
   kmsMcp: {
@@ -443,6 +452,7 @@ const electronAPI = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_STATUS),
     getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_CONFIG),
     setConfig: (params: KMSMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_SET_CONFIG, params),
+    resetApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_RESET_API_KEY),
     listCategories: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_CATEGORIES) as Promise<KMSMCPToolCategoryInfo[]>,
     listExposedTools: (params?: { tool_categories?: string[] }) =>
       ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_EXPOSED_TOOLS, params) as Promise<KMSMCPExposedTool[]>,
@@ -522,6 +532,17 @@ const electronAPI = {
     resolveFileOwner: (extension: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
+  },
+
+  // 子智能体模板（SubAgentProfile）管理
+  subagent: {
+    listProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_LIST) as Promise<SubAgentProfile[]>,
+    createProfile: (params: SubAgentProfileCreateParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_CREATE, params) as Promise<SubAgentProfileResult>,
+    updateProfile: (params: SubAgentProfileUpdateParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_UPDATE, params) as Promise<SubAgentProfileResult>,
+    deleteProfile: (id: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_DELETE, id) as Promise<SubAgentProfileResult>,
   },
 }
 

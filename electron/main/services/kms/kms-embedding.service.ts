@@ -29,24 +29,119 @@ class KMSEmbeddingService {
     return KMSEmbeddingService.instance
   }
 
-  /**
-   * 从向量库加载所有已嵌入条目的 (source_type, source_id) 集合。
-   *
-   * 替代原跨库 LEFT JOIN 查询：
-   * 原 SQL `LEFT JOIN kms_embeddings e ON si.source_type = e.source_type AND si.source_id = e.source_id WHERE e.id IS NULL`
-   * 在分库后不可用（跨库 JOIN 失效），改为在应用层用 Set 过滤。
-   *
-   * @returns Set<`${source_type}:${source_id}`>
-   */
-  private loadExistingEmbeddingKeys(): Set<string> {
-    const keys = new Set<string>()
-    const rows = this.vectorDb.prepare(
-      'SELECT source_type, source_id FROM kms_embeddings'
-    ).all() as any[]
-    for (const row of rows) {
-      keys.add(`${row.source_type}:${row.source_id}`)
+
+  private getEligibleCandidates(lastId: string, limit: number): any[] {
+    return this.db.prepare(`
+      SELECT si.id, si.source_type, si.source_id, si.file_id, si.title, si.content,
+             COALESCE(f.content_version_id, '') AS content_version_id, f.file_hash
+      FROM kms_search_index si
+      JOIN kms_files f ON f.id = si.file_id
+      WHERE si.content != ''
+        AND (
+          si.source_type IN ('document', 'file_title', 'file_summary')
+          OR (si.source_type IN ('paragraph', 'content_paragraph') AND f.data_tier = 'hot')
+        )
+        AND si.id > ?
+      ORDER BY si.id
+      LIMIT ?
+    `).all(lastId, limit) as any[]
+  }
+
+  reconcileJobs(modelKey: string): number {
+    let enqueued = 0
+    let lastId = ''
+    const pageSize = 500
+    while (true) {
+      const candidates = this.getEligibleCandidates(lastId, pageSize)
+      if (candidates.length === 0) break
+      lastId = candidates[candidates.length - 1].id
+      const tx = this.vectorDb.transaction(() => {
+        for (const c of candidates) {
+          const result = this.vectorDb.prepare(`
+            INSERT INTO kms_embedding_jobs (
+              id, model_key, file_id, content_version_id, source_type, source_id, content_hash, status, priority, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 100, unixepoch(), unixepoch())
+            ON CONFLICT(model_key, source_type, source_id, content_hash) DO UPDATE SET
+              file_id = excluded.file_id,
+              content_version_id = excluded.content_version_id,
+              status = CASE WHEN status = 'failed' THEN 'pending' ELSE status END,
+              updated_at = unixepoch()
+          `).run(
+            `${modelKey}:${c.source_type}:${c.source_id}:${c.file_hash}`,
+            modelKey, c.file_id, c.content_version_id, c.source_type, c.source_id, c.file_hash
+          )
+          if (result.changes > 0) enqueued++
+        }
+      })
+      tx()
+      if (candidates.length < pageSize) break
     }
-    return keys
+    return enqueued
+  }
+
+  private claimJobs(modelKey: string, limit: number): any[] {
+    const lockId = `worker:${process.pid}:${Date.now()}`
+    const lockedUntil = Math.floor(Date.now() / 1000) + 10 * 60
+    return this.vectorDb.transaction(() => {
+      const rows = this.vectorDb.prepare(`
+        SELECT * FROM kms_embedding_jobs
+        WHERE model_key = ?
+          AND (status = 'pending' OR (status = 'running' AND locked_until < unixepoch()))
+        ORDER BY priority ASC, updated_at ASC
+        LIMIT ?
+      `).all(modelKey, limit) as any[]
+      for (const row of rows) {
+        this.vectorDb.prepare(`
+          UPDATE kms_embedding_jobs
+          SET status = 'running', locked_by = ?, locked_until = ?, attempts = attempts + 1, updated_at = unixepoch()
+          WHERE id = ?
+        `).run(lockId, lockedUntil, row.id)
+      }
+      return rows
+    })()
+  }
+
+  private completeJob(job: any): void {
+    this.vectorDb.prepare(`
+      UPDATE kms_embedding_jobs
+      SET status = 'done', locked_by = '', locked_until = 0, last_error = '', updated_at = unixepoch()
+      WHERE id = ?
+    `).run(job.id)
+  }
+
+  private failJob(job: any, error: string): void {
+    this.vectorDb.prepare(`
+      UPDATE kms_embedding_jobs
+      SET status = CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END,
+          locked_by = '',
+          locked_until = 0,
+          last_error = ?,
+          updated_at = unixepoch()
+      WHERE id = ?
+    `).run(error.substring(0, 1000), job.id)
+  }
+
+  private loadCandidatesForJobs(jobs: any[]): any[] {
+    const fileIds = [...new Set(jobs.map(j => j.file_id))]
+    const rows: any[] = []
+    for (let i = 0; i < fileIds.length; i += 500) {
+      const batch = fileIds.slice(i, i + 500)
+      const placeholders = batch.map(() => '?').join(',')
+      const candidates = this.db.prepare(`
+        SELECT si.id, si.source_type, si.source_id, si.file_id, si.title, si.content
+        FROM kms_search_index si
+        JOIN kms_files f ON f.id = si.file_id
+        WHERE si.file_id IN (${placeholders})
+          AND si.content != ''
+          AND (
+            si.source_type IN ('document', 'file_title', 'file_summary')
+            OR (si.source_type IN ('paragraph', 'content_paragraph') AND f.data_tier = 'hot')
+          )
+      `).all(...batch) as any[]
+      rows.push(...candidates)
+    }
+    const byKey = new Map(rows.map(r => [`${r.file_id}:${r.source_type}:${r.source_id}`, r]))
+    return jobs.map(j => byKey.get(`${j.file_id}:${j.source_type}:${j.source_id}`)).filter(Boolean)
   }
 
   async generateEmbeddings(
@@ -86,93 +181,48 @@ class KMSEmbeddingService {
     const llmClient = LLMClientService.getInstance()
 
     if (forceRegenerate) {
-      logger.info('Force regenerate embeddings: clearing all existing embeddings')
-      const clearAll = this.vectorDb.transaction(() => {
-        this.vectorDb.prepare('DELETE FROM kms_embeddings').run()
-        try {
-          this.vectorDb.prepare('DELETE FROM vec_kms_embeddings').run()
-        } catch (err: any) {
-          logger.warn('清理 vec_kms_embeddings 失败:', err?.message || err)
-        }
-      })
-      clearAll()
-      searchEngine.invalidateCache()
+      logger.info('Force regenerate embeddings: current-model vectors will be reset after embedding dimension is known')
     }
 
-    // 从向量库加载已嵌入条目的 (source_type, source_id) 集合
-    // 用于在应用层过滤未嵌入条目（替代原跨库 LEFT JOIN）
-    const existingKeys = this.loadExistingEmbeddingKeys()
+    this.reconcileJobs(modelLabel)
+    if (forceRegenerate) {
+      this.vectorDb.prepare(`
+        UPDATE kms_embedding_jobs
+        SET status = 'pending', attempts = 0, locked_by = '', locked_until = 0, last_error = '', updated_at = unixepoch()
+        WHERE model_key = ?
+      `).run(modelLabel)
+    }
 
-    const batchSize = 20
-    const pageLimit = 500
+    const totalToProcess = (this.vectorDb.prepare(`
+      SELECT COUNT(*) AS cnt FROM kms_embedding_jobs
+      WHERE model_key = ? AND status IN ('pending','running')
+    `).get(modelLabel) as any)?.cnt || 0
     let totalProcessed = 0
-    let embeddingError: string | undefined
+    let vectorModelPrepared = false
 
-    // 统计待生成的唯一 (source_type, source_id) 数。
-    // content_paragraph 每段使用唯一 source_id（段落自身 id），故 DISTINCT 即逐段计数，
-    // 与 generateEmbeddings 实际逐段生成的条目一一对应，进度 current/total 严格协同。
-    // 不能再用 uniqueCandidates - existingKeys.size：existingKeys 可能含已失效旧 key
-    // （如旧版 content_paragraph 共用 fileId 生成的 key），减法会低估 total 导致进度超 100%。
-    const candidateRows = this.db.prepare(
-      "SELECT DISTINCT source_type, source_id FROM kms_search_index WHERE content != ''"
-    ).all() as any[]
-    let totalToProcess = 0
-    for (const row of candidateRows) {
-      if (!existingKeys.has(`${row.source_type}:${row.source_id}`)) {
-        totalToProcess++
-      }
+    logger.info(`Embedding queue: ${totalToProcess} job(s) (forceRegenerate=${forceRegenerate}, provider=${providerId})`)
+    if (totalToProcess === 0) {
+      onProgress?.({ phase: 'embedding', current: 0, total: 0, message: '没有需要生成向量嵌入的条目' })
+      searchEngine.invalidateCache()
+      return
     }
 
-    logger.info(`Embedding generation: ${totalToProcess} entry(s) to process (forceRegenerate=${forceRegenerate}, provider=${providerId})`)
-
-    // keyset 分页：用 id > ? 替代 OFFSET，避免大表 OFFSET 性能退化
-    let lastId = ''
     while (!signal?.aborted) {
-      const candidates = this.db.prepare(
-        "SELECT id, source_type, source_id, file_id, title, content FROM kms_search_index WHERE content != '' AND id > ? ORDER BY id LIMIT ?"
-      ).all(lastId, pageLimit) as any[]
+      const jobs = this.claimJobs(modelLabel, 100)
+      if (jobs.length === 0) break
+      const candidates = this.loadCandidatesForJobs(jobs)
+      const jobByKey = new Map(jobs.map(j => [`${j.file_id}:${j.source_type}:${j.source_id}`, j]))
 
-      if (candidates.length === 0) {
-        if (totalProcessed === 0) {
-          logger.info('No unembedded entries found')
-          onProgress?.({
-            phase: 'embedding',
-            current: 0,
-            total: 0,
-            message: '没有需要生成向量嵌入的条目',
-          })
-        }
-        break
-      }
-
-      lastId = candidates[candidates.length - 1].id
-
-      // 应用层过滤：排除向量库中已存在的条目 + 同页内 (source_type, source_id) 去重。
-      // content_paragraph 每段 source_id 唯一，此处天然逐段保留，无需特殊处理
-      const seenInPage = new Set<string>()
-      const unembedded: typeof candidates = []
-      for (const c of candidates) {
-        const key = `${c.source_type}:${c.source_id}`
-        if (!existingKeys.has(key) && !seenInPage.has(key)) {
-          seenInPage.add(key)
-          unembedded.push(c)
-        }
-      }
-
-      if (unembedded.length === 0) {
-        if (candidates.length < pageLimit) break
-        continue
-      }
-
-      onProgress?.({ phase: 'embedding', current: totalProcessed, total: totalToProcess, message: `生成向量嵌入: ${totalProcessed}/${totalToProcess}` })
-
-      for (let i = 0; i < unembedded.length; i += batchSize) {
+      for (let i = 0; i < candidates.length; i += 20) {
         if (signal?.aborted) break
-        const batch = unembedded.slice(i, i + batchSize)
+        const batch = candidates.slice(i, i + 20)
         const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, EMBEDDING_TEXT_LIMIT))
-
         try {
           const embeddings = await llmClient.createEmbeddings(providerId, texts)
+          if (!vectorModelPrepared && embeddings[0]?.length) {
+            searchEngine.prepareVectorModel(modelLabel, embeddings[0].length, false)
+            vectorModelPrepared = true
+          }
           const batchEntries = []
           for (let j = 0; j < batch.length && j < embeddings.length; j++) {
             batchEntries.push({
@@ -182,36 +232,26 @@ class KMSEmbeddingService {
               embedding: embeddings[j],
               model: modelLabel,
             })
+            const job = jobByKey.get(`${batch[j].file_id}:${batch[j].source_type}:${batch[j].source_id}`)
+            if (job) this.completeJob(job)
           }
-          if (batchEntries.length > 0) {
-            searchEngine.storeEmbeddingsBatch(batchEntries)
-            for (const entry of batchEntries) {
-              existingKeys.add(`${entry.sourceType}:${entry.sourceId}`)
-            }
-          }
+          if (batchEntries.length > 0) searchEngine.storeEmbeddingsBatch(batchEntries)
         } catch (err: any) {
-          logger.error('Batch embedding generation failed:', err)
-          if (!embeddingError) {
-            embeddingError = err?.message || String(err)
-            onProgress?.({
-              phase: 'error',
-              current: totalProcessed,
-              total: totalToProcess,
-              message: `向量嵌入失败: ${embeddingError}`,
-            })
+          const message = err?.message || String(err)
+          logger.error('Batch embedding generation failed:', message)
+          for (const candidate of batch) {
+            const job = jobByKey.get(`${candidate.file_id}:${candidate.source_type}:${candidate.source_id}`)
+            if (job) this.failJob(job, message)
           }
-          break
         }
-
         totalProcessed += batch.length
         onProgress?.({ phase: 'embedding', current: totalProcessed, total: totalToProcess, message: `生成向量嵌入: ${totalProcessed}/${totalToProcess}` })
       }
 
-      if (candidates.length < pageLimit) break
-      if (embeddingError) break
+      if (jobs.length < 100) break
     }
 
-    searchEngine.invalidateCache()
+    searchEngine.invalidateAllCaches()
   }
 
   async generateEmbeddingsForFile(
@@ -229,18 +269,25 @@ class KMSEmbeddingService {
       const searchEngine = KMSSearchEngineService.getInstance()
 
       // 从主库查询该文件的所有待嵌入条目
+      const fileRow = this.db.prepare('SELECT data_tier FROM kms_files WHERE id = ?').get(fileId) as any
+      const fileTier = fileRow?.data_tier || 'cold'
       const candidates = this.db.prepare(`
-        SELECT id, source_type, source_id, file_id, title, content
-        FROM kms_search_index
-        WHERE content != '' AND file_id = ?
-      `).all(fileId) as any[]
+        SELECT si.id, si.source_type, si.source_id, si.file_id, si.title, si.content
+        FROM kms_search_index si
+        WHERE si.content != ''
+          AND si.file_id = ?
+          AND (
+            si.source_type IN ('document', 'file_title', 'file_summary')
+            OR (si.source_type IN ('paragraph', 'content_paragraph') AND ? = 'hot')
+          )
+      `).all(fileId, fileTier) as any[]
 
       if (candidates.length === 0) return {}
 
       // 从向量库查询该文件已嵌入的 (source_type, source_id) 集合
       const existingRows = this.vectorDb.prepare(
-        'SELECT source_type, source_id FROM kms_embeddings WHERE file_id = ?'
-      ).all(fileId) as any[]
+        'SELECT source_type, source_id FROM kms_embeddings WHERE file_id = ? AND model = ?'
+      ).all(fileId, modelLabel) as any[]
       const existingKeys = new Set<string>()
       for (const row of existingRows) {
         existingKeys.add(`${row.source_type}:${row.source_id}`)
@@ -266,6 +313,9 @@ class KMSEmbeddingService {
         const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, EMBEDDING_TEXT_LIMIT))
         try {
           const embeddings = await llmClient.createEmbeddings(providerId, texts)
+          if (embeddings[0]?.length) {
+            searchEngine.prepareVectorModel(modelLabel, embeddings[0].length, false)
+          }
           const batchEntries = []
           for (let j = 0; j < batch.length && j < embeddings.length; j++) {
             batchEntries.push({

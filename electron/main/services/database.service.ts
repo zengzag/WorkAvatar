@@ -133,6 +133,9 @@ class DatabaseService {
         description TEXT DEFAULT '',
         rules TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
+        -- 自定义头像：图标 key（robot/user/... 空=按 avatar_type 预设或默认）与颜色 hex（空=按 id 自动配色）
+        avatar_icon TEXT DEFAULT '',
+        avatar_color TEXT DEFAULT '',
         default_skill_id TEXT,
         profile_json TEXT DEFAULT '',
         arch_version INTEGER NOT NULL DEFAULT 1,
@@ -220,7 +223,7 @@ class DatabaseService {
         model TEXT NOT NULL,
         embedding_model TEXT DEFAULT 'text-embedding-3-small',
         temperature REAL DEFAULT 0.7,
-        max_tokens INTEGER DEFAULT 4096,
+        max_tokens INTEGER DEFAULT 49152,
         timeout_ms INTEGER DEFAULT 60000,
         extra_headers_json TEXT,
         extra_body_json TEXT,
@@ -384,6 +387,21 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id);
 
+      -- 可复用子智能体模板（SubAgentProfile）：主管委托时可按 profile 指派
+      CREATE TABLE IF NOT EXISTS sub_agent_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        system_prompt TEXT NOT NULL DEFAULT '',
+        tools_json TEXT DEFAULT '[]',
+        skills_json TEXT DEFAULT '[]',
+        provider_id TEXT,
+        model_id TEXT,
+        source TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
+
       -- 工作区文件改动快照：文件写入/编辑/删除前记录变更前状态，供任务内回滚（见 file-snapshot.service）
       CREATE TABLE IF NOT EXISTS file_snapshots (
         id TEXT PRIMARY KEY,
@@ -447,11 +465,36 @@ class DatabaseService {
     // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
     migrateMemorySchema(this.db)
 
+    // 员工自定义头像增量列（幂等）：图标 key 与颜色 hex
+    const employeeColumns = this.db.prepare('PRAGMA table_info(employees)').all() as Array<{ name: string }>
+    for (const [name, ddl] of [
+      ['avatar_icon', "TEXT DEFAULT ''"],
+      ['avatar_color', "TEXT DEFAULT ''"],
+    ] as const) {
+      if (employeeColumns.length > 0 && !employeeColumns.some(c => c.name === name)) {
+        this.db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${ddl}`)
+        logger.info(`迁移：employees 增加 ${name} 列`)
+      }
+    }
+
     // 模板任务运行记录增量列：运行实际入参（幂等）
     const workflowRunColumns = this.db.prepare('PRAGMA table_info(workflow_runs)').all() as Array<{ name: string }>
     if (workflowRunColumns.length > 0 && !workflowRunColumns.some(c => c.name === 'variables_json')) {
       this.db.exec("ALTER TABLE workflow_runs ADD COLUMN variables_json TEXT DEFAULT '{}'")
       logger.info('迁移：workflow_runs 增加 variables_json 列')
+    }
+
+    // 子会话运行记录增量列（幂等）：临时角色规格 / 生命周期 / 最近活动时间
+    const subAgentRunColumns = this.db.prepare('PRAGMA table_info(sub_agent_runs)').all() as Array<{ name: string }>
+    for (const [name, ddl] of [
+      ['ephemeral_json', 'TEXT'],
+      ['lifecycle', "TEXT DEFAULT ''"],
+      ['last_activity_at', 'INTEGER'],
+    ] as const) {
+      if (subAgentRunColumns.length > 0 && !subAgentRunColumns.some(c => c.name === name)) {
+        this.db.exec(`ALTER TABLE sub_agent_runs ADD COLUMN ${name} ${ddl}`)
+        logger.info(`迁移：sub_agent_runs 增加 ${name} 列`)
+      }
     }
 
     // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建
