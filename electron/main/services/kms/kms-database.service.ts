@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
+import { isMainThread } from 'worker_threads'
 import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
 import KMSSearchEngineService from './kms-search-engine.service'
@@ -183,8 +184,11 @@ class KMSDatabaseService {
     conn.pragma('temp_store = MEMORY')
     // 页缓存 200MB（默认仅 2MB，对 2GB 库远远不够）
     conn.pragma('cache_size = -200000')
-    // mmap 256MB，用内存映射替代 read 系统调用，减少用户态/内核态切换
-    conn.pragma('mmap_size = 268435456')
+    // mmap：仅主线程启用（搜索/读取路径），索引 Worker 禁用。
+    // Windows 下只要有“第二个连接”持有 mmap，VACUUM 的文件截断就会静默失败（不报错但不收缩），
+    // 使重建/清理释放的空间无法回收、库文件只增不减。VACUUM 连接自身的 mmap 无影响，
+    // 故关闭 Worker 的 mmap 即可在保留主进程 mmap 读性能的同时让 VACUUM 正常收缩。
+    conn.pragma(`mmap_size = ${isMainThread ? 268435456 : 0}`)
     // WAL 自动 checkpoint 阈值提高到 8MB（默认 4MB），减少 checkpoint 频率
     conn.pragma('wal_autocheckpoint = 2000')
     // busy_timeout 10s：多线程/进程争用时等待而不是立即抛 SQLITE_BUSY
@@ -873,15 +877,19 @@ class KMSDatabaseService {
   }
 
   /**
-   * 优化 FTS5 虚表：重建或合并 FTS5 内部 segment，回收已删除文档占用的空间。
+   * 优化 FTS5 虚表：合并全部 segment，回收已删除文档占用的空间。
    *
    * FTS5 的 DELETE 只标记文档为已删除，实际数据仍保留在 segment 中。
    * SQLite 的 VACUUM 对 FTS5 虚表无效（只重建普通表 b-tree），无法回收 FTS5 空间。
    * 重建索引时大量 DELETE+INSERT 会导致 FTS5 segment 持续膨胀，必须通过 FTS5 专有命令回收。
    *
-   * @param mode 'rebuild' 完全重建（彻底回收，较慢）；'merge' 合并 segment（轻量级）
+   * 注意：不能使用不带参数的 'merge' 命令（`VALUES('merge')`），它是空操作，
+   * 不会合并 segment——这正是此前重建索引后主库文件持续变大的根因。
+   * 'optimize' 会把所有 segment 合并为一个，使后续 INSERT 复用已释放页、文件不再增长。
+   *
+   * @param mode 'optimize' 合并回收（默认）；'rebuild' 按内容表完全重建索引
    */
-  public optimizeFts5Index(mode: 'rebuild' | 'merge' = 'merge'): void {
+  public optimizeFts5Index(mode: 'optimize' | 'rebuild' = 'optimize'): void {
     try {
       this.db.exec(`INSERT INTO kms_fts(kms_fts) VALUES('${mode}')`)
       logger.info(`FTS5 ${mode} 完成`)
@@ -1005,6 +1013,27 @@ class KMSDatabaseService {
       }
     } catch (err: any) {
       logger.warn('清理访问日志失败:', err?.message || err)
+    }
+
+    // 3.6 清理失效的 embedding 任务：重建索引会让段落 source_id 变化，旧任务永远无法完成，
+    // 会随重建持续累积在向量库，需一并清除
+    try {
+      const alive = new Set(
+        (this.db.prepare('SELECT source_type, source_id FROM kms_search_index').all() as any[])
+          .map(r => `${r.source_type}:${r.source_id}`)
+      )
+      const jobs = this.vectorDb.prepare('SELECT id, source_type, source_id FROM kms_embedding_jobs').all() as any[]
+      const staleIds = jobs.filter(j => !alive.has(`${j.source_type}:${j.source_id}`)).map(j => j.id)
+      if (staleIds.length > 0) {
+        const delTx = this.vectorDb.transaction(() => {
+          const stmt = this.vectorDb.prepare('DELETE FROM kms_embedding_jobs WHERE id = ?')
+          for (const id of staleIds) stmt.run(id)
+        })
+        delTx()
+        logger.info(`清理失效 embedding 任务: ${staleIds.length} 条`)
+      }
+    } catch (err: any) {
+      logger.warn('清理失效 embedding 任务失败:', err?.message || err)
     }
 
     // 3.7 重建 FTS5 虚表内部 segment：VACUUM 无法回收 FTS5 空间，必须用 FTS5 专有命令
