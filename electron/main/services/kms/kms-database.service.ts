@@ -1063,6 +1063,14 @@ class KMSDatabaseService {
       logger.warn('向量库 VACUUM 失败:', err?.message || err)
     }
 
+    // 7. VACUUM 的产物先写入 WAL，必须再 checkpoint(TRUNCATE) 才能落盘到主库文件并清空 WAL，
+    // 否则 WAL 会残留接近整库大小（此前清理后主库 WAL 长期约 1GB 即因此）
+    try {
+      this.checkpoint('TRUNCATE')
+    } catch (err: any) {
+      logger.warn('清理后 checkpoint 失败:', err?.message || err)
+    }
+
     const afterStats = this.getDatabaseStats()
     logger.info(`数据库清理完成: 主库 ${before.mainDbSize} → ${afterStats.mainDbSize}, 向量库 ${before.vectorDbSize} → ${afterStats.vectorDbSize}`)
 

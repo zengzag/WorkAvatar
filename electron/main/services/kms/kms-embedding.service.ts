@@ -37,6 +37,7 @@ class KMSEmbeddingService {
       FROM kms_search_index si
       JOIN kms_files f ON f.id = si.file_id
       WHERE si.content != ''
+        AND COALESCE(f.ai_exclusion_level, 0) < 2
         AND (
           si.source_type IN ('document', 'file_title', 'file_summary')
           OR (si.source_type IN ('paragraph', 'content_paragraph') AND f.data_tier = 'hot')
@@ -48,6 +49,12 @@ class KMSEmbeddingService {
   }
 
   reconcileJobs(modelKey: string): number {
+    // 已存在的向量键：用于判断任务是否“真的完成”。
+    // 重建索引会删除向量但保留 done 任务，若只看任务状态会漏生成，必须按“向量是否存在”重新入队。
+    const existing = new Set<string>(
+      (this.vectorDb.prepare('SELECT source_type, source_id FROM kms_embeddings WHERE model = ?').all(modelKey) as any[])
+        .map(r => `${r.source_type}:${r.source_id}`)
+    )
     let enqueued = 0
     let lastId = ''
     const pageSize = 500
@@ -57,19 +64,32 @@ class KMSEmbeddingService {
       lastId = candidates[candidates.length - 1].id
       const tx = this.vectorDb.transaction(() => {
         for (const c of candidates) {
+          const hasEmbedding = existing.has(`${c.source_type}:${c.source_id}`) ? 1 : 0
           const result = this.vectorDb.prepare(`
             INSERT INTO kms_embedding_jobs (
               id, model_key, file_id, content_version_id, source_type, source_id, content_hash, status, priority, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 100, unixepoch(), unixepoch())
+            ) VALUES (@id, @modelKey, @fileId, @contentVersionId, @sourceType, @sourceId, @contentHash, 'pending', 100, unixepoch(), unixepoch())
             ON CONFLICT(model_key, source_type, source_id, content_hash) DO UPDATE SET
               file_id = excluded.file_id,
               content_version_id = excluded.content_version_id,
-              status = CASE WHEN status = 'failed' THEN 'pending' ELSE status END,
+              status = CASE
+                WHEN @hasEmbedding = 0 AND kms_embedding_jobs.status IN ('done', 'failed') THEN 'pending'
+                ELSE kms_embedding_jobs.status
+              END,
+              attempts = CASE WHEN @hasEmbedding = 0 AND kms_embedding_jobs.status = 'done' THEN 0 ELSE kms_embedding_jobs.attempts END,
+              locked_by = CASE WHEN @hasEmbedding = 0 AND kms_embedding_jobs.status = 'done' THEN '' ELSE kms_embedding_jobs.locked_by END,
+              locked_until = CASE WHEN @hasEmbedding = 0 AND kms_embedding_jobs.status = 'done' THEN 0 ELSE kms_embedding_jobs.locked_until END,
               updated_at = unixepoch()
-          `).run(
-            `${modelKey}:${c.source_type}:${c.source_id}:${c.file_hash}`,
-            modelKey, c.file_id, c.content_version_id, c.source_type, c.source_id, c.file_hash
-          )
+          `).run({
+            id: `${modelKey}:${c.source_type}:${c.source_id}:${c.file_hash}`,
+            modelKey,
+            fileId: c.file_id,
+            contentVersionId: c.content_version_id,
+            sourceType: c.source_type,
+            sourceId: c.source_id,
+            contentHash: c.file_hash,
+            hasEmbedding,
+          })
           if (result.changes > 0) enqueued++
         }
       })
@@ -133,6 +153,7 @@ class KMSEmbeddingService {
         JOIN kms_files f ON f.id = si.file_id
         WHERE si.file_id IN (${placeholders})
           AND si.content != ''
+          AND COALESCE(f.ai_exclusion_level, 0) < 2
           AND (
             si.source_type IN ('document', 'file_title', 'file_summary')
             OR (si.source_type IN ('paragraph', 'content_paragraph') AND f.data_tier = 'hot')
