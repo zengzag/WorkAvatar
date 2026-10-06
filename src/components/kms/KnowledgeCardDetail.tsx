@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Drawer, Button, Tag, Space, Typography, Input, App, Spin, theme, Collapse } from 'antd'
+import { Drawer, Button, Tag, Space, Typography, Input, App, Spin, theme, Collapse, Tooltip } from 'antd'
 import {
   PushpinOutlined, PushpinFilled, ReloadOutlined, DeleteOutlined,
   EditOutlined, SaveOutlined, CloseOutlined, FileTextOutlined,
@@ -26,6 +26,19 @@ export interface KnowledgeCardCitation {
   snippet: string
   startLine?: number
   endLine?: number
+}
+
+/** 引文预览定位对象：结构与搜索结果项对齐，交由页面级预览弹窗打开并跳转到对应行 */
+export interface KnowledgeCardSourceTarget {
+  file_id: string
+  file_name: string
+  file_path: string
+  paragraph_id?: string
+  paragraph_title?: string
+  text: string
+  match_type: string
+  start_line?: number
+  end_line?: number
 }
 
 export interface KnowledgeCard {
@@ -65,13 +78,32 @@ const STEP_ICONS: Record<string, string> = {
   info: '•', llm: '🤖', search: '🔍', read: '📄', plan: '📋', result: '✓',
 }
 
+/** 文件名过长时中间省略：头部自适应截断，尾部保留（含扩展名）便于识别 */
+const FILENAME_TAIL_LENGTH = 14
+function splitFileName(name: string): { head: string; tail: string } {
+  if (!name) return { head: '', tail: '' }
+  if (name.length <= FILENAME_TAIL_LENGTH + 8) return { head: name, tail: '' }
+  return { head: name.slice(0, name.length - FILENAME_TAIL_LENGTH), tail: name.slice(-FILENAME_TAIL_LENGTH) }
+}
+
+/** 段落标题与文件名高度重合时（常见于匹配到文档首行标题）视为冗余，不再重复展示 */
+function isRedundantParagraphTitle(fileName: string, title?: string): boolean {
+  if (!title) return true
+  const normalize = (s: string) => s.replace(/\.[a-z0-9]+$/i, '').replace(/[\s\u3000]+/g, '').toLowerCase()
+  const f = normalize(fileName)
+  const t = normalize(title)
+  if (!t || t.length < 6) return false
+  return f === t || f.startsWith(t) || t.startsWith(f)
+}
+
 interface KnowledgeCardDetailProps {
   card: KnowledgeCard | null
   open: boolean
   onClose: () => void
   onRefresh?: () => void
   onDeleted?: () => void
-  onOpenFile?: (filePath: string) => void
+  /** 点击"显示原文"：由页面级预览弹窗打开内部预览并定位到对应行 */
+  onPreviewSource?: (target: KnowledgeCardSourceTarget) => void
   /** 生成/刷新进度步骤 */
   progressSteps?: SearchTraceStep[]
   /** 是否正在生成/刷新中 */
@@ -79,7 +111,7 @@ interface KnowledgeCardDetailProps {
 }
 
 const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
-  card, open, onClose, onRefresh, onDeleted, onOpenFile,
+  card, open, onClose, onRefresh, onDeleted, onPreviewSource,
   progressSteps, processing,
 }) => {
   const { t, i18n } = useTranslation()
@@ -256,13 +288,19 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
     }
   }, [localCard, message])
 
-  const handleViewOriginal = useCallback((filePath: string) => {
-    if (onOpenFile) {
-      onOpenFile(filePath)
-    } else {
-      window.electronAPI.kms.openFile(filePath)
-    }
-  }, [onOpenFile])
+  const handlePreviewSource = useCallback((cite: KnowledgeCardCitation) => {
+    onPreviewSource?.({
+      file_id: cite.fileId,
+      file_name: cite.fileName,
+      file_path: cite.filePath,
+      paragraph_id: cite.paragraphId,
+      paragraph_title: cite.paragraphTitle,
+      text: cite.snippet,
+      match_type: 'citation',
+      start_line: cite.startLine,
+      end_line: cite.endLine,
+    })
+  }, [onPreviewSource])
 
   const renderStatusTag = (status: KnowledgeCard['status']) => {
     if (status === 'generating') return <Tag color="processing">{t('kms.knowledgeCards.generating')}</Tag>
@@ -440,43 +478,43 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
       {localCard?.citations.length === 0 ? (
         <Text type="secondary">{t('kms.knowledgeCards.noCitations')}</Text>
       ) : (
-        localCard?.citations.map((cite, i) => (
-          <div
-            key={i}
-            style={{
-              marginBottom: 12, paddingBottom: 12,
-              borderBottom: i < (localCard.citations.length - 1) ? `1px solid ${token.colorBorderSecondary}` : 'none',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <Tag style={{ flexShrink: 0, lineHeight: '20px' }}>[{i + 1}]</Tag>
-              <FileTextOutlined style={{ fontSize: 12, color: token.colorTextSecondary, flexShrink: 0 }} />
-              <Text strong style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {cite.fileName}
-              </Text>
-              {cite.paragraphTitle && (
-                <Text type="secondary" style={{ fontSize: 12 }}>· {cite.paragraphTitle}</Text>
-              )}
-            </div>
-            {cite.startLine !== undefined && cite.endLine !== undefined && (
-              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginLeft: 28 }}>
-                L{cite.startLine}-L{cite.endLine}
-              </Text>
-            )}
-            <Text style={{ fontSize: 12, display: 'block', marginLeft: 28, marginTop: 4, color: token.colorTextSecondary, lineHeight: 1.6 }}>
-              {cite.snippet}
-            </Text>
-            <Button
-              size="small"
-              type="link"
-              icon={<EyeOutlined />}
-              onClick={() => handleViewOriginal(cite.filePath)}
-              style={{ padding: 0, marginTop: 4, marginLeft: 28, height: 22 }}
+        localCard?.citations.map((cite, i) => {
+          const { head, tail } = splitFileName(cite.fileName)
+          return (
+            <div
+              key={i}
+              style={{
+                padding: '5px 0',
+                borderBottom: i < (localCard.citations.length - 1) ? `1px solid ${token.colorBorderSecondary}` : 'none',
+              }}
             >
-              {t('kms.knowledgeCards.viewOriginal')}
-            </Button>
-          </div>
-        ))
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Tag style={{ flexShrink: 0, marginRight: 0, lineHeight: '18px', fontSize: 12 }}>[{i + 1}]</Tag>
+                <FileTextOutlined style={{ fontSize: 12, color: token.colorTextSecondary, flexShrink: 0 }} />
+                <Tooltip title={cite.fileName}>
+                  <span style={{ flex: 1, minWidth: 0, display: 'flex', fontSize: 13, lineHeight: 1.4 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flexShrink: 1, fontWeight: 600 }}>
+                      {head}
+                    </span>
+                    {tail && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontWeight: 600 }}>{tail}</span>}
+                  </span>
+                </Tooltip>
+                {cite.paragraphTitle && !isRedundantParagraphTitle(cite.fileName, cite.paragraphTitle) && (
+                  <Text type="secondary" ellipsis style={{ fontSize: 12, flexShrink: 0, maxWidth: 160 }}>· {cite.paragraphTitle}</Text>
+                )}
+                <Button
+                  size="small"
+                  type="link"
+                  icon={<EyeOutlined />}
+                  onClick={() => handlePreviewSource(cite)}
+                  style={{ padding: 0, height: 20, flexShrink: 0, fontSize: 13 }}
+                >
+                  {t('kms.knowledgeCards.showSource')}
+                </Button>
+              </div>
+            </div>
+          )
+        })
       )}
     </div>
   )

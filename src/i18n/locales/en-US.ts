@@ -1584,7 +1584,7 @@ export default {
         cardCompletedDetail: '{{summary}} chars summary · {{citations}} citations · {{iterations}} iterations · {{seconds}}s total',
       },
       citationsLabel: 'Citations',
-      viewOriginal: 'View Original',
+      showSource: 'Show Source',
       noCitations: 'No citations',
       bannerTitle: 'Knowledge Card',
       bannerViewDetail: 'View Details',

@@ -5,6 +5,7 @@ import KMSSearchInput from './KMSSearchInput'
 import KMSSearchResultList from './KMSSearchResultList'
 import KnowledgeCardBanner from './KnowledgeCardBanner'
 import KnowledgeCardDetail from './KnowledgeCardDetail'
+import type { KnowledgeCardSourceTarget } from './KnowledgeCardDetail'
 import type { SearchFilters, SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 interface HighlightRange { start: number; end: number }
@@ -52,6 +53,7 @@ interface KMSSearchPanelProps {
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
   onPreview: (result: SearchResult) => void
+  onPreviewSource?: (target: KnowledgeCardSourceTarget) => void
   filterCollectionIds?: string[]
   onFilterCollectionIdsChange?: (ids: string[]) => void
   searchHistory?: SearchHistoryItem[]
@@ -73,6 +75,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   onOpenFile,
   onOpenFileDir,
   onPreview,
+  onPreviewSource,
   filterCollectionIds: controlledCollectionIds,
   onFilterCollectionIdsChange,
   searchHistory,
@@ -204,7 +207,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
         card={selectedCard}
         open={cardDetailOpen}
         onClose={() => setCardDetailOpen(false)}
-        onOpenFile={onOpenFile}
+        onPreviewSource={onPreviewSource}
       />
     </div>
   )

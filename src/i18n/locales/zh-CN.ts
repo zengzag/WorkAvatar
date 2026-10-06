@@ -1590,7 +1590,7 @@ export default {
         cardCompletedDetail: '{{summary}} 字摘要 · {{citations}} 条引用 · {{iterations}} 轮迭代 · 总耗时 {{seconds}}s',
       },
       citationsLabel: '引用来源',
-      viewOriginal: '查看原文',
+      showSource: '显示原文',
       noCitations: '无引用来源',
       bannerTitle: '知识卡片',
       bannerViewDetail: '查看详情',

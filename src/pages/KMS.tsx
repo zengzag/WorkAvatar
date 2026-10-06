@@ -96,6 +96,12 @@ const KMSPage: React.FC = () => {
     setAllPreviewMatches([])
   }, [setPreviewFile])
 
+  // 知识卡片引文"显示原文"：无同文件匹配集，直接定位到引文行
+  const handlePreviewSource = useCallback((result: any) => {
+    setPreviewFile(result)
+    setAllPreviewMatches([])
+  }, [setPreviewFile])
+
   // 从合集视图跳转过来：设置合集筛选 + 切到搜索视图 + 触发一次空查询清空旧结果
   const handleSearchInCollection = useCallback((collectionId: string) => {
     setFilterCollectionIds([collectionId])
@@ -197,6 +203,7 @@ const KMSPage: React.FC = () => {
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
             onPreview={handlePreview}
+            onPreviewSource={handlePreviewSource}
             filterCollectionIds={filterCollectionIds}
             onFilterCollectionIdsChange={setFilterCollectionIds}
             searchHistory={searchHistory}
@@ -221,7 +228,7 @@ const KMSPage: React.FC = () => {
             onLoadStats={loadStats}
           />
         ) : viewMode === 'cards' ? (
-          <KMSKnowledgeCardsView onOpenFile={openFile} />
+          <KMSKnowledgeCardsView onPreviewSource={handlePreviewSource} />
         ) : (
           <KMSCollectionsView
             onSearchInCollection={handleSearchInCollection}
