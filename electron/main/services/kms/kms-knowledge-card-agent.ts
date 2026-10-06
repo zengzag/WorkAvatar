@@ -15,19 +15,20 @@ const logger = createLogger('KMS-UnifiedAgent')
 const MAX_ITERATIONS = 30
 
 /** 稳定的系统提示词——search 和 card 模式共用，不随模式变化，利于 prompt cache 命中 */
-const UNIFIED_SYSTEM_PROMPT = `你是一个资料库智能检索与知识整合助手。
+const UNIFIED_SYSTEM_PROMPT = `You are an intelligent retrieval and knowledge-synthesis assistant for a local knowledge base.
 
-你可以使用以下工具获取信息：
-- kms_search: 搜索本地资料库（支持关键词和语义检索，结果自动附加知识卡片与合集摘要）
-- kms_get_content: 读取文件正文（需先通过 kms_search 获取 file_id）
+You can use the following tools to gather information:
+- kms_search: search the local knowledge base (supports keyword and semantic retrieval; results are automatically enriched with knowledge cards and collection summaries)
+- kms_get_content: read the full text of a file (obtain the file_id via kms_search first)
 
-工作原则：
-1. 先用关键词直接搜索，根据结果决定是否需要深入
-2. 选择性地读取重要文件正文以获取更详细信息
-3. 如需从不同角度搜索，可多次调用 kms_search
-4. 当信息充分后，按照指定格式输出最终结果
-5. 在结论/摘要中用 [序号] 标注信息来源
-6. 如果信息不足以完整回答，明确指出缺失方向，不要编造`
+Working principles:
+1. Start with a direct keyword search, then decide from the results whether to dig deeper.
+2. Selectively read the full text of important files to get more detail.
+3. Call kms_search multiple times to search from different angles when needed.
+4. When you have enough information, produce the final result in the required format.
+5. Cite sources with [n] markers in your conclusions/summaries.
+6. If the available information cannot fully answer the question, explicitly state what is missing; never fabricate.
+7. Always write the final output in the same language as the retrieved source material. If the sources are not in English, do not translate them into English — keep the original language.`
 
 export type AgentMode = 'search' | 'card'
 
@@ -83,37 +84,40 @@ export interface UnifiedAgentOptions {
 function buildInitialUserMessage(query: string, mode: AgentMode, requirement?: string): string {
   if (mode === 'card') {
     const userRequirement = requirement && requirement.trim()
-      ? `\n\n用户补充要求：\n${requirement.trim()}\n\n请严格按照上述补充要求组织卡片内容。`
+      ? `\n\nAdditional user requirements:\n${requirement.trim()}\n\nOrganize the card content strictly according to the additional requirements above.`
       : ''
-    return `请根据本地资料库的检索结果，为关键词「${query}」生成一份高质量的知识卡片。
+    return `Based on the retrieval results from the local knowledge base, generate a high-quality knowledge card for the keyword "${query}".
 
-严格基于 kms_search / kms_get_content 检索到的真实资料内容来归纳，不要编造资料中不存在的信息。${userRequirement}
+Synthesize strictly from the real content retrieved via kms_search / kms_get_content; do not fabricate information that does not exist in the sources.${userRequirement}
 
-输出格式（纯JSON，不要包含其它内容、不要用 markdown 代码块包裹）：
-{"summary": "完整且有结构的综合摘要"}
+Write the summary in the same language as the retrieved source material. If the sources are not in English, do not translate them into English — keep the original language.
 
-summary 建议 200-500 字，应包含：
-- 背景与定义：该主题是什么、覆盖哪些资料
-- 核心要点：关键信息、结论、操作/方法，用带结构的分段组织
-- 来源标注：在相关句子后标注 [序号]，序号按检索结果中遇到的来源顺序从 1 开始分配，同一文件只算一个序号
-- 完整度说明：若资料不足以覆盖主题，明确指出缺失方向
+Output format (plain JSON only, no other content, and do not wrap it in a markdown code block):
+{"summary": "a complete and well-structured synthesis"}
 
-注意：
-- 首轮搜索请直接用关键词「${query}」，之后根据结果决定是否深入或换角度检索
-- summary 是对检索内容的整合归纳，不是罗列原文，也不要用"根据检索结果"之类开场白
-- 不要输出"关键要点"等多余字段，summary 是唯一且充分的内容`
+The summary should be about 200-500 words and include:
+- Background and definition: what the topic is and which materials it covers
+- Key points: critical information, conclusions, and methods, organized into structured sections
+- Source citations: add [n] markers after the relevant sentences; number sources in the order they appear in the retrieval results starting from 1, counting each file only once
+- Completeness note: if the materials do not fully cover the topic, explicitly state what is missing
+
+Notes:
+- For the first search, use the keyword "${query}" directly; afterwards decide from the results whether to dig deeper or search from another angle.
+- The summary is a synthesis of the retrieved content, not an enumeration of the original text, and it must not open with phrases like "based on the retrieval results".
+- Do not output extra fields such as "key points"; summary is the single, sufficient field.`
   }
 
-  return `请针对以下查询进行检索并生成核心结论。
+  return `Retrieve information for the query below and produce the core conclusion.
 
-查询：${query}
+Query: ${query}
 
-输出要求：
-1. 直接输出结论，用 [序号] 标注信息来源
-2. 结论简洁明了，不要堆砌原文，不超过 500 字
-3. 如果信息不足以回答，明确说明缺失的内容
-4. 不要添加"根据检索结果"等开场白
-5. 首轮搜索请直接使用查询中的关键词，之后可根据结果深入搜索`
+Output requirements:
+1. Output the conclusion directly and cite sources with [n] markers.
+2. Keep the conclusion concise and clear; do not pile up original text; no more than 500 words.
+3. If the information is insufficient to answer, clearly state what is missing.
+4. Do not add opening phrases like "based on the retrieval results".
+5. For the first search, use the keywords from the query directly; afterwards you may search deeper based on the results.
+6. Write the conclusion in the same language as the retrieved source material. If the sources are not in English, do not translate them into English — keep the original language.`
 }
 
 /**
@@ -198,7 +202,7 @@ export async function runUnifiedAgentLoop(
     if (i === maxIters - 2) {
       messages.push({
         role: 'user',
-        content: '⚠️ 这是你最后可以调用工具的机会。下一轮将无法再调用工具，请确保本次调用后你能输出最终内容。',
+        content: '⚠️ This is your last chance to call tools. You will not be able to call tools in the next round, so make sure you can produce the final content after this call.',
       })
     }
 

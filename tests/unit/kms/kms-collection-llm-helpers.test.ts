@@ -129,8 +129,8 @@ describe('kms-collection-llm-helpers / generateCollectionSummary', () => {
     state.content = '{"summary":"S","keyTopics":[]}'
     await generateCollectionSummary(db, 'c1', llmConfig)
     const prompt: string = state.chatCalls[0].messages[1].content
-    expect(prompt).toContain('...（其余 2 个文件省略）')
-    expect(prompt).toContain('文件数量：5')
+    expect(prompt).toContain('...(2 more files omitted)')
+    expect(prompt).toContain('File count: 5')
   })
 
   it('light_summary 缺失时回退 summary 字段', async () => {

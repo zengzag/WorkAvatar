@@ -51,34 +51,36 @@ export async function generateCollectionSummary(
     const lightSummary = f.light_summary || f.summary || ''
     const line = `【${f.file_name}】${lightSummary ? ' ' + lightSummary : ''}`
     if (totalChars + line.length > MAX_INPUT_CHARS) {
-      fileSummaries.push(`...（其余 ${files.length - fileSummaries.length} 个文件省略）`)
+      fileSummaries.push(`...(${files.length - fileSummaries.length} more files omitted)`)
       break
     }
     fileSummaries.push(line)
     totalChars += line.length
   }
 
-  const prompt = `请基于以下合集内文件的摘要信息，生成该合集的整体摘要和关键主题词。
+  const prompt = `Based on the file summaries in the collection below, generate an overall summary and key topics for this collection.
 
-合集名称：${collection.name}
-合集描述：${collection.description || '（无）'}
-文件数量：${files.length}
+Collection name: ${collection.name}
+Collection description: ${collection.description || '(none)'}
+File count: ${files.length}
 
-文件摘要列表：
+File summaries:
 ${fileSummaries.join('\n')}
 
-要求：
-1. summary：用 150-300 字概括这个合集的核心内容、覆盖范围与价值，不要罗列文件名。
-2. keyTopics：提取 3-8 个关键主题词（短语），用于快速了解合集主题。
+Requirements:
+1. summary: describe the collection's core content, coverage, and value in 150-300 words. Do not list file names.
+2. keyTopics: extract 3-8 key topic phrases that capture the collection's themes.
 
-只返回 JSON：{"summary":"...","keyTopics":["..."]}`
+Write the summary and key topics in the same language as the source file summaries. If they are not in English, do not translate them into English — keep the original language.
+
+Return only JSON: {"summary":"...","keyTopics":["..."]}`
 
   try {
     const parsed = await callLLMForJSON<{ summary: string; keyTopics: string[] }>(
       llmConfig.providerId,
       llmConfig.modelId,
       [
-        { role: 'system', content: '你是一个资料库合集分析助手。只输出 JSON，不要添加其他文本。' },
+        { role: 'system', content: 'You are a knowledge-base collection analysis assistant. Output only JSON, with no additional text.' },
         { role: 'user', content: prompt },
       ],
       { summary: '', keyTopics: [] },

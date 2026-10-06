@@ -24,31 +24,32 @@ export async function callLLMForToc(
   signal?: AbortSignal,
   enableThinking?: boolean,
 ): Promise<LLMTocEntry[]> {
-  const systemPrompt = `你是一个专业的文档结构分析专家。你的任务是分析文档内容，准确识别其中的章节标题、层级关系和位置。
+  const systemPrompt = `You are an expert document structure analyst. Your task is to analyze document content and accurately identify its section headings, their hierarchy, and their positions.
 
-识别规则：
-1. 只识别真正的结构性标题，不要把正文中的强调文本、列表项、表格内容误认为标题
-2. 标题特征：通常是独立成行的短文本（一般不超过60字），具有概括性
-3. 常见标题模式：
-   - 编号型："第X章/节/部分"、"1."/"1.1"/"1.1.1"、"一、"/"二、"
-   - 无编号型：独立成行的概括性短句，后续跟随详细说明内容
-4. level表示层级深度，最大3级：1=最高级（章/部分），2=次级（节），3=最细粒度（小节），不允许超过3级
-5. lineNumber必须精确对应内容中的行号标记[L数字]
-6. 标题对应的正文内容太少（例如小于50词）时，忽略该标题
-7. 如果提供了已识别的上层目录上下文，请参考该上下文来确定当前标题的层级，避免将低层级标题误判为高层级${existingTocContext ? `\n\n已识别的上层目录上下文（供参考）：\n${existingTocContext}` : ''}
+Identification rules:
+1. Identify only genuine structural headings. Do not mistake emphasized text, list items, or table content in the body for headings.
+2. A heading is typically a short standalone line (usually no longer than 60 characters) that summarizes what follows.
+3. Common heading patterns:
+   - Numbered: "Chapter/Section/Part X", "1."/"1.1"/"1.1.1", or other ordered schemes
+   - Unnumbered: a standalone summarizing phrase followed by detailed content
+4. level is the hierarchy depth, up to 3 levels: 1 = top level (chapter/part), 2 = next level (section), 3 = finest level (subsection). Never exceed 3 levels.
+5. lineNumber must exactly match the [L<number>] line markers in the content.
+6. If a heading is followed by too little body content (for example, fewer than 50 words), ignore that heading.
+7. When upper-level TOC context is provided, use it to determine the level of the current headings and avoid misclassifying lower-level headings as higher-level ones.
+8. Copy every heading title verbatim from the source content and keep it in the document's original language. Never translate headings into English.${existingTocContext ? `\n\nAlready identified upper-level TOC context (for reference):\n${existingTocContext}` : ''}
 
-输出要求：
-- 严格按照JSON格式输出
-- 只返回JSON，不要包含任何解释文字
-- 如果无法识别任何标题结构，返回{"toc":[]}`
+Output requirements:
+- Return strictly valid JSON.
+- Return only the JSON, with no explanatory text.
+- If no heading structure can be identified, return {"toc":[]}`
 
-  const userPrompt = `请分析以下文档内容，识别所有章节标题及其位置。
+  const userPrompt = `Analyze the following document content and identify all section headings and their positions.
 
-文档内容：
+Document content:
 ${numberedContent}
 
-返回格式：
-{"toc":[{"title":"标题文字","level":1,"lineNumber":5}]}`
+Response format:
+{"toc":[{"title":"heading text","level":1,"lineNumber":5}]}`
 
   const parsed = await callLLMForJSON<{ toc: LLMTocEntry[] }>(
     providerId,
@@ -133,17 +134,19 @@ export async function generateParagraphSummary(
   signal?: AbortSignal,
   enableThinking?: boolean,
 ): Promise<{ title: string; summary: string; keywords: string[] }> {
-  const prompt = `为以下段落生成摘要，JSON格式返回。
-段落标题：${paragraphTitle}
-段落内容：
+  const prompt = `Generate a summary for the paragraph below and return it as JSON.
+Paragraph title: ${paragraphTitle}
+Paragraph content:
 ${paragraphContent.substring(0, 8000)}
 
-返回字段：
-- title: 段落标题
-- summary: 摘要（50字以内，简洁精炼）
-- keywords: 关键词列表（3-5个）
+Return these fields:
+- title: the paragraph title
+- summary: a concise, tightly written summary (about 50 words)
+- keywords: a list of 3-5 keywords
 
-只返回JSON。`
+Write the title, summary, and keywords in the same language as the paragraph content. If the paragraph is not in English, do not translate it into English — keep the original language.
+
+Return only JSON.`
 
   return callLLMForJSON<{ title: string; summary: string; keywords: string[] }>(
     providerId,
@@ -173,20 +176,22 @@ export async function generateDocumentSummaryFromParagraphs(
   enableThinking?: boolean,
 ): Promise<{ summary: string; keywords: string[]; mainTopics: string[] }> {
   const summariesText = paragraphSummaries.map((ps, i) =>
-    `### 段落${i + 1}: ${ps.title}\n${ps.summary}\n关键词: ${ps.keywords.join(', ')}`
+    `### Paragraph ${i + 1}: ${ps.title}\n${ps.summary}\nKeywords: ${ps.keywords.join(', ')}`
   ).join('\n\n')
 
-  const prompt = `基于段落摘要生成文档全局摘要，JSON格式返回。
-文档标题：${documentTitle}
-段落摘要：
+  const prompt = `Generate a document-level summary from the paragraph summaries below and return it as JSON.
+Document title: ${documentTitle}
+Paragraph summaries:
 ${summariesText.substring(0, 15000)}
 
-返回字段：
-- summary: 全局摘要（150字以内，简洁精炼）
-- keywords: 关键词列表（5-8个）
-- mainTopics: 主要主题列表（3-5个）
+Return these fields:
+- summary: a document-level summary (about 150 words, concise and tight)
+- keywords: a list of 5-8 keywords
+- mainTopics: a list of 3-5 main topics
 
-只返回JSON。`
+Write the summary, keywords, and main topics in the same language as the source material. If the source is not in English, do not translate it into English — keep the original language.
+
+Return only JSON.`
 
   return callLLMForJSON<{ summary: string; keywords: string[]; mainTopics: string[] }>(
     providerId,
@@ -262,7 +267,14 @@ export async function generateFileSummary(
     throw new Error('MODEL_NOT_CONFIGURED')
   }
   const truncatedText = fullText.substring(0, 3000)
-  const summaryPrompt = `请为以下文档内容生成简洁摘要（150字以内），并提取5-8个关键词和3-5个主要主题。\n\n文档内容：\n${truncatedText}\n\n请以JSON格式返回：{"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
+  const summaryPrompt = `Generate a concise summary (about 150 words) of the document content below, and extract 5-8 keywords and 3-5 main topics.
+
+Document content:
+${truncatedText}
+
+Write the summary, keywords, and main topics in the same language as the document. If the document is not in English, do not translate it into English — keep the original language.
+
+Return the result as JSON: {"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
 
   if (signal?.aborted) return
 
@@ -270,7 +282,7 @@ export async function generateFileSummary(
     providerId,
     modelId,
     [
-      { role: 'system', content: '你是一个文档摘要助手。请严格按照JSON格式返回结果。' },
+      { role: 'system', content: 'You are a document summarization assistant. Always return results in strict JSON format.' },
       { role: 'user', content: summaryPrompt },
     ],
     { summary: '', keywords: [], main_topics: [] },
@@ -315,7 +327,7 @@ export function formatSize(bytes: number): string {
 export function buildDirFileList(files: any[]): string {
   return files.map(f => {
     const summary = f.summary || f.light_summary || ''
-    return `- ${f.file_name} (${f.file_ext || '无扩展名'}, ${formatSize(f.file_size)})${summary ? ': ' + summary.substring(0, 80) : ''}`
+    return `- ${f.file_name} (${f.file_ext || 'no extension'}, ${formatSize(f.file_size)})${summary ? ': ' + summary.substring(0, 80) : ''}`
   }).join('\n')
 }
 
@@ -332,21 +344,23 @@ export async function generateDirSummaryViaLLM(
   const fileList = buildDirFileList(files)
 
   if (providerId && modelId && files.length <= 100) {
-    const prompt = `请为以下目录生成简洁摘要（200字以内），概括目录内容主题和结构，并提取5-10个关键词。
+    const prompt = `Generate a concise summary (about 200 words) of the directory below, covering its content themes and structure, and extract 5-10 keywords.
 
-目录路径：${dirPath}
-文件数量：${files.length}
-文件清单：
+Directory path: ${dirPath}
+File count: ${files.length}
+File list:
 ${fileList}
 
-请以JSON格式返回：{"summary": "...", "keywords": ["..."]}`
+Write the summary and keywords in the same language as the file names and summaries above. If they are not in English, do not translate them into English — keep the original language.
+
+Return the result as JSON: {"summary": "...", "keywords": ["..."]}`
 
     try {
       const parsed = await callLLMForJSON<{ summary: string; keywords: string[] }>(
         providerId,
         modelId,
         [
-          { role: 'system', content: '你是一个目录内容摘要助手，输出简洁准确的JSON。' },
+          { role: 'system', content: 'You are a directory content summarization assistant. Output concise, accurate JSON.' },
           { role: 'user', content: prompt },
         ],
         { summary: '', keywords: [] },
