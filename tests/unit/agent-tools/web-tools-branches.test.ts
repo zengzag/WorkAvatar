@@ -131,6 +131,19 @@ describe('agent/tools/web-search.tool', () => {
     expect(res.output).toContain('   摘要: 摘要')
   })
 
+  it('首选引擎返回空结果时继续降级到下一引擎（反爬页返回空而非抛错）', async () => {
+    const tried: string[] = []
+    searchState.engineSetting = 'baidu'
+    searchState.searchImpl = async (_q: string, e: string) => {
+      tried.push(e)
+      return e === 'duckduckgo' ? [{ title: 'X', url: 'https://x', snippet: '' }] : []
+    }
+    const res = await search({ query: 'hi' })
+    expect(tried).toEqual(['baidu', 'google', 'bing', 'duckduckgo'])
+    expect(res.success).toBe(true)
+    expect(res.engine).toBe('duckduckgo')
+  })
+
   it('无 snippet 的条目不输出摘要行', async () => {
     searchState.searchImpl = async () => [{ title: 'T', url: 'https://x' }]
     const res = await search({ query: 'hi' })

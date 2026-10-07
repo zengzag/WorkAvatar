@@ -12,7 +12,7 @@
 
 </div>
 
-WorkAvatar is a Windows desktop application centered around **digital employee agents**. Each digital employee is an independently working AI role with its own instructions, default model, and tool set — it plans steps on its own, invokes tools, reads and writes local files, and completes tasks. Two featured capabilities support it: a **local knowledge base search engine** so employees can quickly look up documents on your computer, and an **extensible plugin system** that lets the application grow over time.
+WorkAvatar is a desktop application centered around **digital employee agents**. Each digital employee is an independently working AI role with its own instructions, default model, and tool set — it plans steps on its own, invokes tools, reads and writes local files, and completes tasks. Two featured capabilities support it: a **local knowledge base search engine** so employees can quickly look up documents on your computer, and an **extensible plugin system** that lets the application grow over time.
 
 ---
 
@@ -161,7 +161,7 @@ The plugin protocol, API documentation, and example project ship with the reposi
 
 ### Build from Source
 
-**Requirements:** Windows 10/11, Node.js 20+, npm 10+
+**Requirements:** Windows 10/11 or macOS, Node.js 20+, npm 10+
 
 ```bash
 # Fetch the plugins submodule
