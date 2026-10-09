@@ -6,6 +6,7 @@ import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
 import TodoListSegment from './TodoListSegment'
 import AnswerSegment from './AnswerSegment'
+import WorkProcessGroup from './WorkProcessGroup'
 import { DelegationSegment } from './DelegationSegment'
 
 const { Text } = Typography
@@ -113,6 +114,10 @@ const SegmentListInner: React.FC<{
     />
   )
 
+  // 可参与「过程分组」的段：思考与普通工具调用（待办清单卡片单独展示，作为分组边界）
+  const isGroupable = (s: MessageSegment) =>
+    s.type === 'thinking' || (s.type === 'tool_call' && s.toolName !== 'todo_write')
+
   let i = 0
   while (i < segments.length) {
     const seg = segments[i]
@@ -143,6 +148,25 @@ const SegmentListInner: React.FC<{
       )
       i = j
       continue
+    }
+    // 过程分组：连续 2 段以上的思考/工具调用合并为一个折叠项
+    if (isGroupable(seg)) {
+      let j = i + 1
+      while (j < segments.length && isGroupable(segments[j])) j++
+      if (j - i >= 2) {
+        const run = segments.slice(i, j)
+        items.push(
+          <WorkProcessGroup
+            key={`proc_${run[0].id}`}
+            segments={run}
+            msgId={msgId}
+            onToggleSegment={onToggleSegment}
+            getToolDisplayName={getToolDisplayName}
+          />
+        )
+        i = j
+        continue
+      }
     }
     if (seg.type === 'thinking') {
       items.push(

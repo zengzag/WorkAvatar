@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { theme } from 'antd'
 import { MessageBubble } from './index'
 import type { MessageWithThought } from './types'
+import type { Employee } from '../../types'
 import { formatMessageTime, shouldShowTimeSeparator } from '../../utils/format'
 
 const { Text, Paragraph } = Typography
@@ -33,6 +34,8 @@ interface MessageListProps {
   onCompact?: () => void
   /** 隐藏消息操作按钮（重生成/切换模型/删除/编辑等），用于不支持这些能力的轻量对话视图 */
   hideMessageActions?: boolean
+  /** 当前数字员工，用于助手消息展示其真实头像 */
+  assistantEmployee?: Employee | null
 }
 
 const MessageList: React.FC<MessageListProps> = ({
@@ -55,6 +58,7 @@ const MessageList: React.FC<MessageListProps> = ({
   isCompacting,
   onCompact,
   hideMessageActions,
+  assistantEmployee,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -219,6 +223,7 @@ const MessageList: React.FC<MessageListProps> = ({
                   isCompacting={isLastAssistantMsg ? isCompacting : false}
                   onCompact={isLastAssistantMsg ? onCompact : undefined}
                   hideMessageActions={hideMessageActions}
+                  assistantEmployee={assistantEmployee}
                 />
               )
             })()}
@@ -239,6 +244,7 @@ export default memo(MessageList, (prev, next) => {
     prev.activeConversationId === next.activeConversationId &&
     prev.providers === next.providers &&
     prev.contextStats === next.contextStats &&
-    prev.isCompacting === next.isCompacting
+    prev.isCompacting === next.isCompacting &&
+    prev.assistantEmployee === next.assistantEmployee
   )
 })

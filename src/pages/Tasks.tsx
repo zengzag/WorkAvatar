@@ -942,6 +942,7 @@ const Tasks: React.FC = () => {
                     contextStats={contextStats}
                     isCompacting={isCompacting}
                     onCompact={handleCompact}
+                    assistantEmployee={employee}
                   />
                   <div ref={messagesEndRef} />
                 </div>
