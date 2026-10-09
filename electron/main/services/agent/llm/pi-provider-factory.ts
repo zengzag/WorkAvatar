@@ -24,6 +24,7 @@ export async function createPiProvider(providerId: string, modelId?: string): Pr
     apiKey: config.api_key,
     baseUrl: llmClient.getBaseURL(config),
     providerType: config.provider_type,
+    apiFormat: config.api_format,
     defaultOptions: {
       temperature: modelConfig?.temperature ?? config.temperature,
       maxTokens: modelConfig?.max_tokens ?? config.max_tokens,

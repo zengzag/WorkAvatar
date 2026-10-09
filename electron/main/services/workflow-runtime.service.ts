@@ -78,6 +78,9 @@ interface RunEntry {
   currentRound: number
   /** 待注入的迭代反馈：回边携带的上一轮评审结论，供被回写节点承接返工 */
   pendingFeedback: IterationFeedback | null
+  /** 运行级模型覆盖（节点未单独指定时使用），providerId+modelId 成对生效 */
+  providerId?: string
+  modelId?: string
 }
 
 /** 回边携带的迭代反馈：上一轮触发回写的评审/条件节点结论与意见 */
@@ -113,7 +116,15 @@ export class WorkflowRuntimeService {
     if (!entryNode) throw new Error('未找到入口节点')
 
     const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
-    if (!resolved) throw new Error('无可用 LLM 提供商（请在设置中配置默认模型）')
+    // 运行级模型覆盖存在时，无需全局默认模型也可运行
+    const runProviderId = params.providerId
+    const runModelId = params.modelId
+    const hasRunOverride = !!(runProviderId && runModelId)
+    // 所有节点都自带模型覆盖时同样无需全局默认模型
+    const hasNodeOverride = graph.nodes.some(n => n.providerId && n.modelId)
+    if (!resolved && !hasRunOverride && !hasNodeOverride) {
+      throw new Error('无可用 LLM 提供商（请在设置中配置默认模型）')
+    }
 
     // 运行前一次性注册本流程用到的临时角色（运行结束下线）；
     // 同时注册「运行宿主」内联员工，用于承载主任务会话的归属与子会话父子关系
@@ -155,6 +166,8 @@ export class WorkflowRuntimeService {
     const entry: RunEntry = {
       run, controller: new AbortController(), nodeRuns: new Map(), ephemeralIds,
       loopRounds: new Map(), currentRound: 1, pendingFeedback: null,
+      providerId: hasRunOverride ? runProviderId : undefined,
+      modelId: hasRunOverride ? runModelId : undefined,
     }
     for (const node of run.nodes) entry.nodeRuns.set(node.nodeId, node)
     this.entries.set(runId, entry)
@@ -376,6 +389,12 @@ export class WorkflowRuntimeService {
     recorder.addPrompt(instruction)
 
     const parentEmployeeId = this.resolveParentEmployeeId(entry)
+    // 模型覆盖：节点级优先，其次运行级；providerId+modelId 成对才生效，否则回退全局默认
+    const overrideProviderId = node.providerId || entry.providerId
+    const overrideModelId = node.modelId || entry.modelId
+    const modelOverride = overrideProviderId && overrideModelId
+      ? { providerId: overrideProviderId, modelId: overrideModelId }
+      : {}
     const launch = SubAgentRuntime.getInstance().launchSubAgent({
       parentSessionId: run.runId,
       parentEmployeeId,
@@ -387,6 +406,7 @@ export class WorkflowRuntimeService {
       delegationChain: [],
       parentAbortSignal: entry.controller.signal,
       highPermission: true,
+      ...modelOverride,
       onEvent: (eventType, data) => recorder.handle(eventType, data),
     })
     if (!launch.success || !launch.runId) {

@@ -5,6 +5,7 @@ export type {
   Conversation,
   ParseResult,
   LLMProviderType,
+  LLMApiFormat,
   LLMModelCategory,
   LLMModelConfig,
   LLMProvider,

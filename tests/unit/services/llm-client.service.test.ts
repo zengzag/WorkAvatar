@@ -12,7 +12,7 @@ function createDb(): DatabaseSync {
   const db = new DatabaseSync(':memory:')
   db.exec(`
     CREATE TABLE llm_providers (
-      id TEXT PRIMARY KEY, name TEXT, provider_type TEXT, base_url TEXT, model TEXT,
+      id TEXT PRIMARY KEY, name TEXT, provider_type TEXT, base_url TEXT, api_format TEXT, model TEXT,
       embedding_model TEXT, temperature REAL, max_tokens INTEGER, timeout_ms INTEGER,
       extra_headers_json TEXT, extra_body_json TEXT, is_default INTEGER,
       models_json TEXT, created_at INTEGER

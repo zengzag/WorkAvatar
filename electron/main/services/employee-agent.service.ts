@@ -249,6 +249,7 @@ class EmployeeAgentService {
       apiKey: config.api_key,
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
+      apiFormat: config.api_format,
       supportsImageInput: resolveImageSupport(config.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,

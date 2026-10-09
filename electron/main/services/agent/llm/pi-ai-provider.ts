@@ -1,6 +1,4 @@
-import { stream as openaiCompletionsStream } from '@earendil-works/pi-ai/api/openai-completions'
 import {
-  type Model,
   type Context,
   type Message as PiMessage,
   type UserMessage,
@@ -26,71 +24,26 @@ import {
   LLMToolCallDelta,
 } from './types'
 import LLMLoggerService from '../../llm-logger.service'
-import { getProviderCompat } from './provider-compat'
+import { buildPiModel, normalizeApiFormat, resolvePiApi, resolvePiStreamFn } from './api-format'
 import { buildPiStreamOptions } from './pi-stream-options'
-import type { ThinkingLevel } from '../../../../shared/types'
 
 const now = () => Date.now()
 
-/**
- * 构造合成的 pi-ai Model<"openai-completions">。
- * 绕过 pi 的 Provider/Models 体系，直接用 openai-completions stream 函数。
- * compat 配置由 provider-compat.ts 统一管理。
- */
-function buildPiModel(
-  modelId: string,
-  baseUrl: string,
-  providerType?: string,
-  enableThinking?: ThinkingLevel,
-): Model<'openai-completions'> {
-  const compat = getProviderCompat(providerType, modelId)
-  // 关键：对有 thinkingFormat / alwaysReasoning 的 provider，reasoning 必须始终为 true
-  // pi-ai 的 thinkingFormat 分支只在 model.reasoning=true 时执行
-  // 若为 false，分支不执行 → 不发 thinking 参数 → 豆包等用默认行为（开思考），开关失效
-  // 开关由 reasoningEffort 控制：有值→enabled，无值→disabled
-  // alwaysReasoning（如 OpenCode Go）则连 reasoning 参数都不允许缺省，见 resolveReasoningEffort
-  const reasoning = !!enableThinking || !!compat.thinkingFormat || !!compat.alwaysReasoning
-  return {
-    id: modelId,
-    name: modelId,
-    api: 'openai-completions',
-    provider: providerType || 'openai',
-    baseUrl,
-    reasoning,
-    input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    // 项目侧上下文预算由 memory-manager 按模型真实 context_window 管理（employee-agent.service），
-    // 此处为 pi-ai 内部字段，取偏大值避免对已裁剪输入再次截断
-    contextWindow: 256 * 1024,
-    maxTokens: 48 * 1024,
-    compat: {
-      supportsUsageInStreaming: true,
-      supportsFinishReason: true,
-      maxTokensField: compat.maxTokensField,
-      supportsReasoningEffort: compat.supportsReasoningEffort,
-      supportsDeveloperRole: compat.supportsDeveloperRole,
-      supportsStore: compat.supportsStore,
-      supportsStrictMode: compat.supportsStrictMode,
-      ...(compat.sendSessionAffinityHeaders ? {
-        sendSessionAffinityHeaders: true,
-        sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
-      } : {}),
-      ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
-      ...(compat.zaiToolStream ? { zaiToolStream: true } : {}),
-      ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
-    },
-  }
-}
 
 /** LLMMessage → pi UserMessage | AssistantMessage | ToolResultMessage */
 function toPiMessages(
   messages: LLMMessage[],
   providerType?: string,
   modelId?: string,
+  apiFormat?: string,
 ): { systemPrompt?: string; piMessages: PiMessage[] } {
   let systemPrompt: string | undefined
   const piMessages: PiMessage[] = []
   const provider = providerType || 'openai'
+  const piApi = resolvePiApi(apiFormat)
+  // 仅 chat-completions 回放 reasoning_content（以 reasoning_content 作为占位签名）；
+  // anthropic/responses 的历史思考需真实签名/加密内容，缺失时回放会报错，故丢弃
+  const replayReasoning = normalizeApiFormat(apiFormat) === 'chat-completions'
 
   for (const m of messages) {
     if (m.role === 'system') {
@@ -109,7 +62,7 @@ function toPiMessages(
       const contentParts: (TextContent | ThinkingContent | PiToolCall)[] = []
       const text = typeof m.content === 'string' ? m.content : ''
       if (text) contentParts.push({ type: 'text', text })
-      if (m.reasoning_content) {
+      if (m.reasoning_content && replayReasoning) {
         contentParts.push({ type: 'thinking', thinking: m.reasoning_content, thinkingSignature: 'reasoning_content' })
       }
       if (m.tool_calls) {
@@ -128,7 +81,7 @@ function toPiMessages(
       const asstMsg: PiAssistantMessage = {
         role: 'assistant',
         content: contentParts,
-        api: 'openai-completions',
+        api: piApi,
         provider,
         model: modelId || '',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -247,9 +200,16 @@ export class PiAIProvider implements ILLMProvider {
   async chat(messages: LLMMessage[], tools?: any[], options?: LLMCallOptions): Promise<LLMResponse> {
     const startTime = Date.now()
     const logSource = options?.logSource || 'agent'
-    const { systemPrompt, piMessages } = toPiMessages(messages, this.config.providerType, this.config.model)
+    const { systemPrompt, piMessages } = toPiMessages(messages, this.config.providerType, this.config.model, this.config.apiFormat)
     const enableThinking = options?.enableThinking ?? this.config.defaultOptions?.enableThinking
-    const piModel = buildPiModel(this.config.model, this.config.baseUrl!, this.config.providerType, enableThinking)
+    const piModel = buildPiModel({
+      modelId: this.config.model,
+      baseUrl: this.config.baseUrl!,
+      providerType: this.config.providerType,
+      apiFormat: this.config.apiFormat,
+      enableThinking,
+      imageInput: true,
+    })
 
     const context: Context = {
       ...(systemPrompt ? { systemPrompt } : {}),
@@ -260,7 +220,7 @@ export class PiAIProvider implements ILLMProvider {
     const streamOptions = this.buildStreamOptions(options, options?.signal, false)
 
     try {
-      const eventStream = openaiCompletionsStream(piModel, context, streamOptions)
+      const eventStream = resolvePiStreamFn(this.config.apiFormat)(piModel, context, streamOptions)
       const finalMessage = await eventStream.result()
 
       // pi-ai 非流式聚合在上游失败时以 stopReason='error' 的空消息返回而非抛错，
@@ -323,9 +283,16 @@ export class PiAIProvider implements ILLMProvider {
   ): Promise<LLMResponse> {
     const startTime = Date.now()
     const logSource = options?.logSource || 'agent'
-    const { systemPrompt, piMessages } = toPiMessages(messages, this.config.providerType, this.config.model)
+    const { systemPrompt, piMessages } = toPiMessages(messages, this.config.providerType, this.config.model, this.config.apiFormat)
     const enableThinking = options?.enableThinking ?? this.config.defaultOptions?.enableThinking
-    const piModel = buildPiModel(this.config.model, this.config.baseUrl!, this.config.providerType, enableThinking)
+    const piModel = buildPiModel({
+      modelId: this.config.model,
+      baseUrl: this.config.baseUrl!,
+      providerType: this.config.providerType,
+      apiFormat: this.config.apiFormat,
+      enableThinking,
+      imageInput: true,
+    })
 
     const context: Context = {
       ...(systemPrompt ? { systemPrompt } : {}),
@@ -340,7 +307,7 @@ export class PiAIProvider implements ILLMProvider {
     let finalMessage: PiAssistantMessage | undefined
 
     try {
-      const eventStream = openaiCompletionsStream(piModel, context, streamOptions)
+      const eventStream = resolvePiStreamFn(this.config.apiFormat)(piModel, context, streamOptions)
 
       for await (const event of eventStream) {
         if (signal?.aborted) break
@@ -439,6 +406,7 @@ export class PiAIProvider implements ILLMProvider {
     return buildPiStreamOptions({
       providerType: this.config.providerType,
       modelId: this.config.model,
+      apiFormat: this.config.apiFormat,
       apiKey: this.resolveApiKey(),
       sessionId: options?.sessionId,
       signal,

@@ -586,6 +586,8 @@ class SubAgentRuntime {
       const inputs: any = { instruction: run.instruction, contextFiles: run.contextFiles }
       if (run.followupOfRunId) inputs.followupOfRunId = run.followupOfRunId
       if (run.runInBackground) inputs.runInBackground = true
+      // 模型覆盖随 run 落库，重启后追问可沿用同一模型
+      if (run.providerId && run.modelId) { inputs.providerId = run.providerId; inputs.modelId = run.modelId }
       const result: any = {
         summary: run.summary,
         generatedFiles: run.generatedFiles,
@@ -691,6 +693,8 @@ class SubAgentRuntime {
       autoDetectedFiles: [],
       ephemeral: input.ephemeral,
       lifecycle: isEphemeral ? 'ephemeral' : 'persistent',
+      providerId: input.providerId,
+      modelId: input.modelId,
       runInBackground: input.runInBackground === true,
       outputSchema: input.outputSchema,
     }
@@ -729,33 +733,34 @@ class SubAgentRuntime {
 
     // 1) 解析原 run：内存优先，回落 DB（重启或内存淘汰后仍可追问）
     const memEntry = this.entries.get(input.followupOfRunId)
-    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string; ephemeral?: EphemeralSubAgentSpec }
+    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string; ephemeral?: EphemeralSubAgentSpec; providerId?: string; modelId?: string }
     if (memEntry) {
       const r = memEntry.run
       origin = {
         runId: r.runId, conversationId: r.conversationId || '', employeeId: r.employeeId,
         parentConversationId: r.parentConversationId, parentRunId: r.parentRunId, status: r.status,
-        ephemeral: r.ephemeral,
+        ephemeral: r.ephemeral, providerId: r.providerId, modelId: r.modelId,
       }
       if (!isTerminal(r.status)) {
         return { success: false, error: '原委托仍在执行中，请等待完成后再追问' }
       }
     } else {
       const row = db.prepare(
-        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status, ephemeral_json
+        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status, ephemeral_json, inputs_json
          FROM sub_agent_runs WHERE run_id = ?`
       ).get(input.followupOfRunId) as
-        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string; ephemeral_json?: string }
+        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string; ephemeral_json?: string; inputs_json?: string }
         | undefined
       if (!row) {
         return { success: false, error: `未找到委托记录: ${input.followupOfRunId}（请使用 delegate_to_employee / followup_delegation 返回的 delegationId）` }
       }
       let ephemeral: EphemeralSubAgentSpec | undefined
       try { if (row.ephemeral_json) ephemeral = JSON.parse(row.ephemeral_json) } catch { /* ignore */ }
+      const inputs = safeParse(row.inputs_json || '') as { providerId?: string; modelId?: string }
       origin = {
         runId: row.run_id, conversationId: row.conversation_id || '', employeeId: row.employee_id,
         parentConversationId: row.parent_conversation_id || '', parentRunId: row.parent_run_id || undefined, status: row.status,
-        ephemeral,
+        ephemeral, providerId: inputs?.providerId, modelId: inputs?.modelId,
       }
       // 重启后内存丢失的僵尸 run（DB 仍为 running/queued）：标记失败后允许追问，子会话历史仍可续用
       if (origin.status === 'running' || origin.status === 'queued') {
@@ -808,6 +813,8 @@ class SubAgentRuntime {
       followupOfRunId: origin.runId,
       ephemeral: origin.ephemeral,
       lifecycle: origin.ephemeral ? 'ephemeral' : 'persistent',
+      providerId: origin.providerId,
+      modelId: origin.modelId,
     }
     this.enqueueRun(run, input)
     return { success: true, runId, targetEmployeeName: target.name }
@@ -1215,12 +1222,17 @@ class SubAgentRuntime {
 
     try {
       const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
-      if (!resolved) {
+      const hasRunOverride = !!(run.providerId && run.modelId)
+      if (!resolved && !hasRunOverride) {
         subError = '无可用 LLM 提供商（请在设置中配置默认模型）'
       } else {
-        let { providerId, modelId } = resolved
-        // 临时角色可选模型覆盖：providerId+modelId 成对才生效（无效则继承主管解析结果）
-        if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
+        let providerId = resolved?.providerId || ''
+        let modelId = resolved?.modelId || ''
+        // 模型覆盖优先级：运行级显式覆盖（模板任务节点/运行指定）> 临时角色覆盖 > 全局默认
+        if (hasRunOverride) {
+          providerId = run.providerId!
+          modelId = run.modelId!
+        } else if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
           providerId = run.ephemeral.providerId
           modelId = run.ephemeral.modelId
         }

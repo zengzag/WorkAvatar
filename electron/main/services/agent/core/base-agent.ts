@@ -372,6 +372,7 @@ export abstract class BaseAgent {
       apiKey: this.config.apiKey,
       baseUrl: this.config.baseUrl,
       providerType: this.config.providerType,
+      apiFormat: this.config.apiFormat,
       defaultOptions: {
         enableThinking: this.config.enableThinking,
         providerType: this.config.providerType,

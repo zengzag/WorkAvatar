@@ -166,6 +166,14 @@ export interface Conversation {
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai' | 'opencode-go'
 
+/**
+ * 接口形式（API 协议）：
+ * - chat-completions: v1/chat/completions（OpenAI 兼容，默认）
+ * - anthropic-messages: v1/messages（Anthropic Messages）
+ * - openai-responses: v1/responses（OpenAI Responses）
+ */
+export type LLMApiFormat = 'chat-completions' | 'anthropic-messages' | 'openai-responses'
+
 /** 思考级别：false=关闭，'low'/'medium'/'high'=开启并指定强度 */
 export type ThinkingLevel = false | 'low' | 'medium' | 'high'
 
@@ -195,6 +203,8 @@ export interface LLMProvider {
   name: string
   provider_type: LLMProviderType
   base_url?: string
+  /** 接口形式（API 协议），缺省为 chat-completions */
+  api_format?: LLMApiFormat
   model: string
   embedding_model: string
   temperature: number

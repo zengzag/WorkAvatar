@@ -1,7 +1,5 @@
 import { agentLoop, agentLoopContinue } from '@earendil-works/pi-agent-core'
-import { stream as openaiCompletionsStream } from '@earendil-works/pi-ai/api/openai-completions'
 import {
-  type Model,
   type Context,
   type Tool,
   type Message as PiMessage,
@@ -36,7 +34,7 @@ import type {
   TokenUsage,
 } from './types'
 import { createLogger } from '../../logger'
-import { getProviderCompat } from '../llm/provider-compat'
+import { buildPiModel, normalizeApiFormat, resolvePiApi, resolvePiStreamFn } from '../llm/api-format'
 import { buildPiStreamOptions } from '../llm/pi-stream-options'
 import AttachmentService, { ATTACHMENT_REF_PATTERN } from '../../attachment.service'
 import LLMLoggerService from '../../llm-logger.service'
@@ -44,43 +42,17 @@ import type { GeneratedFileInfo } from '../../../../shared/types'
 
 const logger = createLogger('PiAgentAdapter')
 
-/** 构造 pi-ai 合成 Model<"openai-completions">，compat 配置由 provider-compat.ts 统一管理 */
-function createPiModel(config: AgentConfig): Model<'openai-completions'> {
-  const providerType = config.providerType
-  const compat = getProviderCompat(providerType, config.model)
-  // thinkingFormat / alwaysReasoning provider 的 reasoning 必须始终为 true，
-  // 否则 pi-ai 的 thinking 分支不执行、思考开关失效（alwaysReasoning 更不允许缺省 reasoning 参数）
-  const reasoning = !!config.enableThinking || !!compat.thinkingFormat || !!compat.alwaysReasoning
-
-  return {
-    id: config.model,
-    name: config.model,
-    api: 'openai-completions',
-    provider: providerType || 'openai',
+/** 构造 pi-ai 合成 Model（按接口形式选择 api 与 compat），compat 配置由 provider-compat.ts 统一管理 */
+function createPiModel(config: AgentConfig): any {
+  return buildPiModel({
+    modelId: config.model,
     baseUrl: config.baseUrl || 'https://api.openai.com/v1',
-    reasoning,
+    providerType: config.providerType,
+    apiFormat: config.apiFormat,
+    enableThinking: config.enableThinking,
     // 视觉能力：用于 pi-ai 序列化校验与上下文注入判断（不支持图片时不注入工具返回的图片）
-    input: config.supportsImageInput ? ['text', 'image'] : ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 256 * 1024,
-    maxTokens: 48 * 1024,
-    compat: {
-      supportsUsageInStreaming: true,
-      supportsFinishReason: true,
-      maxTokensField: compat.maxTokensField,
-      supportsReasoningEffort: compat.supportsReasoningEffort,
-      supportsDeveloperRole: compat.supportsDeveloperRole,
-      supportsStore: compat.supportsStore,
-      supportsStrictMode: compat.supportsStrictMode,
-      ...(compat.sendSessionAffinityHeaders ? {
-        sendSessionAffinityHeaders: true,
-        sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
-      } : {}),
-      ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
-      ...(compat.zaiToolStream ? { zaiToolStream: true } : {}),
-      ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
-    },
-  }
+    imageInput: config.supportsImageInput === true,
+  })
 }
 
 /** 图片引用解析结果：
@@ -103,12 +75,13 @@ function parseImageDataUrl(url: string): { data: string; mimeType: string } | { 
   return { url }
 }
 
-/** 构造 streamFn，内部委托给 pi-ai openai-completions stream。
+/** 构造 streamFn，内部委托给 pi-ai stream（按接口形式分派）。
  *  包装 eventStream 以窃听事件，在流结束后写入 LLM 日志（与 PiAIProvider 格式一致），
  *  否则 agent 主流程绕过 PiAIProvider 会导致 .log/llm 缺失原始交互记录。
  */
 function createStreamFn(config: AgentConfig): StreamFn {
   const piModel = createPiModel(config)
+  const piStream = resolvePiStreamFn(config.apiFormat)
   const apiKey = config.apiKey
   return (_model, context, options) => {
     const startTime = Date.now()
@@ -137,9 +110,10 @@ function createStreamFn(config: AgentConfig): StreamFn {
         detachExternalAbort = () => externalSignal.removeEventListener('abort', onAbort)
       }
     }
-    const innerStream = openaiCompletionsStream(piModel, context, buildPiStreamOptions({
+    const innerStream = piStream(piModel, context, buildPiStreamOptions({
       providerType: config.providerType,
       modelId: config.model,
+      apiFormat: config.apiFormat,
       apiKey,
       sessionId: options?.sessionId ?? config.sessionId,
       signal: loopAbort.signal,
@@ -152,6 +126,7 @@ function createStreamFn(config: AgentConfig): StreamFn {
     return wrapStreamWithLogging(innerStream, {
       model: config.model,
       providerType: config.providerType,
+      apiFormat: config.apiFormat,
       context: contextSnapshot,
       options,
       startTime,
@@ -233,6 +208,7 @@ function wrapStreamWithLogging(
   logMeta: {
     model: string
     providerType?: string
+    apiFormat?: string
     context: Context
     options?: any
     startTime: number
@@ -266,7 +242,7 @@ function wrapStreamWithLogging(
     return {
       role: 'assistant',
       content: contentParts,
-      api: 'openai-completions',
+      api: resolvePiApi(logMeta.apiFormat),
       provider: logMeta.providerType || 'openai',
       model: logMeta.model,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -410,11 +386,16 @@ function toPiMessages(
   messages: Message[],
   providerType?: string,
   modelId?: string,
+  apiFormat?: string,
 ): { systemPrompt?: string; piMessages: PiMessage[] } {
   let systemPrompt: string | undefined
   const piMessages: PiMessage[] = []
   const ts = Date.now()
   const provider = providerType || 'openai'
+  const piApi = resolvePiApi(apiFormat)
+  // 仅 chat-completions 回放 reasoning_content（以 reasoning_content 作为占位签名）；
+  // anthropic/responses 的历史思考需真实签名/加密内容，缺失时回放会报错，故丢弃
+  const replayReasoning = normalizeApiFormat(apiFormat) === 'chat-completions'
 
   for (const m of messages) {
     if (m.role === 'system') {
@@ -462,7 +443,7 @@ function toPiMessages(
     if (m.role === 'assistant') {
       const contentParts: (TextContent | ThinkingContent | PiToolCall)[] = []
       if (m.content) contentParts.push({ type: 'text', text: m.content })
-      if (m.reasoning_content) {
+      if (m.reasoning_content && replayReasoning) {
         contentParts.push({ type: 'thinking', thinking: m.reasoning_content, thinkingSignature: 'reasoning_content' })
       }
       if (m.toolCalls) {
@@ -480,7 +461,7 @@ function toPiMessages(
       piMessages.push({
         role: 'assistant',
         content: contentParts,
-        api: 'openai-completions',
+        api: piApi,
         provider,
         model: modelId || '',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -815,7 +796,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
     getLoopReminder,
   } = params
 
-  const { systemPrompt, piMessages } = toPiMessages(messages, config.providerType, config.model)
+  const { systemPrompt, piMessages } = toPiMessages(messages, config.providerType, config.model, config.apiFormat)
 
   // 拆分：history → context.messages，最后一条 user → prompts
   const lastUserIdx = (() => {

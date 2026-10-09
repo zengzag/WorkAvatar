@@ -220,6 +220,7 @@ class DatabaseService {
         name TEXT NOT NULL,
         provider_type TEXT NOT NULL,
         base_url TEXT,
+        api_format TEXT DEFAULT 'chat-completions',
         model TEXT NOT NULL,
         embedding_model TEXT DEFAULT 'text-embedding-3-small',
         temperature REAL DEFAULT 0.7,
@@ -495,6 +496,13 @@ class DatabaseService {
         this.db.exec(`ALTER TABLE sub_agent_runs ADD COLUMN ${name} ${ddl}`)
         logger.info(`迁移：sub_agent_runs 增加 ${name} 列`)
       }
+    }
+
+    // LLM 供应商接口形式增量列（幂等）：默认 chat-completions
+    const llmProviderColumns = this.db.prepare('PRAGMA table_info(llm_providers)').all() as Array<{ name: string }>
+    if (llmProviderColumns.length > 0 && !llmProviderColumns.some(c => c.name === 'api_format')) {
+      this.db.exec("ALTER TABLE llm_providers ADD COLUMN api_format TEXT DEFAULT 'chat-completions'")
+      logger.info('迁移：llm_providers 增加 api_format 列')
     }
 
     // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建

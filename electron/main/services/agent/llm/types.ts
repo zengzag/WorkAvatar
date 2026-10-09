@@ -107,5 +107,7 @@ export interface LLMProviderConfig {
   apiKey?: string
   baseUrl?: string
   providerType?: string
+  /** 接口形式：chat-completions（默认）/ anthropic-messages / openai-responses */
+  apiFormat?: string
   defaultOptions?: LLMCallOptions
 }

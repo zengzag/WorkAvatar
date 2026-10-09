@@ -38,6 +38,7 @@ export interface LLMProviderCreateParams {
   name: string
   provider_type: LLMProvider['provider_type']
   base_url?: string
+  api_format?: LLMProvider['api_format']
   model: string
   api_key?: string
   temperature?: number
@@ -51,6 +52,7 @@ export interface LLMProviderUpdateParams {
   name?: string
   provider_type?: LLMProvider['provider_type']
   base_url?: string
+  api_format?: LLMProvider['api_format']
   model?: string
   api_key?: string
   temperature?: number

@@ -149,6 +149,7 @@ class GenericChatService {
       apiKey: providerConfig.api_key,
       baseUrl: providerConfig.base_url || this.llmClient.getBaseURL(providerConfig),
       providerType: providerConfig.provider_type,
+      apiFormat: providerConfig.api_format,
       supportsImageInput: resolveImageSupport(providerConfig.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: config.enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: config.conversationId,
