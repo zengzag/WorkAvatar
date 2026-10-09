@@ -1,5 +1,5 @@
 import { createPiProvider } from '../agent/llm/pi-provider-factory'
-import { parseJSON } from './kms-paragraph-processor'
+import { parseJSON } from '../llm-json-parser'
 import type { ThinkingLevel } from '../../../shared/types'
 
 /** callLLMForJSON 调用选项 */

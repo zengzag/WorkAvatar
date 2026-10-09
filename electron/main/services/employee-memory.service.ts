@@ -27,6 +27,7 @@ import {
   MEMORY_ALWAYS_ON_MAX_COUNT,
 } from './employee-memory-types'
 import { buildExtractionPrompt, buildConsolidationPrompt } from './employee-memory-prompts'
+import { parseJSON } from './llm-json-parser'
 import {
   formatContentOnlyMessages,
   getExtractionRelevantMemories,
@@ -481,12 +482,10 @@ class EmployeeMemoryService {
       sessionId: `memory-extract:${employeeId}`,
     })
 
-    const jsonMatch = response.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
+    const parsed = parseJSON<ExtractionResult | null>(response, null)
+    if (!parsed) {
       throw new Error('EXTRACTION_INVALID_OUTPUT')
     }
-
-    const parsed = JSON.parse(jsonMatch[0]) as ExtractionResult
 
     const validExtracted = (parsed.memories || []).filter(m => m.key && m.topic && m.content)
 
@@ -622,13 +621,11 @@ class EmployeeMemoryService {
       return { deleted: 0, merged: 0, simplified: 0 }
     }
 
-    const jsonMatch = response.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
+    const parsed = parseJSON<ConsolidationResult | null>(response, null)
+    if (!parsed) {
       logger.error('Memory consolidation failed: invalid JSON output')
       return { deleted: 0, merged: 0, simplified: 0 }
     }
-
-    const parsed = JSON.parse(jsonMatch[0]) as ConsolidationResult
 
     let deleted = 0
     let merged = 0

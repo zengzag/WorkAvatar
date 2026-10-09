@@ -7,7 +7,7 @@ import type { KmsLLMConfig } from './kms-config-helpers'
 import LLMClientService from '../llm-client.service'
 import type { LLMMessage } from '../agent/llm/types'
 import type { SearchTraceStep } from './kms-search-agent-types'
-import { parseJSON } from './kms-paragraph-processor'
+import { parseJSON } from '../llm-json-parser'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-UnifiedAgent')
@@ -141,6 +141,7 @@ export async function runUnifiedAgentLoop(
     apiKey: providerConfig.api_key,
     baseUrl: providerConfig.base_url,
     providerType: providerConfig.provider_type,
+    apiFormat: providerConfig.api_format,
     defaultOptions: {
       enableThinking: llmConfig.enableThinking ? 'high' : false,
       providerType: providerConfig.provider_type,

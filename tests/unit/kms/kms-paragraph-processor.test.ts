@@ -12,9 +12,9 @@ import {
   buildTocWithPath,
   identifyParagraphsFromLLMToc,
   filterTocByContentVolume,
-  parseJSON,
   generateFileToc,
 } from '../../../electron/main/services/kms/kms-paragraph-processor'
+import { parseJSON } from '../../../electron/main/services/llm-json-parser'
 import type KMSSearchEngineService from '../../../electron/main/services/kms/kms-search-engine.service'
 
 describe('kms-paragraph-processor / countWords', () => {
