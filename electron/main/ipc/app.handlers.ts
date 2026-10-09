@@ -11,6 +11,7 @@ import type {
 import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
 import { LoggerBackend } from '../services/logger'
+import LLMLoggerService from '../services/llm-logger.service'
 import TabWindowService from '../services/tab-window.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import PowerSaveService from '../services/power-save.service'
@@ -44,6 +45,24 @@ const USER_DATA_TABLES = [
   'llm_providers',
   'employees',
 ]
+
+// 递归统计目录占用字节数；读取失败按 0 计，避免个别文件异常影响设置页展示
+function getDirSize(dir: string): number {
+  let total = 0
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        total += getDirSize(full)
+      } else {
+        try {
+          total += fs.statSync(full).size
+        } catch {}
+      }
+    }
+  } catch {}
+  return total
+}
 
 export function registerAppHandlers(
   db: ReturnType<DatabaseService['getDb']>
@@ -143,6 +162,31 @@ export function registerAppHandlers(
       fs.mkdirSync(logDir, { recursive: true })
     }
     shell.openPath(logDir)
+    return { success: true }
+  })
+
+  // 查询日志目录占用（{dataDir}/.log，含 app/llm 子目录）
+  safeHandle(IPC_CHANNELS.APP_GET_LOG_SIZE, () => {
+    const logDir = path.join(PathService.getInstance().getDataDir(), '.log')
+    return { size: getDirSize(logDir) }
+  })
+
+  // 单独清空日志占用：先释放被占用的文件句柄，再删除日志目录并重建新的日志文件
+  safeHandle(IPC_CHANNELS.APP_CLEAR_LOGS, () => {
+    const dataDir = PathService.getInstance().getDataDir()
+    const logDir = path.join(dataDir, '.log')
+    LoggerBackend.getInstance().closeStream()
+    LLMLoggerService.getInstance().closeStreams()
+    try {
+      if (fs.existsSync(logDir)) {
+        // Windows 下句柄释放存在延迟，重试以提高删除成功率
+        fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      }
+    } catch (e) {
+      LoggerBackend.getInstance().reopen()
+      return { success: false, error: (e as Error)?.message || String(e) }
+    }
+    LoggerBackend.getInstance().reopen()
     return { success: true }
   })
 

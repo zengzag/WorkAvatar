@@ -152,6 +152,16 @@ class LLMLoggerService {
     }
     this.openFiles.clear()
   }
+
+  /** 关闭全部打开的文件流以释放文件句柄（清空日志前调用），后续写入会自动重建 */
+  closeStreams(): void {
+    for (const [, { stream }] of this.openFiles.entries()) {
+      try {
+        stream.end()
+      } catch {}
+    }
+    this.openFiles.clear()
+  }
 }
 
 export default LLMLoggerService
