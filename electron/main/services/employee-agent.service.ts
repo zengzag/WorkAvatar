@@ -325,6 +325,13 @@ class EmployeeAgentService {
     const toolModes = this.getEmployeeToolModes(employeeId, memoryEnabled)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
+    // 子会话执行协议工具（台账收尾 + 结构化上报）：与「能否作为主管委托」无关，
+    // 只要当前作为被委托的子会话执行就必须注册——运行时会强制子会话调用它们
+    // （台账收尾 task_item_update、output_schema 的 submit_structured_result），
+    // 缺失会让子会话找不到工具、无法收尾。受限白名单角色（inline/内置/插件员工）同样需要。
+    const isSubSession = !!interactionContext.getStore()?.delegationId
+    const subSessionProtocolTools = [taskItemUpdateTool, taskItemListTool, submitStructuredResultTool]
+
     // 委托类工具（串行委托 + 并行派发 + 追问 + 运行观测/台账/结构化上报）：
     // 默认注册（见上方 delegationEnabled），不走 employee_tools 三态配置。
     // 委托目标/模板以 enum 注入工具 schema，使模型无需先读上下文即可内省可用 id。
@@ -337,8 +344,11 @@ class EmployeeAgentService {
         followupTool, awaitAgentsTool,
         listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool,
         cancelSubagentTool, readRunNotificationsTool,
-        taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
+        taskItemCreateTool, ...subSessionProtocolTools,
       ])
+    } else if (isSubSession) {
+      // 不具备委托能力但仍作为子会话执行（受限/内置/插件子智能体）：仅补执行协议工具
+      agent.registerTools(subSessionProtocolTools)
     }
 
     // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置

@@ -422,7 +422,7 @@ describe('SubAgentRuntime', () => {
     expect(entries.has(launchedIds[0])).toBe(false)
   })
 
-  it('并行上限：并发不超过 sub_agent_max_parallel（3），其余排队', async () => {
+  it('并行上限：并发不超过 sub_agent_max_parallel（5），其余排队', async () => {
     let running = 0
     let maxSeen = 0
     chatStream.mockImplementationOnce(async (_params: any, callbacks: any) => {

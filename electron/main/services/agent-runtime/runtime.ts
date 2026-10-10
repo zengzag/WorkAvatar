@@ -182,9 +182,9 @@ class SubAgentRuntime {
         "SELECT value FROM settings WHERE key = 'sub_agent_max_parallel'"
       ).get() as { value?: string } | undefined
       const n = row?.value ? parseInt(row.value, 10) : NaN
-      return Number.isFinite(n) && n > 0 ? n : 3
+      return Number.isFinite(n) && n > 0 ? n : 5
     } catch {
-      return 3
+      return 5
     }
   }
 
