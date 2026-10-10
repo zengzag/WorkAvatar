@@ -14,7 +14,7 @@ export type {
   EmployeeDelegationConfig,
 } from '../../electron/shared/types'
 
-export { parseEmployeeDelegation } from '../../electron/shared/types'
+export { parseEmployeeDelegation, SETTING_DELEGATION_ENABLED } from '../../electron/shared/types'
 
 export interface Message {
   id: string

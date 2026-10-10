@@ -12,7 +12,7 @@ import {
 } from 'antd'
 import { TeamOutlined } from '@ant-design/icons'
 import type { Employee } from '../../types'
-import { parseEmployeeDelegation, type EmployeeDelegationConfig } from '../../types'
+import { parseEmployeeDelegation, SETTING_DELEGATION_ENABLED, type EmployeeDelegationConfig } from '../../types'
 import EmployeeAvatar from '../common/EmployeeAvatar'
 
 const { Text, Paragraph } = Typography
@@ -37,10 +37,21 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
   const { token } = theme.useToken()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [config, setConfig] = useState<EmployeeDelegationConfig>(delegation)
+  /** 全局委托开关关闭时，员工级设置不生效（委托工具不注册、提示词不含委托段） */
+  const [globallyDisabled, setGloballyDisabled] = useState(false)
+  const disabled = readonly || globallyDisabled
 
   useEffect(() => {
     setConfig(delegation)
   }, [delegation])
+
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.settings.get({ key: SETTING_DELEGATION_ENABLED })
+      .then((raw) => { if (!cancelled) setGloballyDisabled(raw === '0' || raw === 'false') })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     window.electronAPI.employee.list()
@@ -109,6 +120,9 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
       {readonly && (
         <Alert type="info" title={t('employeeSettings.delegationReadonlyHint', { defaultValue: '该员工为内置/插件提供，委托设置不可修改' })} showIcon />
       )}
+      {globallyDisabled && (
+        <Alert type="warning" title={t('employeeSettings.delegationGlobalDisabledHint')} showIcon />
+      )}
       <Card
         title={
           <span>
@@ -119,7 +133,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
         extra={
           <Switch
             checked={config.enabled}
-            disabled={readonly}
+            disabled={disabled}
             onChange={handleToggleEnabled}
             checkedChildren={t('employeeSettings.delegationOn')}
             unCheckedChildren={t('employeeSettings.delegationOff')}
@@ -147,7 +161,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
                     <div key={c.id} style={{ ...rowStyle, opacity: c.accepting ? 1 : 0.6 }}>
                       <Checkbox
                         checked={checked}
-                        disabled={!c.accepting}
+                        disabled={!c.accepting || disabled}
                         onChange={(e) => handleToggleTarget(c.id, e.target.checked)}
                       />
                       <EmployeeAvatar
@@ -196,7 +210,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
         extra={
           <Switch
             checked={config.acceptDelegation}
-            disabled={readonly}
+            disabled={disabled}
             onChange={handleToggleAccept}
             checkedChildren={t('employeeSettings.delegationOn')}
             unCheckedChildren={t('employeeSettings.delegationOff')}

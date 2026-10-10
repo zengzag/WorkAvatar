@@ -19,6 +19,12 @@ export interface RegisteredEmployee extends Employee {
   defaultTools?: string[]
   /** 默认启用的技能 id 列表（bundled/plugin 稳定 id），缺省表示不额外启用任何技能 */
   defaultSkills?: string[]
+  /**
+   * 工具白名单（收窄语义，区别于 defaultTools 的「强制启用」）：
+   * 出现时该员工仅保留白名单内工具，其余一律置 off（含插件/KMS/脚本工具）。
+   * 用于临时子智能体声明受限能力（如只读检索类角色）。
+   */
+  toolAllowlist?: string[]
 }
 
 interface PluginEmployeeGroup {
@@ -364,7 +370,15 @@ class EmployeeRegistryService {
       updated_at: 0,
       defaultTools: spec.tools,
       defaultSkills: spec.skills,
+      // 显式声明工具时按白名单收窄（受限能力角色，如只读检索）；未声明则继承完整工具集
+      toolAllowlist: spec.tools && spec.tools.length > 0 ? spec.tools : undefined,
     }
+  }
+
+  /** 注册员工工具白名单：未声明返回 null（不收窄） */
+  getToolAllowlist(employeeId: string): string[] | null {
+    const emp = this.getRegistered(employeeId)
+    return emp?.toolAllowlist && emp.toolAllowlist.length > 0 ? emp.toolAllowlist : null
   }
 
   /**

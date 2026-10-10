@@ -21,6 +21,7 @@ export const launchAgentsTool: ToolDefinition = {
   title: '并行派发子任务',
   summary: '拆解多个独立子任务并行派发，立即返回 runIds（可临时角色）',
   description: `将一个任务拆解为多个相互独立的子任务，并行派发执行。适用于需要多名执行者同时分工（如同时调研多份资料、并行生成多个文档）的复杂任务。
+适用信号：存在 2 个及以上相互独立、可并行的子任务。应一次把全部独立子任务发出（并发派发），不要逐个派发；随后用 await_agents 收拢结果。子任务之间存在依赖时改用 delegate_to_employee 串行。
 参数：
 - tasks: 子任务数组（1-${MAX_TASKS} 个），每项包含：
   - 执行者三选一：target_employee_id（已有员工，从上下文信息 [DELEGATION] 段选择）/ ephemeral_role（临时子智能体，字段同 delegate_to_employee）/ subagent_profile_id（模板 id）

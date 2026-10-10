@@ -166,11 +166,15 @@ export function buildCapabilitiesPrompt(params: {
 /**
  * Delegation 多员工协作能力文本（随员工稳定上下文注入）。
  * delegationTargets 为空但 delegationEnabled 时仍注入临时角色说明（开启委托即注册工具）。
+ * 结构：能力声明 → 工具 → 何时委托/不委托（触发判定）→ 选择执行者 → 编排流程 → 示例 → 硬限制。
  */
 export function buildDelegationPrompt(
   delegationTargets: Array<{ id: string; name: string; description?: string; role?: string }>,
-  delegationEnabled?: boolean
+  delegationEnabled?: boolean,
+  subagentProfiles?: Array<{ id: string; name: string; description?: string }>
 ): string | undefined {
+  // 委托能力关闭时整体不注入：避免「提示词说委托但实际没有委托工具」的错配
+  if (delegationEnabled === false) return undefined
   const targetsText = delegationTargets.length > 0
     ? ['Available delegatees (select the employee whose capabilities best match the task):',
       delegationTargets.map(e => {
@@ -181,13 +185,30 @@ export function buildDelegationPrompt(
       ? ['Available delegatees: none pre-registered. When no existing employee fits the task, create an ephemeral sub-agent instead; reuse a persisted sub-agent profile (list_subagent_profiles) when one exists.']
       : []
   if (targetsText.length === 0) return undefined
+  const profiles = subagentProfiles || []
+  const profilesText = profiles.length > 0
+    ? ['Available sub-agent profiles (ready-made one-off executors; pass subagent_profile_id instead of authoring an ephemeral_role):',
+      profiles.map(p => `- ${p.name} (id=${p.id})${p.description ? `: ${p.description}` : ''}`).join('\n')]
+    : []
   return [
     'Delegation (multi-employee collaboration):',
+    'Proactively delegate whenever a sub-task is independent, research-heavy, or needs a specialty other than your own. A sub-agent works in its own isolated context and returns only a self-contained result, so delegating keeps your context clean and lets independent work run in parallel. Do not do everything yourself when delegation clearly fits.',
     ...targetsText,
+    ...profilesText,
     'Delegation tools:',
     '- delegate_to_employee: delegate a single sub-task and wait synchronously for its result (or run_in_background for async).',
     '- launch_agents + await_agents: dispatch multiple independent sub-tasks in parallel, then await and aggregate their results.',
     '- followup_delegation: ask follow-up questions or request revisions on a completed delegation; the sub-agent retains the original task context and supports multi-turn collaboration.',
+    'When to delegate (act on these signals):',
+    '- The task has two or more independent parts that can be researched, produced, or verified in parallel.',
+    '- Answering requires sweeping many files, sources, or naming conventions (roughly 3+ queries or 10+ file reads) and you only need the conclusion, not the raw dumps.',
+    '- A self-contained unit of work needs a different specialty, a narrower toolset, or an isolated context to avoid polluting this conversation.',
+    '- You need an unbiased review or verification of work, separate from the agent that produced it.',
+    'When NOT to delegate (do it yourself):',
+    '- A single fact, file, symbol, or value you already know how to locate directly.',
+    '- Anything already answered by this conversation or by a tool result in hand.',
+    '- Work that depends on partial output you have not received yet — that is sequential; use delegate_to_employee and wait instead of splitting it.',
+    '- Trivial or single-step requests; do not delegate merely to look structured.',
     'Choosing the executor (reuse-first):',
     '1. Prefer an available delegatee whose capabilities match; only create an ephemeral sub-agent (ephemeral_role) when none fits.',
     '2. Ephemeral sub-agents are one-off workers created on demand: give a concise duty name and a fully self-contained system_prompt (identity, responsibilities, output requirements, constraints). They never see this conversation and disappear when the task ends.',
@@ -199,6 +220,13 @@ export function buildDelegationPrompt(
     '3. Aggregate: use await_agents to collect each result (summary, generated-file list, and token usage).',
     '4. Verify: review each result. When a result is wrong, incomplete, or misses an acceptance criterion, first use followup_delegation against the original sub-agent so its context is preserved; re-delegate only when the issue cannot be repaired.',
     '5. Report: deliver the conclusion to the user from the results and files; do not replay the sub-agents\' full execution trace.',
+    'Fan-out then fan-in:',
+    '- Emit all independent delegations together in one step, then collect them; never serialize work that has no dependency. Sequence only when a later instruction genuinely needs an earlier result.',
+    '- Every instruction must be self-contained — the sub-agent has not seen this conversation. Include background, objective, expected output form, and acceptance criteria.',
+    'Examples:',
+    '- Parallel research (delegate): the user asks for a competitive landscape covering three unnamed rivals. Call launch_agents once with three tasks (one per rival, each with a self-contained instruction), then await_agents on the returned run_ids and synthesize.',
+    '- Sequential dependency (do not parallelize): "summarize the file you just generated, then translate it." The translation needs the summary first — use delegate_to_employee for the summary, then follow up on the result.',
+    '- Do not delegate: the user asks which license the project uses and a LICENSE file is already in the workspace — read it directly instead of delegating.',
     'Limits: never delegate to yourself; delegation depth is capped at 3; every delegation instruction must be self-contained (background, objective, acceptance criteria); a single delegation conversation is capped at 5 follow-up turns including the first.',
   ].join('\n')
 }

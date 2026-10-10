@@ -146,6 +146,7 @@ vi.mock('../../../electron/main/services/employee-registry.service', () => ({
       toDBEmployee: vi.fn(),
       isEnabled: vi.fn(() => true),
       getDefaultToolModes: vi.fn(),
+      getToolAllowlist: vi.fn(() => null),
     }),
   },
 }))
@@ -199,6 +200,33 @@ describe('isMemoryEnabled', () => {
 
   it('员工与注册记录均不存在：false', () => {
     expect(EmployeeAgentService.getInstance().isMemoryEnabled('nobody')).toBe(false)
+  })
+})
+
+describe('全局委托开关（delegation_enabled）', () => {
+  const registeredToolIds = () => {
+    const agent = agentControl.instances.at(-1)!
+    return agent.registerTools.mock.calls.flat().flatMap((list: any[]) => (list || []).map((t: any) => t.id))
+  }
+
+  it('默认（未设置）：注册委托类工具', async () => {
+    await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
+    expect(registeredToolIds()).toContain('delegate')
+    expect(registeredToolIds()).toContain('launch_agents')
+  })
+
+  it('全局关闭：不注册任何委托类工具（提示词随之不含委托段）', async () => {
+    dbState.db.prepare("INSERT INTO settings (key, value) VALUES ('delegation_enabled','0')").run()
+    await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
+    expect(registeredToolIds()).not.toContain('delegate')
+    expect(registeredToolIds()).not.toContain('launch_agents')
+    expect(registeredToolIds()).not.toContain('followup')
+  })
+
+  it('极简模式：不注册任何委托类工具（不传工具、不注入能力段）', async () => {
+    await EmployeeAgentService.getInstance().chatStream(baseParams({ minimal_mode: true }), noopCallbacks())
+    expect(registeredToolIds()).not.toContain('delegate')
+    expect(registeredToolIds()).not.toContain('launch_agents')
   })
 })
 

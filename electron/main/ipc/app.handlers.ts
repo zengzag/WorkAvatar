@@ -15,8 +15,10 @@ import LLMLoggerService from '../services/llm-logger.service'
 import TabWindowService from '../services/tab-window.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import PowerSaveService from '../services/power-save.service'
+import EmployeeAgentService from '../services/employee-agent.service'
 import mainUiI18n from '../services/ui-i18n.service'
 import { WINDOW_STATE_SETTING_KEY } from '../services/window-state.service'
+import { SETTING_DELEGATION_ENABLED } from '../../shared/types'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -25,6 +27,7 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'web_search_engine',
   'web_search_result_count',
   'prevent_sleep_when_foreground',
+  SETTING_DELEGATION_ENABLED,
   WINDOW_STATE_SETTING_KEY,
 ])
 
@@ -128,6 +131,10 @@ export function registerAppHandlers(
     // 语言变更需同步刷新主进程 UI（托盘菜单等）
     if (params.key === 'appearance_locale' && (params.value === 'zh-CN' || params.value === 'en-US')) {
       mainUiI18n.setLocale(params.value)
+    }
+    // 全局委托开关变更：委托工具是否注册取决于该值，需使存量 agent 缓存按新工具集重建
+    if (params.key === SETTING_DELEGATION_ENABLED) {
+      EmployeeAgentService.getInstance().bumpToolEpoch()
     }
     return { success: true }
   })

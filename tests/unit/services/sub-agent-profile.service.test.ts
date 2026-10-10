@@ -143,4 +143,24 @@ describe('SubAgentProfileService', () => {
     expect(spec2.providerId).toBeUndefined()
     expect(spec2.modelId).toBeUndefined()
   })
+
+  it('seedBuiltinProfiles：播种内置 explore/general（source=builtin，工具白名单/全能力）', () => {
+    service.seedBuiltinProfiles()
+    const list = service.list()
+    expect(list.map(p => p.id).sort()).toEqual(['sap-builtin-explore', 'sap-builtin-general'])
+    expect(list.every(p => p.source === 'builtin')).toBe(true)
+
+    const explore = service.get('sap-builtin-explore')!
+    expect(JSON.parse(explore.tools_json)).toContain('file_read')
+    expect(explore.description).toContain('只读')
+
+    // general 不声明工具白名单 → 继承完整工具集
+    expect(service.get('sap-builtin-general')!.tools_json).toBe('[]')
+  })
+
+  it('update/remove：内置模板只读（不可改、不可删）', () => {
+    service.seedBuiltinProfiles()
+    expect(service.update('sap-builtin-explore', { name: 'x' }).error).toContain('内置模板不可修改')
+    expect(service.remove('sap-builtin-explore').error).toContain('内置')
+  })
 })

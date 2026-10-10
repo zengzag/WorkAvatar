@@ -137,7 +137,9 @@ const SubAgentProfilesDrawer: React.FC<{
           <List.Item
             style={{ padding: '10px 0' }}
             actions={[
-              <Button key="edit" type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(p)} />,
+              p.source === 'user' && (
+                <Button key="edit" type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(p)} />
+              ),
               p.source === 'user' && (
                 <Popconfirm
                   key="del"

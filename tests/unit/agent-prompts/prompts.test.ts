@@ -146,6 +146,17 @@ describe('agent/business/prompts / buildDelegationPrompt', () => {
     expect(p).toContain('capped at 5 follow-up turns')
     expect(p).toContain('never delegate to yourself')
   })
+
+  it('委托能力显式关闭时整体不注入（即使传入了目标列表）', () => {
+    expect(buildDelegationPrompt([{ id: 'e1', name: 'A' }], false)).toBeUndefined()
+    expect(buildDelegationPrompt([], false, [{ id: 'p1', name: 'explore' }])).toBeUndefined()
+  })
+
+  it('可用子智能体模板以预置执行者候选列出', () => {
+    const p = buildDelegationPrompt([], true, [{ id: 'p1', name: 'explore', description: '只读检索' }])!
+    expect(p).toContain('Available sub-agent profiles')
+    expect(p).toContain('- explore (id=p1): 只读检索')
+  })
 })
 
 describe('agent/business/prompts / 上下文消息构造', () => {

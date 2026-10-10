@@ -211,6 +211,9 @@ export class GenericAgent extends BaseAgent {
    * 稳定能力块（冻结后字节不变）：技能清单 + 子类追加的 Capabilities/Delegation。
    */
   private getOrBuildStableContent(useSkills: boolean): string | undefined {
+    // 极简模式：不传工具、不注入任何稳定能力块（技能清单 / Capabilities / Delegation），
+    // 退化为仅基础系统提示词的纯对话，任何新增能力段都不得泄漏到该模式
+    if (this.minimalMode) return undefined
     if (this.cachedStableContent !== undefined) return this.cachedStableContent
     const content = buildStableContextMessageContent({
       skillsPrompt: useSkills ? this.skillsPrompt : undefined,

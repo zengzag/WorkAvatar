@@ -106,20 +106,28 @@ export interface EmployeeDelegationConfig {
   acceptDelegation: boolean
 }
 
-/** 解析 delegation_json，容错缺失/非法 JSON，返回默认配置 */
+/** 全局委托开关的 settings KV 键：值 '0'/'false' 关闭；未设置视为开启 */
+export const SETTING_DELEGATION_ENABLED = 'delegation_enabled'
+
+/**
+ * 解析 delegation_json，容错缺失/非法 JSON，返回默认配置。
+ * 缺省即开启委托能力（可派发临时子智能体/子智能体模板）；
+ * 委托给「已有数字员工」仍需在 targetIds 中显式选择目标，未选择时运行时拒绝。
+ * 用户显式配置 {"enabled":false} 可整体关闭。
+ */
 export function parseEmployeeDelegation(json?: string | null): EmployeeDelegationConfig {
-  if (!json) return { enabled: false, targetIds: [], acceptDelegation: true }
+  if (!json) return { enabled: true, targetIds: [], acceptDelegation: true }
   try {
     const o = JSON.parse(json)
     return {
-      enabled: o?.enabled === true,
+      enabled: o?.enabled !== false,
       targetIds: Array.isArray(o?.targetIds)
         ? o.targetIds.filter((x: unknown): x is string => typeof x === 'string')
         : [],
       acceptDelegation: o?.acceptDelegation !== false,
     }
   } catch {
-    return { enabled: false, targetIds: [], acceptDelegation: true }
+    return { enabled: true, targetIds: [], acceptDelegation: true }
   }
 }
 

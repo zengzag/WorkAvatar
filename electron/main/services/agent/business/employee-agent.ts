@@ -15,10 +15,18 @@ export interface EmployeeDelegationTarget {
   role?: string
 }
 
+export interface EmployeeDelegationProfile {
+  id: string
+  name: string
+  description?: string
+}
+
 export interface EmployeeAgentConfig extends GenericAgentConfig {
   employeeId?: string
   /** 可委托员工列表：随稳定上下文消息注入 Delegation 段 */
   delegationTargets?: EmployeeDelegationTarget[]
+  /** 可复用子智能体模板列表（内置 explore/general + 用户自建）：作为预置执行者候选注入 */
+  delegationProfiles?: EmployeeDelegationProfile[]
   /** 委托能力开关（targets 为空时仍注入临时角色/模板说明） */
   delegationEnabled?: boolean
 }
@@ -76,7 +84,12 @@ export class EmployeeAgent extends GenericAgent {
       onDemandToolList: onDemandToolList || undefined,
       hasSkills: useSkills && !!this.skillsPrompt,
     })
-    const delegation = buildDelegationPrompt(this.employeeConfig.delegationTargets || [], this.employeeConfig.delegationEnabled === true)
+    const delegation = buildDelegationPrompt(
+      this.employeeConfig.delegationTargets || [],
+      // 透传三态：显式 false = 委托关闭（不注入）；true/undefined = 按目标列表注入（兼容直接构造的调用方）
+      this.employeeConfig.delegationEnabled,
+      this.employeeConfig.delegationProfiles || [],
+    )
     return [capabilities, delegation].filter((x): x is string => !!x)
   }
 

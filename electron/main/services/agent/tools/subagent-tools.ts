@@ -38,6 +38,50 @@ export function resolveDelegationTarget(args: Record<string, any>): {
 }
 
 /**
+ * 在委托类工具（delegate_to_employee / launch_agents）的 JSON Schema 上注入
+ * 委托目标与子智能体模板的枚举，并在参数描述中列出候选名称。
+ *
+ * 动机：target_employee_id / subagent_profile_id 原为自由字符串，模型必须先读懂
+ * 稳定上下文 [DELEGATION] 段才能猜出可用 id，是「委托几乎不触发」的重要原因之一。
+ * 改为可枚举后，模型可直接内省候选（对标 MiMo-Code 将 subagent_type 改为动态枚举
+ * 修复「多次运行零派发」的做法）。深度遍历以覆盖 launch_agents 的 tasks[].* 嵌套结构。
+ *
+ * 空候选时原样返回，避免注入空 enum 使参数不可用。
+ */
+export function applyDelegationEnums(
+  tool: ToolDefinition,
+  targets: Array<{ id: string; name: string }>,
+  profiles: Array<{ id: string; name: string }>,
+): ToolDefinition {
+  if (targets.length === 0 && profiles.length === 0) return tool
+  const parameters = JSON.parse(JSON.stringify(tool.parameters)) as Record<string, any>
+  const visit = (node: any): void => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item)
+      return
+    }
+    const props = node.properties
+    if (props && typeof props === 'object') {
+      const target = props.target_employee_id
+      if (target && targets.length > 0) {
+        target.enum = targets.map(t => t.id)
+        target.description = `三选一：已有数字员工 id，可选：${targets.map(t => `${t.name}(id=${t.id})`).join('、')}`
+      }
+      const profile = props.subagent_profile_id
+      if (profile && profiles.length > 0) {
+        profile.enum = profiles.map(p => p.id)
+        profile.description = `三选一：子智能体模板 id，可选：${profiles.map(p => `${p.name}(id=${p.id})`).join('、')}`
+      }
+      for (const key of Object.keys(props)) visit(props[key])
+    }
+    if (node.items) visit(node.items)
+  }
+  visit(parameters)
+  return { ...tool, parameters: parameters as ToolDefinition['parameters'] }
+}
+
+/**
  * 多智能体运行时配套工具（阶段三/四）：
  * - list_subagents / get_subagent_status / cancel_subagent：运行观测与管理
  * - read_run_notifications：主管读取后台子任务的终态通知（读取即清空）

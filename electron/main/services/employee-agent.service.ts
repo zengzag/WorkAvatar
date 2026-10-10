@@ -14,14 +14,16 @@ import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKM
 import {
   listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool, cancelSubagentTool,
   readRunNotificationsTool, taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
+  applyDelegationEnums,
 } from './agent/tools/subagent-tools'
+import SubAgentProfileService from './sub-agent-profile.service'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import { createMemorySearchTool } from './agent/tools/memory-search.tool'
 import { MEMORY_BOUND_TOOL_IDS } from './employee-memory-types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
-import { parseEmployeeDelegation } from '../../shared/types'
+import { parseEmployeeDelegation, SETTING_DELEGATION_ENABLED } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
@@ -232,12 +234,20 @@ class EmployeeAgentService {
       ? this.memoryService.buildInjectionMemoryPrompt(employeeId)
       : undefined
 
-    // 委托能力：由员工委托设置驱动（不再是可配置工具）。
-    // 开启委托即注册委托类工具（允许 targetIds 为空：此时可派发临时子智能体/模板）。
-    // targets 过滤：不存在的员工 + 明确拒绝被委托的员工（运行时 launchSubAgent 仍会做最终校验）。
+    // 委托能力：默认开启（全局开关 delegation_enabled + 员工 delegation_json 双重控制）。
+    // targetIds 仅约束「委托给已有员工」；未选择目标时仍可派发临时子智能体/子智能体模板。
+    // 关闭条件：全局开关关闭 / 员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）。
     const delegation = parseEmployeeDelegation(emp.delegation_json)
-    const delegationTargets = delegation.enabled && delegation.targetIds.length > 0
+    const delegationEnabled = delegation.enabled
+      && !minimalMode
+      && this.isDelegationGloballyEnabled()
+      && !emp.id.startsWith('inline:')
+    const delegationTargets = delegationEnabled && delegation.targetIds.length > 0
       ? this.queryDelegationTargets(delegation.targetIds)
+      : []
+    // 可复用子智能体模板（内置 explore/general + 用户自建）：作为「预置执行者」候选，随稳定上下文与工具枚举下发
+    const delegationProfiles = delegationEnabled
+      ? SubAgentProfileService.getInstance().list().map(p => ({ id: p.id, name: p.name, description: p.description }))
       : []
 
     const agentConfig: EmployeeAgentConfig = {
@@ -268,7 +278,8 @@ class EmployeeAgentService {
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       delegationTargets,
-      delegationEnabled: delegation.enabled === true,
+      delegationProfiles,
+      delegationEnabled,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
         // 稳定不变的环境信息（系统环境）保留在 system prompt；
@@ -311,10 +322,15 @@ class EmployeeAgentService {
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
     // 委托类工具（串行委托 + 并行派发 + 追问 + 运行观测/台账/结构化上报）：
-    // 开启委托即注册（targets 可为空，此时支持临时子智能体/模板），不走 employee_tools 三态配置
-    if (delegation.enabled) {
+    // 默认注册（见上方 delegationEnabled），不走 employee_tools 三态配置。
+    // 委托目标/模板以 enum 注入工具 schema，使模型无需先读上下文即可内省可用 id。
+    if (delegationEnabled) {
+      const enumTargets = delegationTargets.map(t => ({ id: t.id, name: t.name }))
+      const enumProfiles = delegationProfiles.map(p => ({ id: p.id, name: p.name }))
       agent.registerTools([
-        delegateTool, followupTool, launchAgentsTool, awaitAgentsTool,
+        applyDelegationEnums(delegateTool, enumTargets, enumProfiles),
+        applyDelegationEnums(launchAgentsTool, enumTargets, enumProfiles),
+        followupTool, awaitAgentsTool,
         listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool,
         cancelSubagentTool, readRunNotificationsTool,
         taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
@@ -509,6 +525,19 @@ class EmployeeAgentService {
       }
     }
 
+    // 工具白名单收窄（临时子智能体声明受限能力，如只读检索角色）：
+    // 白名单外一律置 off（applyToolModes 会据此移除工具），仅保留声明内的工具
+    const allowlist = EmployeeRegistryService.getInstance().getToolAllowlist(employeeId)
+    if (allowlist) {
+      const allowed = new Set(allowlist)
+      for (const id of modeMap.keys()) {
+        if (!allowed.has(id)) modeMap.set(id, 'off')
+      }
+      for (const id of allowlist) {
+        if (modeMap.has(id)) modeMap.set(id, 'on')
+      }
+    }
+
     const rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
@@ -526,6 +555,18 @@ class EmployeeAgentService {
       }
     }
     return modeMap
+  }
+
+  /** 全局委托开关（settings KV delegation_enabled；未设置视为开启） */
+  private isDelegationGloballyEnabled(): boolean {
+    try {
+      const row = this.db.getDb()
+        .prepare('SELECT value FROM settings WHERE key = ?')
+        .get(SETTING_DELEGATION_ENABLED) as { value?: string } | undefined
+      return row?.value !== '0' && row?.value !== 'false'
+    } catch {
+      return true
+    }
   }
 
   /** 按员工工具模式过滤并应用 onDemand 标志（off 移除，on_demand 标记按需，on 常驻） */
