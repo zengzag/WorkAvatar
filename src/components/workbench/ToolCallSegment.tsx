@@ -274,6 +274,12 @@ const ToolCallSegmentInner: React.FC<{
       <Text style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
       </Text>
+      {/* 并行派发卡：展示本次派发的子任务总数（挂在派发卡而非首个委托卡，避免歧义） */}
+      {seg.parallelTotal && seg.parallelTotal > 1 && (
+        <Text style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0 }}>
+          {t('workbench.runGroupTotal', { count: seg.parallelTotal })}
+        </Text>
+      )}
       {!isExpanded && previewText && (
         <PreviewLine
           text={previewText}

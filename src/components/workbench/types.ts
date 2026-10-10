@@ -41,9 +41,7 @@ export interface MessageSegment {
   runId?: string
   /** 并行组 id（一次 launch_agents 派发的一组 run 共享） */
   groupRunId?: string
-  /** 并行组内序号（用于组内定位/首卡展示组信息） */
-  runGroupIndex?: number
-  /** 并行组内总数 */
+  /** 并行组内总数（委托段为组内子任务数；launch_agents 派发卡为本批子任务数） */
   parallelTotal?: number
   /** 目标员工 id */
   targetEmployeeId?: string

@@ -314,8 +314,10 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
 
           // launch_agents 特殊处理：按 runIds 建立/更新并行组 delegation 段（同组横排渲染）
           if (name === 'launch_agents') {
+            const runIds: string[] = Array.isArray(rawResult?.runIds) ? rawResult.runIds : []
             // 收尾 launch_agents 自身的工具调用卡（并行派发立即返回，不代表子任务完成；
-            // 各子任务状态由 run 事件独立驱动），避免该卡片永远停留在"执行中"
+            // 各子任务状态由 run 事件独立驱动），避免该卡片永远停留在"执行中"；
+            // 并行子任务总数记在派发卡上展示（不再挂到首个委托卡上，避免歧义）
             const wrapperIdx = segs.findIndex(s => s.type === 'tool_call' && s.toolName === 'launch_agents' && !s.isToolComplete)
             if (wrapperIdx !== -1) {
               segs[wrapperIdx] = {
@@ -324,9 +326,9 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 isToolComplete: true,
                 toolError: undefined,
                 completedAt: Date.now(),
+                parallelTotal: runIds.length,
               }
             }
-            const runIds: string[] = Array.isArray(rawResult?.runIds) ? rawResult.runIds : []
             if (runIds.length > 0) {
               const groupRunId = `grp_${streamState.assistantMessageId}_${streamState.groupSeq++}`
               const parallelTotal = runIds.length
@@ -335,7 +337,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 // 段树查找（含嵌套层级）；命中则补并行组信息，未命中则新建顶层卡
                 const existing = findRunSegment(segs, rid)
                 if (existing) {
-                  const next = patchRunSegment(segs, rid, s => ({ ...s, groupRunId, runGroupIndex: gi, parallelTotal }))
+                  const next = patchRunSegment(segs, rid, s => ({ ...s, groupRunId, parallelTotal }))
                   if (next) segs = next
                 } else {
                   const lastSeg = segs[segs.length - 1]
@@ -350,7 +352,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                     id: `${streamState.assistantMessageId}_run_${streamState.runCounter++}`,
                     runId: rid,
                     delegationId: rid,
-                    runGroupIndex: gi,
                     parallelTotal,
                     groupRunId,
                     delegationStatus: 'queued',
