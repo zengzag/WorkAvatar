@@ -6,6 +6,7 @@ import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import EmployeeRegistryService from './employee-registry.service'
+import SkillRegistryService from './skill-registry.service'
 import { generateId, generateShortId, extractMessagePreview, moveToTrash } from './common-utils'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -96,9 +97,16 @@ class WorkspaceManagerService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, workspace_path, name, description, rules, profile_json, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'default', 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, workspace_path, name, description, rules, profile_json, avatar_type, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'default', 1, 0, 0, 1, ?, ?)
     `).run(employeeId, workspacePath, name, description, rules, profileJson, now, now)
+
+    // 新员工默认开启内置 office 技能（pptx/docx/xlsx）
+    try {
+      SkillRegistryService.getInstance().assignDefaultSkillsToEmployee(employeeId, ['pptx', 'docx', 'xlsx'])
+    } catch (err: any) {
+      logger.warn(`assign default skills failed: ${err?.message || err}`)
+    }
 
     this.broadcastEmployeeChanged()
 

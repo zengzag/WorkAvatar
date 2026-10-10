@@ -748,6 +748,14 @@ class SkillRegistryService {
     ).run(id, employeeId, skillId)
   }
 
+  /** 为新员工分配内置默认技能：仅分配已安装的技能（避免外键约束报错） */
+  assignDefaultSkillsToEmployee(employeeId: string, skillIds: string[]): void {
+    const findStmt = this.db.getDb().prepare('SELECT id FROM installed_skills WHERE id = ?')
+    for (const skillId of skillIds) {
+      if (findStmt.get(skillId)) this.assignSkillToEmployee(skillId, employeeId)
+    }
+  }
+
   removeSkillFromEmployee(skillId: string, employeeId: string): void {
     const db = this.db.getDb()
     db.prepare('DELETE FROM employee_skills WHERE employee_id = ? AND skill_id = ?').run(employeeId, skillId)
