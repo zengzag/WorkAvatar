@@ -25,7 +25,11 @@ import {
   MEMORY_SEARCH_MAX_LIMIT,
   MEMORY_SEARCH_SCORE_FLOOR,
   MEMORY_ALWAYS_ON_MAX_COUNT,
+  MEMORY_RECALL_TOP_N,
+  MEMORY_RECALL_MIN_SCORE,
+  MEMORY_RECALL_MAX_CHARS,
 } from './employee-memory-types'
+import EmployeeMemoryEmbeddingService from './employee-memory-embedding.service'
 import { buildExtractionPrompt, buildConsolidationPrompt } from './employee-memory-prompts'
 import { parseJSON } from './llm-json-parser'
 import {
@@ -161,6 +165,77 @@ class EmployeeMemoryService {
     return block || undefined
   }
 
+  /**
+   * 语义召回：按用户当前问题召回最相关的少量记忆。
+   * 优先向量余弦；未配置 embedding / 无可用向量 / 调用失败时降级到 FTS5 关键词检索。
+   */
+  async recallRelevantMemories(
+    employeeId: string,
+    query: string,
+    options?: { topN?: number }
+  ): Promise<EmployeeMemory[]> {
+    const q = (query || '').trim()
+    if (!q) return []
+    const topN = options?.topN ?? MEMORY_RECALL_TOP_N
+
+    const embedding = EmployeeMemoryEmbeddingService.getInstance()
+    const queryVector = await embedding.embedQuery(q)
+    if (queryVector) {
+      const ranked = embedding.rankBySimilarity(queryVector, embedding.listVectorsForScope(employeeId))
+      const picked = ranked
+        .filter(r => r.score >= MEMORY_RECALL_MIN_SCORE)
+        .slice(0, topN)
+        .map(r => r.memoryId)
+      if (picked.length > 0) {
+        this.touchMemories(picked)
+        return this.getMemoriesByIds(picked)
+      }
+    }
+
+    return this.searchMemoriesForAgent(employeeId, q, { limit: topN })
+  }
+
+  /**
+   * 构建"本轮相关记忆"注入块。
+   * 与常驻块分工：常驻 = 置顶/关键，此处 = 按当前问题召回的补充；已在常驻块中的条目会被剔除，避免重复注入。
+   */
+  async buildRecalledMemoryPrompt(employeeId: string, query: string): Promise<string | undefined> {
+    const recalled = await this.recallRelevantMemories(employeeId, query)
+    if (recalled.length === 0) return undefined
+
+    const alwaysOnIds = new Set(
+      selectAlwaysOnMemories(
+        this.listMemoriesForInjection(employeeId),
+        { maxCount: MEMORY_ALWAYS_ON_MAX_COUNT }
+      ).map(m => m.id)
+    )
+    const fresh = recalled.filter(m => !alwaysOnIds.has(m.id))
+    if (fresh.length === 0) return undefined
+
+    const lines: string[] = []
+    let totalLen = 0
+    for (const m of fresh) {
+      const line = `- ${m.content}`
+      if (totalLen + line.length > MEMORY_RECALL_MAX_CHARS) break
+      lines.push(line)
+      totalLen += line.length + 1
+    }
+    if (lines.length === 0) return undefined
+
+    return ['与本轮问题相关的历史记忆（按相关度召回，供参考）：', ...lines].join('\n')
+  }
+
+  /** 按传入 id 顺序返回记忆（用于保持召回排序），已删除的自动跳过 */
+  private getMemoriesByIds(ids: string[]): EmployeeMemory[] {
+    if (ids.length === 0) return []
+    const placeholders = ids.map(() => '?').join(',')
+    const rows = this.db.getDb().prepare(
+      `SELECT * FROM employee_memories WHERE deleted_at IS NULL AND id IN (${placeholders})`
+    ).all(...ids) as EmployeeMemory[]
+    const byId = new Map(rows.map(r => [r.id, r]))
+    return ids.map(id => byId.get(id)).filter((m): m is EmployeeMemory => !!m)
+  }
+
   getMemory(id: string): EmployeeMemory | undefined {
     return this.db.getDb().prepare(
       'SELECT * FROM employee_memories WHERE id = ?'
@@ -194,6 +269,8 @@ class EmployeeMemoryService {
     )
     this.syncMemoryFTS(id, employeeId, params.key, params.topic, content)
     this.markChanged()
+    // 手动新增立即生成向量，使语义召回即时可用（自动提取路径由定时回填覆盖）
+    EmployeeMemoryEmbeddingService.getInstance().embedMemoryAsync(id)
     return this.getMemory(id)!
   }
 
@@ -223,6 +300,7 @@ class EmployeeMemoryService {
     if (params.key !== undefined || params.topic !== undefined || params.content !== undefined) {
       const updated = this.getMemory(id)!
       this.syncMemoryFTS(id, updated.employee_id, updated.key, updated.topic, updated.content)
+      EmployeeMemoryEmbeddingService.getInstance().embedMemoryAsync(id)
     }
     this.markChanged()
 

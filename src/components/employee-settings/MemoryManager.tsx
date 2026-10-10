@@ -91,8 +91,17 @@ const TOPIC_COLORS: Record<string, string> = {
   [MEMORY_TOPIC.FACT]: 'orange',
 }
 
-// 跨任务记忆总字符上限（与后端 memory 服务保持一致）
-const MEMORY_CAPACITY_LIMIT = 3000
+// 常驻注入上限（与后端 employee-memory-types 保持一致）
+const MEMORY_ALWAYS_ON_MAX_COUNT = 12
+const MEMORY_ALWAYS_ON_MAX_CHARS = 1500
+// 记忆库总量上限（仅用于触发精炼，不再约束注入）
+const MEMORY_MAX_COUNT = 100
+const MEMORY_MAX_CHARS = 8000
+const IMPORTANCE_ORDER: Record<MemoryItem['importance'], number> = {
+  critical: 0,
+  normal: 1,
+  low: 2,
+}
 
 /**
  * 记忆管理面板（共享组件）：
@@ -387,8 +396,101 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
     } catch {}
   }, [addForm, editingMemory, handleEditMemory, handleAddMemory])
 
-  const capacityPercent = stats ? Math.min(100, Math.round((stats.totalChars / MEMORY_CAPACITY_LIMIT) * 100)) : 0
+  // 常驻分组：与后端 selectAlwaysOnMemories 同规则（置顶或关键，按置顶/重要性/更新时间取前 12）
+  const alwaysOnList = useMemo(() => {
+    return memories
+      .filter(m => m.is_pinned === 1 || m.importance === 'critical')
+      .sort((a, b) => {
+        if (a.is_pinned !== b.is_pinned) return b.is_pinned - a.is_pinned
+        if (IMPORTANCE_ORDER[a.importance] !== IMPORTANCE_ORDER[b.importance]) {
+          return IMPORTANCE_ORDER[a.importance] - IMPORTANCE_ORDER[b.importance]
+        }
+        return b.updated_at - a.updated_at
+      })
+      .slice(0, MEMORY_ALWAYS_ON_MAX_COUNT)
+  }, [memories])
+  const onDemandList = useMemo(() => {
+    const alwaysOnIds = new Set(alwaysOnList.map(m => m.id))
+    return memories.filter(m => !alwaysOnIds.has(m.id))
+  }, [memories, alwaysOnList])
+  const alwaysOnChars = useMemo(
+    () => alwaysOnList.reduce((sum, m) => sum + m.content.length + 3, 0),
+    [alwaysOnList]
+  )
+  const alwaysOnPercent = Math.min(100, Math.round((alwaysOnChars / MEMORY_ALWAYS_ON_MAX_CHARS) * 100))
+  const capacityPercent = stats ? Math.min(100, Math.round((stats.totalChars / MEMORY_MAX_CHARS) * 100)) : 0
   const capacityStatus: 'normal' | 'success' | 'exception' | 'active' | undefined = capacityPercent > 80 ? 'exception' : capacityPercent > 60 ? 'active' : 'success'
+
+  const renderMemoryItem = (m: MemoryItem) => (
+    <div
+      key={m.id}
+      style={{
+        padding: '12px 16px',
+        borderRadius: 8,
+        border: `1px solid ${m.is_pinned ? token.colorPrimary : token.colorBorderSecondary}`,
+        background: m.is_pinned ? token.colorPrimaryBg : token.colorBgContainer,
+        transition: 'all 0.2s',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+            <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>
+              {m.topic}
+            </Tag>
+            {m.source === 'auto' && (
+              <Tag style={{ margin: 0 }}>{t('employeeSettings.memorySourceAuto')}</Tag>
+            )}
+            {m.source === 'manual' && (
+              <Tag color="purple" style={{ margin: 0 }}>{t('employeeSettings.memorySourceManual')}</Tag>
+            )}
+            {m.importance === 'critical' && (
+              <Tag color="red" style={{ margin: 0 }}>{t('employeeSettings.memoryImportanceCritical')}</Tag>
+            )}
+            {m.importance === 'low' && (
+              <Tag style={{ margin: 0 }}>{t('employeeSettings.memoryImportanceLow')}</Tag>
+            )}
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {m.key}
+            </Text>
+          </div>
+          <Paragraph style={{ margin: 0 }} ellipsis={{ rows: 3, expandable: true, symbol: t('employeeSettings.expand') }}>
+            {m.content}
+          </Paragraph>
+        </div>
+        <Space size={4} style={{ flexShrink: 0 }}>
+          <Tooltip title={m.is_pinned ? t('employeeSettings.unpinMemory') : t('employeeSettings.pinMemory')}>
+            <Button
+              type="text"
+              size="small"
+              icon={m.is_pinned ? <PushpinFilled style={{ color: token.colorPrimary }} /> : <PushpinOutlined />}
+              onClick={() => handleTogglePin(m)}
+              disabled={readonly}
+            />
+          </Tooltip>
+          <Tooltip title={t('common.edit')}>
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => openEditModal(m)}
+              disabled={readonly}
+            />
+          </Tooltip>
+          <Tooltip title={t('common.delete')}>
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => handleDeleteMemory(m)}
+              disabled={readonly}
+            />
+          </Tooltip>
+        </Space>
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -443,12 +545,37 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
                 border: `1px solid ${token.colorBorderSecondary}`,
                 background: token.colorBgContainer,
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                {/* 常驻块：受每轮注入上限约束 */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('employeeSettings.memoryCapacity')}
+                    {t('employeeSettings.memoryAlwaysOnUsage')}
                   </Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {stats.totalChars} / {MEMORY_CAPACITY_LIMIT}
+                    {t('employeeSettings.memoryUsageValue', {
+                      count: alwaysOnList.length,
+                      maxCount: MEMORY_ALWAYS_ON_MAX_COUNT,
+                      chars: alwaysOnChars,
+                      maxChars: MEMORY_ALWAYS_ON_MAX_CHARS,
+                    })}
+                  </Text>
+                </div>
+                <Progress percent={alwaysOnPercent} size="small" showInfo={false} style={{ marginBottom: 4 }} />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('employeeSettings.memoryAlwaysOnHint')}
+                </Text>
+
+                {/* 记忆库：不自动注入，仅受总量上限约束 */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '12px 0 4px' }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('employeeSettings.memoryLibraryUsage')}
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('employeeSettings.memoryUsageValue', {
+                      count: stats.count,
+                      maxCount: MEMORY_MAX_COUNT,
+                      chars: stats.totalChars,
+                      maxChars: MEMORY_MAX_CHARS,
+                    })}
                   </Text>
                 </div>
                 <Progress
@@ -494,77 +621,44 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
             </div>
 
             {memories.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {memories.map(m => (
-                  <div
-                    key={m.id}
-                    style={{
-                      padding: '12px 16px',
-                      borderRadius: 8,
-                      border: `1px solid ${m.is_pinned ? token.colorPrimary : token.colorBorderSecondary}`,
-                      background: m.is_pinned ? token.colorPrimaryBg : token.colorBgContainer,
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                          <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>
-                            {m.topic}
-                          </Tag>
-                          {m.source === 'auto' && (
-                            <Tag style={{ margin: 0 }}>{t('employeeSettings.memorySourceAuto')}</Tag>
-                          )}
-                          {m.source === 'manual' && (
-                            <Tag color="purple" style={{ margin: 0 }}>{t('employeeSettings.memorySourceManual')}</Tag>
-                          )}
-                          {m.importance === 'critical' && (
-                            <Tag color="red" style={{ margin: 0 }}>{t('employeeSettings.memoryImportanceCritical')}</Tag>
-                          )}
-                          {m.importance === 'low' && (
-                            <Tag style={{ margin: 0 }}>{t('employeeSettings.memoryImportanceLow')}</Tag>
-                          )}
-                          <Text type="secondary" style={{ fontSize: 12 }}>
-                            {m.key}
-                          </Text>
-                        </div>
-                        <Paragraph style={{ margin: 0 }} ellipsis={{ rows: 3, expandable: true, symbol: t('employeeSettings.expand') }}>
-                          {m.content}
-                        </Paragraph>
-                      </div>
-                      <Space size={4} style={{ flexShrink: 0 }}>
-                        <Tooltip title={m.is_pinned ? t('employeeSettings.unpinMemory') : t('employeeSettings.pinMemory')}>
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={m.is_pinned ? <PushpinFilled style={{ color: token.colorPrimary }} /> : <PushpinOutlined />}
-                            onClick={() => handleTogglePin(m)}
-                            disabled={readonly}
-                          />
-                        </Tooltip>
-                        <Tooltip title={t('common.edit')}>
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<EditOutlined />}
-                            onClick={() => openEditModal(m)}
-                            disabled={readonly}
-                          />
-                        </Tooltip>
-                        <Tooltip title={t('common.delete')}>
-                          <Button
-                            type="text"
-                            size="small"
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={() => handleDeleteMemory(m)}
-                            disabled={readonly}
-                          />
-                        </Tooltip>
-                      </Space>
-                    </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <Text strong>{t('employeeSettings.memorySectionAlwaysOn')}</Text>
+                    <Tag color="blue" style={{ margin: 0 }}>{alwaysOnList.length}</Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('employeeSettings.memorySectionAlwaysOnDesc')}
+                    </Text>
                   </div>
-                ))}
+                  {alwaysOnList.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {alwaysOnList.map(renderMemoryItem)}
+                    </div>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('employeeSettings.memorySectionAlwaysOnEmpty')}
+                    </Text>
+                  )}
+                </div>
+
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <Text strong>{t('employeeSettings.memorySectionOnDemand')}</Text>
+                    <Tag style={{ margin: 0 }}>{onDemandList.length}</Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('employeeSettings.memorySectionOnDemandDesc')}
+                    </Text>
+                  </div>
+                  {onDemandList.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {onDemandList.map(renderMemoryItem)}
+                    </div>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('employeeSettings.memorySectionOnDemandEmpty')}
+                    </Text>
+                  )}
+                </div>
               </div>
             ) : (
               <Empty description={t('employeeSettings.noMemories')} />

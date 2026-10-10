@@ -1,5 +1,6 @@
 import DatabaseService from './database.service'
 import EmployeeMemoryService from './employee-memory.service'
+import EmployeeMemoryEmbeddingService from './employee-memory-embedding.service'
 import EmployeeRegistryService from './employee-registry.service'
 import LLMClientService from './llm-client.service'
 import { ScheduledTaskBase } from './scheduled-task-base'
@@ -36,6 +37,9 @@ class MemoryRefinementService extends ScheduledTaskBase {
   }
 
   protected async runCheck(): Promise<void> {
+    // 向量回填与员工开关无关（未配置 embedding 时内部直接跳过），先补齐再走提取
+    await this.backfillMemoryVectors()
+
     const enabledEmployeeIds = this.getMemoryEnabledEmployeeIds()
     if (enabledEmployeeIds.length === 0) return
 
@@ -65,6 +69,16 @@ class MemoryRefinementService extends ScheduledTaskBase {
 
     for (const conv of candidates) {
       await this.extractMemoriesForConversation(conv)
+    }
+  }
+
+  /** 回填缺失 / 失效的记忆向量（新增记忆、内容变更、embedding 模型切换后自愈） */
+  private async backfillMemoryVectors(): Promise<void> {
+    try {
+      const processed = await EmployeeMemoryEmbeddingService.getInstance().backfillMissing()
+      if (processed > 0) logger.info(`Memory vector backfill processed ${processed} item(s)`)
+    } catch (err: any) {
+      logger.warn(`Memory vector backfill failed: ${err?.message || err}`)
     }
   }
 

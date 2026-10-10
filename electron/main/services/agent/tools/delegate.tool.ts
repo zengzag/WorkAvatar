@@ -3,8 +3,8 @@ import SubAgentRuntime from '../../agent-runtime/runtime'
 import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
 import { resolveDelegationTarget } from './subagent-tools'
 
-/** 委托链深度上限：防止递归死循环（与运行时保持一致） */
-const MAX_DELEGATION_DEPTH = 3
+/** 委托链深度上限：主任务→子任务→子子任务（2 层），第 2 层不得再派发（与运行时保持一致） */
+const MAX_DELEGATION_DEPTH = 2
 
 /**
  * delegate_to_employee 工具：
@@ -114,9 +114,12 @@ async function handleDelegate(args: Record<string, any>): Promise<any> {
 
   const runtime = SubAgentRuntime.getInstance()
   const launched = runtime.launchSubAgent({
-    parentSessionId: store.sessionId,
+    // 根会话 id：嵌套层级也路由到顶层会话，前端才能看到子任务进度
+    parentSessionId: store.rootSessionId || store.sessionId,
     parentEmployeeId: store.employeeId,
     parentConversationId: store.conversationId || '',
+    // 发起方 run id（顶层会话为空）：前端据此把子子任务挂到父委托卡内
+    parentRunId: store.delegationId,
     targetEmployeeId: target.targetEmployeeId || '',
     ephemeral: target.ephemeral,
     instruction,

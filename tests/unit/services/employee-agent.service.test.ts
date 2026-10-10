@@ -31,6 +31,7 @@ const { FakeEmployeeAgent, agentControl } = vi.hoisted(() => {
     registerTools = vi.fn()
     setMinimalMode = vi.fn()
     updateMemoryPrompt = vi.fn()
+    updateRecalledMemoryPrompt = vi.fn()
     updateWorkspaceContextPrompt = vi.fn()
     updateTaskTimePrompt = vi.fn()
     updateKBContextPrompt = vi.fn()
@@ -44,8 +45,9 @@ const { FakeEmployeeAgent, agentControl } = vi.hoisted(() => {
     getContextStats = vi.fn(() => ({ contextStats: 1 }))
     runStream = vi.fn(async (_input: any, cbs: any) => cbs.onDone?.({ tokens: 10 }))
     compactConversation = vi.fn(async () => ({ summary: '对话摘要', stats: { compacted: 1 } }))
-    constructor() {
+    constructor(...args: any[]) {
       agentControl.instances.push(this)
+      ;(this as any).ctorArgs = args
     }
   }
   return { FakeEmployeeAgent, agentControl }
@@ -81,6 +83,7 @@ vi.mock('../../../electron/main/services/employee-memory.service', () => ({
   default: {
     getInstance: () => ({
       buildInjectionMemoryPrompt: vi.fn(() => undefined),
+      buildRecalledMemoryPrompt: vi.fn(async () => undefined),
       getRevision: vi.fn(() => 0),
     }),
   },
@@ -143,6 +146,7 @@ vi.mock('../../../electron/main/services/employee-registry.service', () => ({
   default: {
     getInstance: () => ({
       getRegistered: vi.fn(),
+      listRegistered: vi.fn(() => []),
       toDBEmployee: vi.fn(),
       isEnabled: vi.fn(() => true),
       getDefaultToolModes: vi.fn(),
@@ -227,6 +231,35 @@ describe('全局委托开关（delegation_enabled）', () => {
     await EmployeeAgentService.getInstance().chatStream(baseParams({ minimal_mode: true }), noopCallbacks())
     expect(registeredToolIds()).not.toContain('delegate')
     expect(registeredToolIds()).not.toContain('launch_agents')
+  })
+})
+
+describe('委托目标解析（targetIds 白名单 / 不限制）', () => {
+  const delegationTargetIds = () => {
+    const cfg = agentControl.instances.at(-1)!.ctorArgs[0]
+    return (cfg.delegationTargets as Array<{ id: string }>).map(t => t.id)
+  }
+
+  beforeEach(() => {
+    dbState.db.prepare("INSERT INTO employees (id, name, memory_enabled) VALUES ('e2','小李',1)").run()
+    dbState.db.prepare("INSERT INTO employees (id, name, memory_enabled) VALUES ('e3','小王',1)").run()
+  })
+
+  it('targetIds 为空：不限制模式，列出全部可委托员工（排除自己）', async () => {
+    await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
+    expect(delegationTargetIds()).toEqual(['e2', 'e3'])
+  })
+
+  it('targetIds 非空：白名单模式仅列出所选员工', async () => {
+    dbState.db.prepare("UPDATE employees SET delegation_json = ? WHERE id = 'e1'").run(JSON.stringify({ enabled: true, targetIds: ['e3'], acceptDelegation: true }))
+    await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
+    expect(delegationTargetIds()).toEqual(['e3'])
+  })
+
+  it('全局关闭时不解析任何委托目标', async () => {
+    dbState.db.prepare("INSERT INTO settings (key, value) VALUES ('delegation_enabled','0')").run()
+    await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
+    expect(delegationTargetIds()).toEqual([])
   })
 })
 

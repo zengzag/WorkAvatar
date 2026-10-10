@@ -30,7 +30,7 @@ export const launchAgentsTool: ToolDefinition = {
   - task_items: 可选，该子任务的台账要点（子任务需逐项收尾）
 - run_in_background: 可选，true 时全部后台执行（跳过 await 也行，完成后经 read_run_notifications 获取）
 返回：runIds 数组 + 各任务派发结果。**默认调用后立即继续**，随后用 await_agents 等待全部完成并聚合结果。
-限制：不能委托给自己；委托深度上限 3；子任务之间不应有依赖（有依赖请改用 delegate_to_employee 串行）。`,
+限制：不能委托给自己；委托深度上限 2 层（主任务→子任务→子子任务，子子任务不得再派发）；子任务之间不应有依赖（有依赖请改用 delegate_to_employee 串行）。`,
   parameters: {
     type: 'object',
     properties: {
@@ -143,9 +143,12 @@ async function handleLaunchAgents(args: Record<string, any>): Promise<any> {
       continue
     }
     const launched = runtime.launchSubAgent({
-      parentSessionId: store.sessionId,
+      // 根会话 id：嵌套层级也路由到顶层会话，前端才能看到子任务进度
+      parentSessionId: store.rootSessionId || store.sessionId,
       parentEmployeeId: store.employeeId,
       parentConversationId: store.conversationId || '',
+      // 发起方 run id（顶层会话为空）：前端据此把子子任务挂到父委托卡内
+      parentRunId: store.delegationId,
       targetEmployeeId: target.targetEmployeeId || '',
       ephemeral: target.ephemeral,
       instruction: String(task.instruction),

@@ -176,6 +176,8 @@ export function registerLLMHandlers(
     interactionContext.run(
       {
         sessionId,
+        // 根会话 = 本次 IPC 会话：委托逐级透传，嵌套子任务事件仍路由到此，前端才看得到
+        rootSessionId: sessionId,
         employeeId: params.employee_id,
         conversationId: params.conversation_id,
         highPermission: params.high_permission === true,

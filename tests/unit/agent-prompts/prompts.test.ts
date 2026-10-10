@@ -142,7 +142,7 @@ describe('agent/business/prompts / buildDelegationPrompt', () => {
     const p = buildDelegationPrompt([{ id: 'e1', name: 'A' }])!
     expect(p).toContain('1. Plan:')
     expect(p).toContain('5. Report:')
-    expect(p).toContain('delegation depth is capped at 3')
+    expect(p).toContain('delegation depth is capped at 2')
     expect(p).toContain('capped at 5 follow-up turns')
     expect(p).toContain('never delegate to yourself')
   })

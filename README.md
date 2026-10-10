@@ -45,7 +45,7 @@ Describe a task, and the employee plans the steps and invokes tools on its own. 
 
 **File safety** — all file operations go through a unified permission gate. Employees read and write freely inside an authorized workspace; anything outside the workspace or sensitive files (`.env`, private keys, `.git`) requires confirmation with a diff preview of the change. Every write and delete creates a snapshot, so any change can be rolled back.
 
-**Sub-task delegation** — employees can split work into sub-tasks and hand them to other employees, in parallel or sequentially, up to three levels deep. Each sub-task runs in its own workspace and returns only a result summary, keeping the supervisor's context clean.
+**Sub-task delegation** — employees can split work into sub-tasks and hand them to other employees, in parallel or sequentially, up to two levels deep (main task → sub-task → sub-sub-task). Each sub-task runs in its own workspace and returns only a result summary, keeping the supervisor's context clean. Delegation is enabled by default for user employees (built-in and plugin employees act as specialist executors, not supervisors) and ships with two built-in sub-agent roles — `explore` (read-only research) and `general` (full-capability worker). It can be switched off globally under Settings → General; when off, no delegation tools are registered and prompts contain no delegation text.
 
 **Memory & Skills** — cross-task memory lets employees remember your preferences and prior lessons. Skills are Markdown-defined packages of specialized capabilities that employees load on demand. The application ships with a Knowledge Search Assistant and a Plugin Development Assistant; plugins can add their own employees.
 

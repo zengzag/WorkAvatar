@@ -69,10 +69,10 @@ export interface MemoryBucket {
   employeeId?: string
 }
 
-/** 跨任务记忆注入 prompt 的总字符上限（含分隔符与主题标签），与 Hermes MEMORY.md 上限对齐 */
-export const MEMORY_MAX_CHARS = 3000
-/** 记忆条数上限，假设单条精炼后约 60 字符，约 50 条可达上限 */
-export const MEMORY_MAX_COUNT = 30
+/** 记忆库总字符上限：仅用于触发整理（不再约束注入，注入上限见 MEMORY_ALWAYS_ON_MAX_CHARS） */
+export const MEMORY_MAX_CHARS = 8000
+/** 记忆库条数上限：仅用于触发整理；常驻注入另有 MEMORY_ALWAYS_ON_MAX_COUNT */
+export const MEMORY_MAX_COUNT = 100
 /** 单条 content 字符上限（LLM 偶尔会写长句，需在服务层兜底截断） */
 export const MEMORY_CONTENT_MAX_CHARS = 160
 /** 整理触发阈值：总字符达到上限的 60% 即触发，更早整理以保留缓冲 */
@@ -89,6 +89,30 @@ export const EXTRACTION_MAX_ATTEMPTS = 3
 export const MEMORY_ALWAYS_ON_MAX_COUNT = 12
 /** 常驻注入的记忆字符上限（pinned 不受该上限约束） */
 export const MEMORY_ALWAYS_ON_MAX_CHARS = 1500
+
+/** 每轮按语义相关度召回的条数上限 */
+export const MEMORY_RECALL_TOP_N = 5
+/** 召回余弦相似度下限：低于该值视为不相关，不注入（避免噪声） */
+export const MEMORY_RECALL_MIN_SCORE = 0.3
+/** 召回块的字符上限 */
+export const MEMORY_RECALL_MAX_CHARS = 1200
+/** 查询向量化的超时（毫秒）：超时即降级到 FTS5 关键词召回，不阻塞对话 */
+export const MEMORY_QUERY_EMBED_TIMEOUT_MS = 3000
+/** 单次向量回填最多处理的记忆条数 */
+export const MEMORY_EMBED_BACKFILL_BATCH = 50
+/** 向量输入文本的字符上限（与单条 content 上限同量级，避免超长输入拖慢 embedding） */
+export const MEMORY_EMBED_TEXT_LIMIT = 600
+
+/** 记忆向量行（存于 employee_memory_vectors，与主表 1:1） */
+export interface MemoryVectorRow {
+  memory_id: string
+  /** 生成该向量的 embedding 模型标识；模型切换后需重新生成 */
+  model: string
+  /** 记忆 key|topic|content 的哈希；内容变更后可据此检测失效 */
+  content_hash: string
+  embedding: Float32Array
+}
+
 /** 记忆检索工具默认返回条数 */
 export const MEMORY_SEARCH_DEFAULT_LIMIT = 5
 /** 记忆检索工具最大返回条数 */

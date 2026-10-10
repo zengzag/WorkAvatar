@@ -54,6 +54,7 @@ export function applyDelegationEnums(
   profiles: Array<{ id: string; name: string }>,
 ): ToolDefinition {
   if (targets.length === 0 && profiles.length === 0) return tool
+  if (!tool.parameters) return tool
   const parameters = JSON.parse(JSON.stringify(tool.parameters)) as Record<string, any>
   const visit = (node: any): void => {
     if (!node || typeof node !== 'object') return

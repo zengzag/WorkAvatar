@@ -10,8 +10,69 @@ import {
   SCROLL_BOTTOM_THRESHOLD_PX,
   DEFAULT_TEMPERATURE,
   createPersistentMessagesCache,
+  findRunSegment,
+  patchRunSegment,
+  appendNestedDelegation,
+  mapSegmentsTree,
+  toggleSegmentInTree,
 } from '../../../src/hooks/chat-helpers'
 import type { MessageWithThought } from '../../../src/components/workbench'
+import type { MessageSegment } from '../../../src/components/workbench/types'
+
+const deleg = (id: string, runId: string, subSegments?: MessageSegment[]): MessageSegment => ({
+  type: 'delegation',
+  id,
+  runId,
+  delegationId: runId,
+  delegationStatus: 'streaming',
+  subSegments,
+})
+
+describe('chat-helpers / 委托段树工具（嵌套子任务）', () => {
+  // 顶层委托 run1，其卡内嵌套子任务 run2（run2 又嵌套 run3）
+  const tree = (): MessageSegment[] => [
+    { type: 'answer', id: 'a1', content: '正文' },
+    deleg('seg1', 'run1', [deleg('seg2', 'run2', [deleg('seg3', 'run3')])]),
+  ]
+
+  it('findRunSegment：可命中任意嵌套层级，未命中返回 null', () => {
+    const segs = tree()
+    expect(findRunSegment(segs, 'run1')?.id).toBe('seg1')
+    expect(findRunSegment(segs, 'run2')?.id).toBe('seg2')
+    expect(findRunSegment(segs, 'run3')?.id).toBe('seg3')
+    expect(findRunSegment(segs, 'nope')).toBeNull()
+  })
+
+  it('patchRunSegment：更新嵌套段且不改动原数组；未命中返回 null', () => {
+    const segs = tree()
+    const next = patchRunSegment(segs, 'run2', s => ({ ...s, delegationStatus: 'completed' }))!
+    expect(findRunSegment(next, 'run2')?.delegationStatus).toBe('completed')
+    // 原引用未被就地修改
+    expect(findRunSegment(segs, 'run2')?.delegationStatus).toBe('streaming')
+    expect(patchRunSegment(segs, 'nope', s => s)).toBeNull()
+  })
+
+  it('appendNestedDelegation：挂到父段 subSegments 末尾；父段不存在返回 null', () => {
+    const segs = tree()
+    const next = appendNestedDelegation(segs, 'run2', deleg('seg4', 'run4'))!
+    const parent = findRunSegment(next, 'run2')!
+    expect(parent.subSegments!.map(s => s.id)).toEqual(['seg3', 'seg4'])
+    expect(appendNestedDelegation(segs, 'nope', deleg('seg5', 'run5'))).toBeNull()
+  })
+
+  it('mapSegmentsTree：对任意层级生效（含嵌套委托段）', () => {
+    const next = mapSegmentsTree(tree(), s => (s.type === 'delegation' ? { ...s, collapsed: true } : s))
+    expect(findRunSegment(next, 'run3')?.collapsed).toBe(true)
+  })
+
+  it('toggleSegmentInTree：可切换任意层级段；未命中返回 null', () => {
+    const next = toggleSegmentInTree(tree(), 'seg3')!
+    expect(findRunSegment(next, 'run3')?.collapsed).toBe(true)
+    // 顶层段同样生效
+    expect(findRunSegment(toggleSegmentInTree(tree(), 'seg1')!, 'run1')?.collapsed).toBe(true)
+    expect(toggleSegmentInTree(tree(), 'nope')).toBeNull()
+  })
+})
 
 const msg = (partial: Partial<MessageWithThought>): MessageWithThought =>
   ({ id: 'm1', role: 'user', content: '', ...partial }) as MessageWithThought

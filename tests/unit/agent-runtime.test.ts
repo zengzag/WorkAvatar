@@ -189,14 +189,35 @@ describe('SubAgentRuntime', () => {
     expect(res.error).toContain('不能委托给自己')
   })
 
-  it('委托设置校验：主管未开启委托或目标不在可委托列表中直接拒绝', () => {
+  it('委托设置校验：主管配置白名单且目标不在其中时拒绝', () => {
     setDelegationRows([
       { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['other'], acceptDelegation: true }) },
       { id: 'target1', delegation_json: '' },
     ])
     const res = runtime.launchSubAgent(baseInput())
     expect(res.success).toBe(false)
-    expect(res.error).toContain('不在当前数字员工的可委托列表中')
+    expect(res.error).toContain('不在当前数字员工已选择的委托范围内')
+  })
+
+  it('委托设置校验：targetIds 为空视为不限制，可委托给已有员工', async () => {
+    setDelegationRows([
+      { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: [], acceptDelegation: true }) },
+      { id: 'target1', delegation_json: '' },
+    ])
+    const res = runtime.launchSubAgent(baseInput())
+    expect(res.success).toBe(true)
+    const outcomes = await runtime.awaitRuns([res.runId!], 2000)
+    expect(outcomes[0].success).toBe(true)
+  })
+
+  it('委托设置校验：主管关闭委托能力直接拒绝', () => {
+    setDelegationRows([
+      { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: false, targetIds: [], acceptDelegation: true }) },
+      { id: 'target1', delegation_json: '' },
+    ])
+    const res = runtime.launchSubAgent(baseInput())
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('未开启委托能力')
   })
 
   it('委托设置校验：目标员工拒绝被委托直接拒绝', () => {

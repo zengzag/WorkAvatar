@@ -36,6 +36,8 @@ export class GenericAgent extends BaseAgent {
   protected skillsPrompt: string | undefined
 
   private memoryPrompt: string | undefined
+  /** 本轮按用户问题语义召回的补充记忆块（每轮重建，与 memoryPrompt 的常驻块分工） */
+  private recalledMemoryPrompt: string | undefined
   private kbContextPrompt: string | undefined
   private workspaceContextPrompt: string | undefined
   private taskTimePrompt: string | undefined
@@ -90,6 +92,10 @@ export class GenericAgent extends BaseAgent {
 
   getMemoryPrompt(): string | undefined {
     return this.memoryPrompt
+  }
+
+  updateRecalledMemoryPrompt(prompt: string | undefined): void {
+    this.recalledMemoryPrompt = prompt
   }
 
   updateWorkspaceContextPrompt(prompt: string | undefined): void {
@@ -239,6 +245,7 @@ export class GenericAgent extends BaseAgent {
       workspaceContextPrompt: this.workspaceContextPrompt,
       taskTimePrompt: this.taskTimePrompt,
       memoryPrompt: this.memoryPrompt,
+      recalledMemoryPrompt: this.recalledMemoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
     })
 

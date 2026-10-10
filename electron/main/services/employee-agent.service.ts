@@ -236,14 +236,18 @@ class EmployeeAgentService {
 
     // 委托能力：默认开启（全局开关 delegation_enabled + 员工 delegation_json 双重控制）。
     // targetIds 仅约束「委托给已有员工」；未选择目标时仍可派发临时子智能体/子智能体模板。
-    // 关闭条件：全局开关关闭 / 员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）。
+    // 关闭条件：全局开关关闭 / 员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）
+    //          / 内置与插件员工（专家执行者定位，默认不扮演主管；其委托设置本身也不可编辑）
     const delegation = parseEmployeeDelegation(emp.delegation_json)
+    const isSubAgentId = emp.id.startsWith('inline:')
+    const isRegisteredId = emp.id.startsWith('builtin:') || emp.id.startsWith('plugin:')
     const delegationEnabled = delegation.enabled
       && !minimalMode
       && this.isDelegationGloballyEnabled()
-      && !emp.id.startsWith('inline:')
-    const delegationTargets = delegationEnabled && delegation.targetIds.length > 0
-      ? this.queryDelegationTargets(delegation.targetIds)
+      && !isSubAgentId
+      && !isRegisteredId
+    const delegationTargets = delegationEnabled
+      ? this.queryDelegationTargets(delegation.targetIds, emp.id)
       : []
     // 可复用子智能体模板（内置 explore/general + 用户自建）：作为「预置执行者」候选，随稳定上下文与工具枚举下发
     const delegationProfiles = delegationEnabled
@@ -449,33 +453,40 @@ class EmployeeAgentService {
   }
 
   /**
-   * 查询可委托员工列表（按员工委托设置 targetIds 过滤）：
-   * 剔除不存在的员工与明确拒绝被委托（acceptDelegation=false）的员工，按名称排序保持提示词稳定。
+   * 查询可委托员工列表（供 [DELEGATION] 段与工具 schema 枚举下发）：
+   * - targetIds 非空 → 白名单模式，仅返回其中的员工；
+   * - targetIds 为空 → 不限制模式，返回全部可被委托的员工（与运行时校验一致）。
+   * 统一过滤：排除自己、明确拒绝被委托（acceptDelegation=false）、已禁用员工；按名称排序保持提示词稳定。
    */
-  private queryDelegationTargets(targetIds: string[]): NonNullable<EmployeeAgentConfig['delegationTargets']> {
-    if (targetIds.length === 0) return []
-    const placeholders = targetIds.map(() => '?').join(',')
-    const rows = this.db.getDb().prepare(
-      `SELECT id, name, description, profile_json, delegation_json FROM employees WHERE id IN (${placeholders})`
-    ).all(...targetIds) as Array<{ id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }>
-    const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
-    for (const r of rows) {
-      if (!parseEmployeeDelegation(r.delegation_json).acceptDelegation) continue
-      // 已禁用的员工不参与委托
-      if (!EmployeeRegistryService.getInstance().isEnabled(r.id)) continue
-      let role: string | undefined
-      try { role = r.profile_json ? JSON.parse(r.profile_json)?.roleName : undefined } catch { /* ignore */ }
-      out.push({ id: r.id, name: r.name, description: r.description, role })
+  private queryDelegationTargets(targetIds: string[], selfEmployeeId: string): NonNullable<EmployeeAgentConfig['delegationTargets']> {
+    const cols = 'id, name, description, profile_json, delegation_json'
+    const candidates = new Map<string, { id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }>()
+    let rows: Array<{ id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }> = []
+    try {
+      rows = (targetIds.length > 0
+        ? this.db.getDb().prepare(`SELECT ${cols} FROM employees WHERE id IN (${targetIds.map(() => '?').join(',')})`).all(...targetIds)
+        : this.db.getDb().prepare(`SELECT ${cols} FROM employees`).all()) as typeof rows
+    } catch { /* DB 异常时不注入委托目标 */ }
+    for (const r of rows) candidates.set(r.id, r)
+
+    // 注册员工（内置/插件）：白名单模式仅补指定 id；不限制模式补全部（DB 影子记录已存在时以 DB 行为准）
+    const registered = targetIds.length > 0
+      ? targetIds.map(id => EmployeeRegistryService.getInstance().getRegistered(id)).filter((r): r is NonNullable<typeof r> => !!r)
+      : EmployeeRegistryService.getInstance().listRegistered()
+    for (const reg of registered) {
+      if (candidates.has(reg.id)) continue
+      candidates.set(reg.id, { id: reg.id, name: reg.name, description: reg.description, profile_json: reg.profile_json, delegation_json: null })
     }
-    // 注册员工（内置/插件）无 DB 记录：委托目标回退注册表（接受委托默认开启；已禁用员工不参与）
-    const foundIds = new Set(rows.map(r => r.id))
-    for (const id of targetIds) {
-      if (foundIds.has(id)) continue
-      const reg = EmployeeRegistryService.getInstance().getRegistered(id)
-      if (!reg || reg.is_enabled === false) continue
+
+    const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
+    for (const c of candidates.values()) {
+      if (!c.id || c.id === selfEmployeeId) continue
+      if (!parseEmployeeDelegation(c.delegation_json).acceptDelegation) continue
+      // 已禁用的员工不参与委托
+      if (!EmployeeRegistryService.getInstance().isEnabled(c.id)) continue
       let role: string | undefined
-      try { role = reg.profile_json ? JSON.parse(reg.profile_json)?.roleName : undefined } catch { /* ignore */ }
-      out.push({ id: reg.id, name: reg.name, description: reg.description, role })
+      try { role = c.profile_json ? JSON.parse(c.profile_json)?.roleName : undefined } catch { /* ignore */ }
+      out.push({ id: c.id, name: c.name, description: c.description, role })
     }
     out.sort((a, b) => a.name.localeCompare(b.name))
     return out
@@ -673,11 +684,21 @@ class EmployeeAgentService {
       // 插件注入的 system 只作用于本次 run（systemPromptOverride），不写 agent 缓存：
       // 否则无 DB 缓存的新会话会把插件提示词当作会话提示词继续生效并持久化，永久污染会话。
       // KB 范围始终按本轮 collectionIds 更新，与是否覆盖 system 无关。
+      // 语义召回与系统提示词/迭代数解析并发：embedding 调用不串行叠加到首字延迟上；
+      // 任何失败都降级为不注入，不影响本轮对话。
+      const recalledMemoryPromise = (entry.memoryEnabled && !agent.getMinimalMode() && query.trim())
+        ? this.memoryService.buildRecalledMemoryPrompt(employee_id, query).catch(() => undefined)
+        : Promise.resolve(undefined)
+
       const systemPromptCached = system
         ? false
         : await this.loadCachedSystemPrompt(agent, conversation_id)
       this.updateKBContextForAgent(agent, collection_ids, agent.getMinimalMode())
-      const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
+      const [maxIterations, recalledMemoryPrompt] = await Promise.all([
+        this.resolveMaxIterations(provider_id, model_id),
+        recalledMemoryPromise,
+      ])
+      agent.updateRecalledMemoryPrompt(recalledMemoryPrompt)
 
       await agent.runStream(
         {

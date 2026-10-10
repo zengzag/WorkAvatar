@@ -227,7 +227,7 @@ export function buildDelegationPrompt(
     '- Parallel research (delegate): the user asks for a competitive landscape covering three unnamed rivals. Call launch_agents once with three tasks (one per rival, each with a self-contained instruction), then await_agents on the returned run_ids and synthesize.',
     '- Sequential dependency (do not parallelize): "summarize the file you just generated, then translate it." The translation needs the summary first — use delegate_to_employee for the summary, then follow up on the result.',
     '- Do not delegate: the user asks which license the project uses and a LICENSE file is already in the workspace — read it directly instead of delegating.',
-    'Limits: never delegate to yourself; delegation depth is capped at 3; every delegation instruction must be self-contained (background, objective, acceptance criteria); a single delegation conversation is capped at 5 follow-up turns including the first.',
+    'Limits: never delegate to yourself and never delegate to an employee already in the delegation chain; delegation depth is capped at 2 (main task → sub-task → sub-sub-task; a sub-sub-task must not delegate further); every delegation instruction must be self-contained (background, objective, acceptance criteria); a single delegation conversation is capped at 5 follow-up turns including the first.',
   ].join('\n')
 }
 
@@ -272,13 +272,15 @@ export function buildTaskContextMessageContent(params: {
   workspaceContextPrompt?: string
   taskTimePrompt?: string
   memoryPrompt?: string
+  recalledMemoryPrompt?: string
   kbContextPrompt?: string
 }): string | undefined {
-  const { workspaceContextPrompt, taskTimePrompt, memoryPrompt, kbContextPrompt } = params
+  const { workspaceContextPrompt, taskTimePrompt, memoryPrompt, recalledMemoryPrompt, kbContextPrompt } = params
   const blocks: string[] = []
   if (workspaceContextPrompt) blocks.push(`<workspace>${workspaceContextPrompt}</workspace>`)
   if (taskTimePrompt) blocks.push(`<task_time>${taskTimePrompt}</task_time>`)
   if (memoryPrompt) blocks.push(`<memory>${memoryPrompt}</memory>`)
+  if (recalledMemoryPrompt) blocks.push(`<relevant_memory>${recalledMemoryPrompt}</relevant_memory>`)
   if (kbContextPrompt) blocks.push(`<knowledge_scope>${kbContextPrompt}</knowledge_scope>`)
   if (blocks.length === 0) return undefined
   return [TASK_CONTEXT_MSG_PREFIX, ...blocks, CONTEXT_MSG_FOOTER].join('\n')

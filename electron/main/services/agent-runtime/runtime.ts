@@ -668,9 +668,9 @@ class SubAgentRuntime {
       }
     }
 
-    // 递归防护
-    if (input.delegationDepth >= 3) {
-      return { success: false, error: `委托深度超限（上限 3 层，当前 ${input.delegationDepth}）`, targetEmployeeName: targetName }
+    // 递归防护：委托上限 2 层（主任务 → 子任务 → 子子任务），第 2 层不得再派发
+    if (input.delegationDepth >= 2) {
+      return { success: false, error: `委托深度超限（上限 2 层：主任务→子任务→子子任务，当前 ${input.delegationDepth}）`, targetEmployeeName: targetName }
     }
     if (input.delegationChain.includes(input.targetEmployeeId)) {
       return { success: false, error: '检测到委托环：目标员工已在委托链中', targetEmployeeName: targetName }
@@ -702,7 +702,12 @@ class SubAgentRuntime {
     return { success: true, runId, targetEmployeeName: targetName, targetEmployeeId }
   }
 
-  /** 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托 */
+  /**
+   * 委托设置校验：
+   * - 主管须开启委托能力；
+   * - targetIds 非空时为白名单，目标必须在其中；为空表示不限制（任何接受委托的员工可被委托）；
+   * - 目标须允许被委托（acceptDelegation）。
+   */
   private validateDelegationSettings(parentEmployeeId: string, targetEmployeeId: string, targetName: string): string | undefined {
     // 内联员工（模板任务编排）无委托设置也无 UI 可配置，不走用户侧委托校验
     if (parentEmployeeId.startsWith('inline:') || targetEmployeeId.startsWith('inline:')) {
@@ -714,8 +719,11 @@ class SubAgentRuntime {
     ).all(parentEmployeeId, targetEmployeeId) as Array<{ id: string; delegation_json?: string | null }>
     const parentDelegation = parseEmployeeDelegation(delegationRows.find(r => r.id === parentEmployeeId)?.delegation_json)
     const targetDelegation = parseEmployeeDelegation(delegationRows.find(r => r.id === targetEmployeeId)?.delegation_json)
-    if (!parentDelegation.enabled || !parentDelegation.targetIds.includes(targetEmployeeId)) {
-      return '目标员工不在当前数字员工的可委托列表中，请从上下文信息 [DELEGATION] 段的可委托员工列表中选择'
+    if (!parentDelegation.enabled) {
+      return '当前数字员工未开启委托能力，无法委托子任务'
+    }
+    if (parentDelegation.targetIds.length > 0 && !parentDelegation.targetIds.includes(targetEmployeeId)) {
+      return '目标员工不在当前数字员工已选择的委托范围内，请从上下文信息 [DELEGATION] 段的可委托员工列表中选择'
     }
     if (!targetDelegation.acceptDelegation) {
       return `目标员工 ${targetName} 已设置为不允许被委托任务`
@@ -1086,6 +1094,8 @@ class SubAgentRuntime {
         targetEmployeeName: run.employeeName,
         targetAvatarType: run.employeeAvatarType,
         instruction: run.instruction,
+        // 发起方 run id：前端据此把子子任务挂到父委托卡内（顶层为空）
+        parentRunId: run.parentRunId,
       })
       this.settle(runId, 'cancelled', { error: '已取消', summary: '' })
       return
@@ -1134,6 +1144,8 @@ class SubAgentRuntime {
       targetAvatarType: run.employeeAvatarType,
       instruction: run.instruction,
       followupOfRunId: run.followupOfRunId,
+      // 发起方 run id：前端据此把子子任务挂到父委托卡内（顶层为空）
+      parentRunId: run.parentRunId,
     })
 
     /** 单轮流式执行（完成门重试会多次调用）；callbacks 闭包复用 finalAnswer 等累积状态 */
@@ -1147,6 +1159,8 @@ class SubAgentRuntime {
           delegationDepth: entry.delegationDepth + 1,
           delegationChain: [...entry.delegationChain, entry.parentEmployeeId],
           parentSessionId,
+          // 根会话逐级透传：子会话再派发时仍以根会话作为事件路由键，避免嵌套子任务事件被前端丢弃
+          rootSessionId: parentSessionId,
           delegationId: runId,
           abortSignal: entry.controller.signal,
           enableThinking: entry.enableThinking,
