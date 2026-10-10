@@ -220,7 +220,8 @@ const deserializeDraftToEditor = (editor: HTMLElement, draft: string, token: any
     lastIndex = regex.lastIndex
 
     const [, id, name, path] = match
-    const tokenEl = createFileTokenElement(id, name, path, token, removeFileById)
+    const tokenEl = createFileTokenElement(id, name, path, token)
+    bindFileTokenElement(tokenEl, token, removeFileById)
     editor.appendChild(tokenEl)
   }
   insertTextNode(draft.slice(lastIndex))
@@ -284,13 +285,14 @@ const insertSlashCommand = (editor: HTMLElement, insertText: string, replaceSlas
   document.execCommand('insertText', false, insertText)
 }
 
-/** 创建文件令牌 DOM 元素 */
+const FILE_TOKEN_CLOSE_CLASS = 'chat-input-file-token-close'
+
+/** 创建文件令牌 DOM 元素（不含交互事件绑定，绑定见 bindFileTokenElement） */
 const createFileTokenElement = (
   id: string,
   name: string,
   path: string,
-  token: any,
-  removeFileById: (id: string) => void
+  token: any
 ): HTMLElement => {
   const span = document.createElement('span')
   span.className = FILE_TOKEN_CLASS
@@ -322,22 +324,32 @@ const createFileTokenElement = (
 
   // 关闭按钮
   const closeBtn = document.createElement('span')
+  closeBtn.className = FILE_TOKEN_CLOSE_CLASS
   closeBtn.textContent = '×'
   closeBtn.setAttribute(
     'style',
     `margin-left:2px;cursor:pointer;font-size:14px;line-height:1;opacity:0.6;border-radius:50%;` +
       `width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;`
   )
+  span.appendChild(closeBtn)
+
+  return span
+}
+
+/** 为文件令牌绑定关闭按钮交互（幂等，重复调用不会叠加事件） */
+const bindFileTokenElement = (el: HTMLElement, token: any, removeFileById: (id: string) => void) => {
+  if (el.dataset.bound === '1') return
+  el.dataset.bound = '1'
+  const closeBtn = el.querySelector(`.${FILE_TOKEN_CLOSE_CLASS}`) as HTMLElement | null
+  if (!closeBtn) return
+  const id = el.getAttribute('data-id') || ''
   closeBtn.onmouseenter = () => { closeBtn.style.background = token.colorPrimary; closeBtn.style.color = '#fff'; closeBtn.style.opacity = '1' }
   closeBtn.onmouseleave = () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = 'inherit'; closeBtn.style.opacity = '0.6' }
   closeBtn.onclick = (e: MouseEvent) => {
     e.stopPropagation()
-    span.remove()
+    el.remove()
     removeFileById(id)
   }
-  span.appendChild(closeBtn)
-
-  return span
 }
 
 const ChatInput: React.FC<{
@@ -415,41 +427,52 @@ const ChatInput: React.FC<{
   const getInitialDraftRef = useRef(getInitialDraft)
   getInitialDraftRef.current = getInitialDraft
 
-  /** 在当前光标位置插入文件令牌（如果没有选区，则在末尾追加） */
+  /** 在当前光标位置插入文件令牌（如果没有选区，则定位到末尾） */
   const insertFileTokenAtCursor = useCallback((files: Array<{ id: string; name: string; path: string }>) => {
     const editor = editorRef.current
     if (!editor) return
 
     editor.focus()
+    // 确保光标位于编辑器内，否则把光标移到内容末尾
     const sel = window.getSelection()
-    let range: Range | null = null
-    if (sel && sel.rangeCount > 0) {
-      range = sel.getRangeAt(0)
-      // 确保 range 在 editor 内
-      if (!editor.contains(range.startContainer)) {
-        range = null
-      }
+    const currentRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null
+    if (sel && (!currentRange || !editor.contains(currentRange.startContainer))) {
+      const endRange = document.createRange()
+      endRange.selectNodeContents(editor)
+      endRange.collapse(false)
+      sel.removeAllRanges()
+      sel.addRange(endRange)
     }
 
     for (const f of files) {
-      const tokenEl = createFileTokenElement(f.id, f.name, f.path, token, removeFileById)
-      if (range) {
-        range.deleteContents()
-        range.insertNode(tokenEl)
-        // 在令牌后插入一个零宽空格，便于光标继续输入
-        const spaceNode = document.createTextNode('\u200B')
-        tokenEl.after(spaceNode)
-        range.setStartAfter(spaceNode)
-        range.setEndAfter(spaceNode)
-      } else {
-        editor.appendChild(tokenEl)
-        editor.appendChild(document.createTextNode('\u200B'))
+      const tokenEl = createFileTokenElement(f.id, f.name, f.path, token)
+      // 交由浏览器编辑管线插入（末尾补零宽空格便于继续输入）：
+      // 手动 range.insertNode 会破坏 Chromium 内部光标状态，导致后续输入字符重复
+      const inserted = document.execCommand('insertHTML', false, `${tokenEl.outerHTML}\u200B`)
+      if (!inserted) {
+        // 回退：编辑器不支持 insertHTML 时沿用直接插入
+        const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null
+        if (range) {
+          range.deleteContents()
+          range.insertNode(tokenEl)
+          const spaceNode = document.createTextNode('\u200B')
+          tokenEl.after(spaceNode)
+          range.setStartAfter(spaceNode)
+          range.setEndAfter(spaceNode)
+          sel!.removeAllRanges()
+          sel!.addRange(range)
+        } else {
+          editor.appendChild(tokenEl)
+          editor.appendChild(document.createTextNode('\u200B'))
+        }
       }
     }
-    if (range && sel) {
-      sel.removeAllRanges()
-      sel.addRange(range)
-    }
+
+    // execCommand 插入的是全新的 DOM 节点，需重新绑定令牌交互事件
+    editor.querySelectorAll(`.${FILE_TOKEN_CLASS}`).forEach(node => {
+      bindFileTokenElement(node as HTMLElement, token, removeFileById)
+    })
+
     emitDraftChange()
   }, [token, removeFileById, emitDraftChange])
 

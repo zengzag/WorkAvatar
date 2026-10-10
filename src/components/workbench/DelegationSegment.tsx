@@ -150,7 +150,13 @@ const DelegationSegmentInner: React.FC<{
         </Tooltip>
       )}
       {instruction && (
-        <Tooltip title={instruction}>
+        <Tooltip
+          title={instruction}
+          styles={{
+            root: { maxWidth: 520 },
+            container: { maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+          }}
+        >
           <Text style={{
             fontSize: 11,
             color: token.colorTextQuaternary,

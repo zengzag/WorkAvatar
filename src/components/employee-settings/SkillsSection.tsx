@@ -138,7 +138,6 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                     <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                       <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
-                      <Tag color="default" style={{ flexShrink: 0 }}>{skill.author}</Tag>
                       {skill.source && skill.source !== 'global' && (
                         <Tag color={sourceColor(skill.source)} style={{ flexShrink: 0 }}>
                           {t(`employeeSettings.skillSource_${skill.source}`)}
