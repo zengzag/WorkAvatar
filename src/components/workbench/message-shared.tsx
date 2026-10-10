@@ -114,62 +114,9 @@ const SegmentListInner: React.FC<{
     />
   )
 
-  // 可参与「过程分组」的段：思考与普通工具调用（待办清单卡片单独展示，作为分组边界）
-  const isGroupable = (s: MessageSegment) =>
-    s.type === 'thinking' || (s.type === 'tool_call' && s.toolName !== 'todo_write')
-
-  let i = 0
-  while (i < segments.length) {
-    const seg = segments[i]
-    // 并行组：连续且同 groupRunId 的 delegation 段横排为一组卡片
-    if (seg.type === 'delegation' && seg.groupRunId && seg.parallelTotal && seg.parallelTotal > 1) {
-      const group: MessageSegment[] = [seg]
-      let j = i + 1
-      while (j < segments.length) {
-        const s = segments[j]
-        if (s.type === 'delegation' && s.groupRunId === seg.groupRunId) {
-          group.push(s)
-          j++
-        } else {
-          break
-        }
-      }
-      items.push(
-        <div
-          key={`grp_${seg.groupRunId}`}
-          style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 4 }}
-        >
-          {group.map(s => (
-            <div key={s.id} style={{ minWidth: 0 }}>
-              {waitSeg(s)}
-            </div>
-          ))}
-        </div>
-      )
-      i = j
-      continue
-    }
-    // 过程分组：连续 2 段以上的思考/工具调用合并为一个折叠项
-    if (isGroupable(seg)) {
-      let j = i + 1
-      while (j < segments.length && isGroupable(segments[j])) j++
-      if (j - i >= 2) {
-        const run = segments.slice(i, j)
-        items.push(
-          <WorkProcessGroup
-            key={`proc_${run[0].id}`}
-            segments={run}
-            msgId={msgId}
-            onToggleSegment={onToggleSegment}
-            getToolDisplayName={getToolDisplayName}
-          />
-        )
-        i = j
-        continue
-      }
-    }
+  const renderSegment = (seg: MessageSegment, idx: number): React.ReactNode => {
     if (seg.type === 'thinking') {
-      items.push(
+      return (
         <ThinkingSegment
           key={seg.id}
           seg={seg}
@@ -177,40 +124,97 @@ const SegmentListInner: React.FC<{
           onToggle={() => onToggleSegment(msgId, seg.id)}
         />
       )
-    } else if (seg.type === 'tool_call') {
+    }
+    if (seg.type === 'tool_call') {
       if (seg.toolName === 'todo_write') {
-        items.push(
+        return (
           <TodoListSegment
             key={seg.id}
             seg={seg}
             onToggle={() => onToggleSegment(msgId, seg.id)}
             getToolDisplayName={getToolDisplayName}
-            defaultCollapsed={i !== lastTodoIdx}
-            isActive={i === activeTodoIdx}
-          />
-        )
-      } else {
-        items.push(
-          <ToolCallSegment
-            key={seg.id}
-            seg={seg}
-            onToggle={() => onToggleSegment(msgId, seg.id)}
-            getToolDisplayName={getToolDisplayName}
+            defaultCollapsed={idx !== lastTodoIdx}
+            isActive={idx === activeTodoIdx}
           />
         )
       }
-    } else if (seg.type === 'answer') {
-      items.push(
-        <AnswerSegment
+      return (
+        <ToolCallSegment
           key={seg.id}
           seg={seg}
-          isError={isError}
+          onToggle={() => onToggleSegment(msgId, seg.id)}
+          getToolDisplayName={getToolDisplayName}
         />
       )
-    } else if (seg.type === 'delegation') {
-      items.push(waitSeg(seg))
     }
-    i++
+    if (seg.type === 'answer') {
+      return <AnswerSegment key={seg.id} seg={seg} isError={isError} />
+    }
+    return waitSeg(seg)
+  }
+
+  // 渲染一段连续的非正文段；并行的 delegation 段横排为一组卡片
+  const renderRun = (run: MessageSegment[], startIdx: number): React.ReactNode[] => {
+    const nodes: React.ReactNode[] = []
+    let k = 0
+    while (k < run.length) {
+      const s = run[k]
+      if (s.type === 'delegation' && s.groupRunId && s.parallelTotal && s.parallelTotal > 1) {
+        const group: MessageSegment[] = [s]
+        let m = k + 1
+        while (m < run.length && run[m].type === 'delegation' && run[m].groupRunId === s.groupRunId) {
+          group.push(run[m])
+          m++
+        }
+        nodes.push(
+          <div
+            key={`grp_${s.groupRunId}`}
+            style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 4 }}
+          >
+            {group.map(x => (
+              <div key={x.id} style={{ minWidth: 0 }}>
+                {waitSeg(x)}
+              </div>
+            ))}
+          </div>
+        )
+        k = m
+        continue
+      }
+      nodes.push(renderSegment(s, startIdx + k))
+      k++
+    }
+    return nodes
+  }
+
+  // 正文单独展示；连续的非正文段（思考/工具调用/待办/子代理）合并为一个过程组
+  let i = 0
+  while (i < segments.length) {
+    const seg = segments[i]
+    if (seg.type === 'answer') {
+      items.push(renderSegment(seg, i))
+      i++
+      continue
+    }
+    let j = i + 1
+    while (j < segments.length && segments[j].type !== 'answer') j++
+    const run = segments.slice(i, j)
+    if (run.length >= 2) {
+      items.push(
+        <WorkProcessGroup
+          key={`proc_${run[0].id}`}
+          segments={run}
+          getToolDisplayName={getToolDisplayName}
+          isLastRun={j >= segments.length}
+          streaming={isStreaming}
+        >
+          {renderRun(run, i)}
+        </WorkProcessGroup>
+      )
+    } else {
+      items.push(...renderRun(run, i))
+    }
+    i = j
   }
   return <div style={{ position: 'relative', paddingLeft: 0 }}>{items}</div>
 }
