@@ -206,7 +206,7 @@ const LLMSettings: React.FC = () => {
         model: defaultChatModel?.model || '',
         embedding_model: defaultEmbeddingModel?.model || '',
         temperature: defaultChatModel?.temperature ?? 0.3,
-        max_tokens: defaultChatModel?.max_tokens ?? 4096,
+        max_tokens: defaultChatModel?.max_tokens ?? 32 * 1024,
         models_json: JSON.stringify(models),
         extra_headers_json: values.extra_headers_json || null,
         extra_body_json: values.extra_body_json || null,
@@ -261,8 +261,9 @@ const LLMSettings: React.FC = () => {
     modelForm.setFieldsValue({
       category: 'chat',
       temperature: 0.7,
-      max_tokens: 4096,
+      max_tokens: 32 * 1024,
       max_retry: 100,
+      context_window: 256 * 1024,
     })
     setModelModalVisible(true)
   }, [modelForm])
@@ -297,7 +298,7 @@ const LLMSettings: React.FC = () => {
         model: values.model,
         category,
         temperature: category === 'embedding' ? 0 : (values.temperature ?? 0.3),
-        max_tokens: category === 'embedding' ? 0 : (values.max_tokens ?? 4096),
+        max_tokens: category === 'embedding' ? 0 : (values.max_tokens ?? 32 * 1024),
         ...(category === 'chat' ? {
           top_p: values.top_p,
           frequency_penalty: values.frequency_penalty,

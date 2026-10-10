@@ -79,7 +79,7 @@ export function buildPiModel(input: BuildPiModelInput): Model<any> {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     // 上下文预算由 memory-manager 按模型真实 context_window 管理，此处取偏大值避免二次截断
     contextWindow: 256 * 1024,
-    maxTokens: 48 * 1024,
+    maxTokens: 32 * 1024,
   }
 
   if (format === 'anthropic-messages') {
