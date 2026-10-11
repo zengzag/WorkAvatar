@@ -77,6 +77,12 @@ export const MEMORY_MAX_COUNT = 100
 export const MEMORY_CONTENT_MAX_CHARS = 160
 /** 整理触发阈值：总字符达到上限的 60% 即触发，更早整理以保留缓冲 */
 export const MEMORY_CONSOLIDATION_THRESHOLD = 0.6
+/**
+ * 整理 prompt 的软性总量目标（低于触发阈值）：给 LLM 明确的精简方向并留出缓冲，
+ * 避免"整理后仍高于触发阈值 → 立即再次触发整理"的抖动。
+ */
+export const MEMORY_CONSOLIDATION_TARGET_COUNT = 30
+export const MEMORY_CONSOLIDATION_TARGET_CHARS = 3000
 export const STALE_MEMORY_DAYS = 90
 export const CONSOLIDATION_COOLDOWN_SECONDS = 3600
 /** 现有记忆减少，提示 LLM 更聚焦精炼而非穷举 */
