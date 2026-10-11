@@ -29,8 +29,10 @@ import { sanitizePluginIconHtml } from '../../utils/sanitize-icon'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
 import SubTaskDrawer from './SubTaskDrawer'
+import EmployeeAvatar from '../common/EmployeeAvatar'
 import type { MessageSegment } from './types'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+import type { Employee } from '../../types'
 import type { PluginMessageActionInfo } from '../../../electron/shared/channels/plugin'
 import { PluginViewSlot } from '../../plugins/view-slot'
 
@@ -195,7 +197,9 @@ const MessageBubble: React.FC<{
   onCompact?: () => void
   /** 隐藏消息操作按钮（重生成/切换模型/删除/编辑等），用于不支持这些能力的轻量对话视图 */
   hideMessageActions?: boolean
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions }) => {
+  /** 当前数字员工，用于助手消息展示其真实头像（无则回退默认机器人图标） */
+  assistantEmployee?: Employee | null
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -309,11 +313,27 @@ const MessageBubble: React.FC<{
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
-          background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
+          background: msg.role === 'assistant'
+            ? (assistantEmployee ? 'transparent' : token.colorPrimaryBg)
+            : token.colorInfoBg,
         }}>
-          {msg.role === 'assistant'
-            ? <RobotOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />
-            : <UserOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />}
+          {msg.role === 'assistant' ? (
+            assistantEmployee ? (
+              <EmployeeAvatar
+                employeeId={assistantEmployee.id}
+                avatarType={assistantEmployee.avatar_type}
+                avatarIcon={assistantEmployee.avatar_icon}
+                avatarColor={assistantEmployee.avatar_color}
+                source={assistantEmployee.source}
+                size={30}
+                shape="square"
+              />
+            ) : (
+              <RobotOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />
+            )
+          ) : (
+            <UserOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />
+          )}
         </div>
 
         <div style={{
@@ -588,6 +608,7 @@ const MessageBubble: React.FC<{
 export default memo(MessageBubble, (prev, next) => {
   return prev.msg === next.msg
     && prev.providers === next.providers
+    && prev.assistantEmployee === next.assistantEmployee
     && prev.isLastAssistantMessage === next.isLastAssistantMessage
     && prev.contextStats === next.contextStats
     && prev.isCompacting === next.isCompacting

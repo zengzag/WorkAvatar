@@ -320,13 +320,15 @@ class KMSIndexManagerService {
         onProgress?.({ phase: 'done', current: processed, total, message: `${msgDonePrefix}，共处理 ${processed} 个文件` })
       }
 
-      // 索引流程结束：FTS5 merge 回收已删除文档残留 + PASSIVE checkpoint 合并 WAL
-      // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 累积残留，VACUUM 对 FTS5 无效，必须用 FTS5 merge
-      if (!signal.aborted) {
+      // 索引流程结束：FTS5 optimize 合并回收已删除文档残留 + PASSIVE checkpoint 合并 WAL
+      // 全量/目录重建会做大量 DELETE+INSERT，FTS5 只标记删除、残留 segment 会让主库文件持续
+      // 膨胀，必须用 optimize 真正合并（无参 'merge' 是空操作，回收不了）。
+      // 增量只改动少量文件，segment 残留可由空闲页复用消化，跳过以避免每次增量都全量合并。
+      if (!signal.aborted && (isFull || isRebuildDir)) {
         try {
-          KMSDatabaseService.getInstance().optimizeFts5Index('merge')
+          KMSDatabaseService.getInstance().optimizeFts5Index('optimize')
         } catch (err: any) {
-          logger.warn('Post-index FTS5 merge failed:', err?.message || err)
+          logger.warn('Post-index FTS5 optimize failed:', err?.message || err)
         }
       }
 

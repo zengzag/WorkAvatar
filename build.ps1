@@ -161,6 +161,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host ""
 
+# Step 5.6: 构建 Windows 稳定启动器（resources/launcher/WorkAvatarLauncher.exe，由 NSIS 嵌入安装包）
+Write-Step "5/6" "Building Windows stable launcher..."
+node scripts/build-launcher.mjs
+if ($LASTEXITCODE -ne 0) {
+    Write-Error-Msg "Launcher build failed"
+    exit 1
+}
+Write-Host ""
+
 # Step 6: Electron Builder packaging (NSIS installer)
 Write-Step "6/6" "Electron Builder packaging (NSIS installer) [mode: $Mode]..."
 if ($Mode -eq "release") {

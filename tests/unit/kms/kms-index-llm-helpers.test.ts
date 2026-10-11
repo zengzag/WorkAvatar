@@ -76,7 +76,7 @@ describe('kms-index-llm-helpers / buildDirFileList', () => {
     const lines = out.split('\n')
     expect(lines[0]).toBe(`- a.md (md, 2.0KB): ${'x'.repeat(80)}`)
     expect(lines[1]).toBe('- b.txt (txt, 10B): 轻摘要')
-    expect(lines[2]).toBe('- c (无扩展名, 0B)')
+    expect(lines[2]).toBe('- c (no extension, 0B)')
   })
 
   it('空数组返回空串', () => {
@@ -289,7 +289,7 @@ describe('kms-index-llm-helpers / generateDocumentSummaryFromParagraphs', () => 
       'm1',
     )
     expect(out).toEqual({ summary: '总', keywords: ['a'], mainTopics: ['b'] })
-    expect(state.chatCalls[0].messages[1].content).toContain('### 段落1: P1')
+    expect(state.chatCalls[0].messages[1].content).toContain('### Paragraph 1: P1')
   })
 
   it('失败时抛错并带上文档标题', async () => {

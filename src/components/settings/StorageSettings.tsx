@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Button, Divider, Input, Space, Typography, App } from 'antd'
-import { FolderOutlined, ReloadOutlined } from '@ant-design/icons'
+import { FolderOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import { formatFileSize } from '../../utils/format'
 
 const { Text, Title } = Typography
 
@@ -11,6 +12,9 @@ const StorageSettings: React.FC = () => {
   const [dataDir, setDataDir] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [logSize, setLogSize] = useState<number>(0)
+  const [logSizeLoading, setLogSizeLoading] = useState(false)
+  const [clearingLogs, setClearingLogs] = useState(false)
 
   const loadDataDir = useCallback(async () => {
     try {
@@ -21,9 +25,22 @@ const StorageSettings: React.FC = () => {
     }
   }, [])
 
+  const loadLogSize = useCallback(async () => {
+    setLogSizeLoading(true)
+    try {
+      const res = await window.electronAPI.app.getLogSize()
+      setLogSize(res?.size || 0)
+    } catch {
+      setLogSize(0)
+    } finally {
+      setLogSizeLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadDataDir()
-  }, [loadDataDir])
+    loadLogSize()
+  }, [loadDataDir, loadLogSize])
 
   const handleSelectDir = useCallback(async () => {
     try {
@@ -85,6 +102,32 @@ const StorageSettings: React.FC = () => {
     })
   }, [message, modal, t])
 
+  const handleClearLogs = useCallback(() => {
+    modal.confirm({
+      title: t('settings.clearLogs'),
+      content: t('settings.clearLogsConfirm'),
+      okText: t('settings.clearLogs'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        setClearingLogs(true)
+        try {
+          const res = await window.electronAPI.app.clearLogs()
+          if (res?.success) {
+            message.success(t('settings.clearLogsSuccess'))
+            await loadLogSize()
+          } else {
+            message.error(res?.error || t('settings.clearLogsFailed'))
+          }
+        } catch {
+          message.error(t('settings.clearLogsFailed'))
+        } finally {
+          setClearingLogs(false)
+        }
+      },
+    })
+  }, [loadLogSize, message, modal, t])
+
   return (
     <div>
       <Title level={5}>{t('settings.storageTitle')}</Title>
@@ -113,6 +156,31 @@ const StorageSettings: React.FC = () => {
           >
             {t('settings.selectDir')}
           </Button>
+        </div>
+        <Divider />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ flex: 1, marginRight: 16 }}>
+            <Text strong>{t('settings.logStorage')}</Text>
+            <br />
+            <Text type="secondary">
+              {t('settings.logStorageDesc', { size: formatFileSize(logSize) })}
+            </Text>
+          </div>
+          <Space>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={loadLogSize}
+              loading={logSizeLoading}
+            />
+            <Button
+              icon={<DeleteOutlined />}
+              danger
+              onClick={handleClearLogs}
+              loading={clearingLogs}
+            >
+              {t('settings.clearLogs')}
+            </Button>
+          </Space>
         </div>
         <Divider />
         <Button danger loading={clearing} onClick={handleClearAllData}>

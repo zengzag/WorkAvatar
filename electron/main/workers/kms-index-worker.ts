@@ -261,3 +261,11 @@ process.on('uncaughtException', (err) => {
   parentPort?.postMessage({ type: 'fatal', error: err?.message || String(err) })
   setTimeout(() => process.exit(1), 100)
 })
+
+// 未处理的 Promise rejection：Node 15+ 默认按 uncaughtException 抛出并终止进程，
+// 会被上面的处理器当作致命错误杀掉 Worker，导致整批索引中断。
+// 这里仅记录日志、不退出，让后续文件继续解析（与主进程 unhandledRejection 处理一致）。
+// 卡住的任务由主线程任务级超时兜底。
+process.on('unhandledRejection', (reason) => {
+  logger.error('Worker unhandledRejection:', (reason as any)?.message || reason)
+})

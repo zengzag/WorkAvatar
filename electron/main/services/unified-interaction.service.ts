@@ -87,12 +87,17 @@ export interface SessionContext {
   highPermission?: boolean
   /** 任务工作区目录（通用对话等无 DB 会话记录时直接注入，供文件/shell 工具作为沙箱边界） */
   workspacePath?: string
-  /** 委托链深度（0=顶层会话），上限 3 */
+  /** 委托链深度（0=顶层会话），上限 2（主任务→子任务→子子任务） */
   delegationDepth?: number
   /** 委托链已参与的员工 id 列表，防环 */
   delegationChain?: string[]
   /** 主管会话 id，用于子员工事件回传前端 */
   parentSessionId?: string
+  /**
+   * 根会话（顶层任务）session id：委托逐级透传，子会话再派发时仍以它作为事件路由键，
+   * 使任意层级的子任务进度都能落到渲染端已注册的会话上（否则嵌套层级事件被丢弃）。
+   */
+  rootSessionId?: string
   /** 本次委托 id，前端按此路由子员工事件到对应 delegation segment */
   delegationId?: string
   /** 主管会话的 AbortSignal，delegate 工具读取后传给子员工 chatStream 实现 abort 传播 */

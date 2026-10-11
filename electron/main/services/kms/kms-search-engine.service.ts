@@ -5,7 +5,7 @@ import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
 import kmsTokenizer from './kms-tokenizer.service'
 import { foldResultsByContent } from './kms-search-quality'
-import { isFreshnessIntent, rerankResults, type RerankHints } from './kms-rerank.service'
+import { rerankResults, type RerankHints } from './kms-rerank.service'
 import { tokenizeFileName, tokenizeQueryTerm } from './kms-text-tokens'
 import { LRUBoundedCache } from './lru-bounded-cache'
 import {
@@ -46,6 +46,13 @@ const RRF_K = 60
  * 权重倍数使其显著高于词级分散命中（词级单来源最高仅 1/(k+rank)）。
  */
 const PHRASE_RRF_WEIGHT = 3
+
+/**
+ * 文件名命中的 RRF 权重倍数。
+ * 文件名直接包含查询词是强意图信号（用户常以文件名检索），
+ * 权重倍数使其高于纯内容匹配的来源（FTS/向量均为 1/(k+rank)）。
+ */
+const FILE_NAME_RRF_WEIGHT = 2
 
 /** JS 向量兜底只允许作为小规模精确扫描，禁止无限加载全库 */
 const VECTOR_FALLBACK_MAX_SCAN = 50_000
@@ -1588,8 +1595,10 @@ class KMSSearchEngineService {
   /**
    * 混合搜索（RRF 倒数排名融合）
    *
-   * 三个独立来源的 RRF 融合：关键词（FTS5）+ 语义（向量）+ 文件名（LIKE）。
+   * 四个独立来源的 RRF 融合：关键词（FTS5）+ 语义（向量）+ 文件名（LIKE）+ 整句短语。
    * 文档在任意单一来源命中即可被召回，同时命中多来源时按各来源排名叠加得分。
+   * 文件名来源权重 ×2（FILE_NAME_RRF_WEIGHT）、整句短语 ×3（PHRASE_RRF_WEIGHT），
+   * 高于 FTS/向量的 1/(k+rank)，体现「文件名命中」与「整句命中」的强意图信号。
    *
    * 替代原「线性加权」方案：
    * - 旧方案：`sortKey = ftsRank * 0.6 + vectorScore * 0.4`，
@@ -1704,7 +1713,8 @@ class KMSSearchEngineService {
       }
     }
 
-    // RRF 融合：score = Σ 1/(k + rank_i)，i ∈ {fts, vec, file_name, phrase}
+    // RRF 融合：score = Σ w_i/(k + rank_i)，i ∈ {fts, vec, file_name, phrase}
+    // 权重 w：fts/vec = 1，file_name = FILE_NAME_RRF_WEIGHT，phrase = PHRASE_RRF_WEIGHT
     // 来源缺失的贡献为 0（rank undefined → 跳过）
     const mergeStartedAt = Date.now()
     const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys(), ...fileNameRankMap.keys(), ...phraseRankMap.keys()])
@@ -1737,7 +1747,7 @@ class KMSSearchEngineService {
       }
       const fileNameRank = fileNameRankMap.get(key)
       if (fileNameRank !== undefined) {
-        sortKey += 1 / (RRF_K + fileNameRank)
+        sortKey += FILE_NAME_RRF_WEIGHT / (RRF_K + fileNameRank)
       }
       // 整句短语命中：权重倍数显著高于词级分散命中
       const phraseRank = phraseRankMap.get(key)
@@ -1875,8 +1885,7 @@ class KMSSearchEngineService {
 
     timings.rrfMerge = Date.now() - mergeStartedAt
 
-    // 规则重排：新鲜度 + 词覆盖 + 版本约束 + 文件名前缀（kms-rerank.service）
-    const wantsLatest = isFreshnessIntent(query)
+    // 规则重排：新鲜度衰减 + 词覆盖 + 版本约束 + 文件名前缀（kms-rerank.service）
     const nowSec = Math.floor(Date.now() / 1000)
     // 查询已折叠结果所属文件的最新 content_version_id，用于非最新版本降权
     const topFileIds = [...new Set(topResults.map(h => h.result.file_id).filter(Boolean))]
@@ -1899,7 +1908,6 @@ class KMSSearchEngineService {
         latestVersionId: latestVersionMap.get(h.result.file_id),
         text: h.result.text,
         fileName: h.result.file_name,
-        freshnessIntent: wantsLatest,
         nowSec,
       } as RerankHints,
     }))

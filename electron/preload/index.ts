@@ -233,6 +233,8 @@ const electronAPI = {
     setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
+    getLogSize: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_LOG_SIZE),
+    clearLogs: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_LOGS),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
     // 防休眠：查询/设置"窗口未全部关闭时禁止系统熄屏/休眠"

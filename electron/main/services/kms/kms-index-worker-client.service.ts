@@ -75,6 +75,21 @@ interface PendingTask {
   task: WorkerTask
 }
 
+/**
+ * Worker 在处理任务期间崩溃（原生解析崩溃 / 内存耗尽 / 未捕获异常）时抛出的错误。
+ *
+ * 与「Worker 初始化失败」区分开：初始化失败可在主线程降级执行以保证功能可用；
+ * 而处理任务期间崩溃绝不能降级到主线程重跑——同一批原生解析会在主线程重演，
+ * 把整个 Electron 主进程（应用）一起拖崩。
+ */
+class WorkerCrashedError extends Error {
+  readonly workerCrashed = true
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkerCrashedError'
+  }
+}
+
 class KMSIndexWorkerClientService {
   private static instance: KMSIndexWorkerClientService
   private worker: Worker | null = null
@@ -104,15 +119,17 @@ class KMSIndexWorkerClientService {
   }
 
   /**
-   * 启动一个批量任务。如果 Worker 不可用，降级为主线程直接执行。
+   * 启动一个批量任务。如果 Worker 无法启动（初始化失败），降级为主线程直接执行。
    * 增加任务级超时：Worker 任务挂起时（如原生模块在打包环境卡死），
    * 主动 reject 并降级，避免 pendingTasks 永久驻留、autoIndexRunning 永久为 true。
    *
-   * 超时策略区分：
+   * 失败策略区分：
    * - 任务超时（timed out）：仅拒绝当前 Promise，不标记 Worker 失败。
    *   Worker 可能仍在运行（大库索引耗时超过预期），后续任务可继续使用 Worker。
-   * - Worker 初始化失败 / fatal 错误 / Worker 异常退出：标记 Worker 永久失败，
-   *   后续任务直接走主线程降级路径。
+   * - Worker 处理任务期间崩溃（workerCrashed）：直接向上抛错，不降级主线程。
+   *   崩溃文件已在解析前置为 indexing（下一次 getPendingFiles 会跳过，等价于“跳过问题文件”），
+   *   主线程不再重跑同一批原生解析，避免把整个应用一起拖崩。
+   * - Worker 初始化失败：标记 Worker 不可用并降级主线程，保证功能可用。
    */
   async runTask(
     task: WorkerTask,
@@ -148,7 +165,13 @@ class KMSIndexWorkerClientService {
           task,
         })
         const msg: StartMessage = { type: 'start', id, task, args }
-        worker.postMessage(msg)
+        try {
+          worker.postMessage(msg)
+        } catch (postErr: any) {
+          // 向已退出/不可用的 Worker 投递消息会抛错，按崩溃处理（不降级主线程）
+          this.pendingTasks.delete(id)
+          reject(new WorkerCrashedError(`Failed to post task to worker: ${postErr?.message || postErr}`))
+        }
       })
       return result
     } catch (err: any) {
@@ -159,12 +182,17 @@ class KMSIndexWorkerClientService {
         // 关闭 fallback 可避免 Worker 原任务与主线程同一任务双跑、并发写同一索引状态。
         logger.warn(`Worker task ${task} timed out, rejecting without fallback to avoid double-run:`, err?.message || err)
         throw err
-      } else {
-        // Worker 初始化失败 / 其他错误：标记 Worker 不可用
-        logger.warn(`Worker task ${task} failed (non-timeout), marking worker as failed:`, err?.message || err)
-        this.markWorkerFailed()
-        return fallback()
       }
+      if (err?.workerCrashed) {
+        // Worker 处理任务期间崩溃：不降级主线程重跑（会把应用一起拖崩）。
+        // 崩溃文件已被置为 indexing，后续索引任务会跳过它继续处理其余文件。
+        logger.warn(`Worker crashed while running task "${task}", rejecting without main-thread fallback:`, err?.message || err)
+        throw err
+      }
+      // Worker 初始化失败（任务尚未投递）：标记不可用并降级主线程，保证功能可用
+      logger.warn(`Worker task ${task} failed to start (non-timeout), marking worker as failed:`, err?.message || err)
+      this.markWorkerFailed()
+      return fallback()
     }
   }
 
@@ -388,18 +416,20 @@ class KMSIndexWorkerClientService {
     this.workerFailCount = (now - this.lastWorkerFailAt < 5 * 60_000) ? this.workerFailCount + 1 : 1
     this.lastWorkerFailAt = now
     this.workerFailed = this.workerFailCount >= 2
-    // 拒绝所有待处理任务
+    // 拒绝所有待处理任务：这些任务已投递给 Worker，按崩溃处理，不降级主线程
     for (const pending of this.pendingTasks.values()) {
-      pending.reject(new Error('Worker unavailable'))
+      pending.reject(new WorkerCrashedError('Worker unavailable'))
     }
     this.pendingTasks.clear()
-    // 尝试终止 Worker
     if (this.worker) {
       this.worker.terminate().catch(() => {})
-      this.worker = null
-      this.workerReady = false
-      this.workerInitPromise = null
     }
+    // 无论 Worker 是否仍被引用，都必须清空全部状态：
+    // 尤其 workerInitPromise 若残留，下次 ensureWorker 会返回指向已退出 Worker 的旧 Promise，
+    // 后续任务 postMessage 全部失败并被迫降级主线程，导致 UI 卡死乃至应用崩溃
+    this.worker = null
+    this.workerReady = false
+    this.workerInitPromise = null
   }
 
   private handleWorkerMessage(msg: WorkerResponse): void {
@@ -442,26 +472,49 @@ class KMSIndexWorkerClientService {
 
     if (msg.type === 'fatal') {
       logger.error('Worker fatal error:', msg.error)
-      this.markWorkerFailed()
+      this.handleWorkerCrash(`Worker fatal: ${msg.error}`)
     }
   }
 
   private handleWorkerError(err: Error): void {
     logger.error('Worker error:', err?.message || err)
-    this.markWorkerFailed()
+    this.handleWorkerCrash(`Worker error: ${err?.message || err}`)
   }
 
   private handleWorkerExit(code: number): void {
     if (code !== 0) {
       logger.warn(`Worker exited with code ${code}`)
     }
+    // 关键：必须清空缓存的初始化 Promise。否则下次 ensureWorker 会返回指向已退出 Worker 的
+    // 旧 Promise，后续任务 postMessage 全部失败并被迫降级主线程，导致 UI 卡死乃至应用崩溃。
     this.worker = null
     this.workerReady = false
-    // 如果还有待处理任务，说明是异常退出，拒绝它们
+    this.workerInitPromise = null
+    // 如果还有待处理任务，说明是异常退出，按崩溃拒绝它们（不降级主线程）
     for (const pending of this.pendingTasks.values()) {
-      pending.reject(new Error(`Worker exited unexpectedly (code=${code})`))
+      pending.reject(new WorkerCrashedError(`Worker exited unexpectedly (code=${code})`))
     }
     this.pendingTasks.clear()
+  }
+
+  /**
+   * Worker 处理任务期间崩溃（fatal 消息 / error 事件）的统一收尾。
+   *
+   * 不调用 markWorkerFailed()：崩溃发生在任务执行期（多为原生解析崩溃），
+   * 不应累计为“Worker 永久不可用”，否则后续任务会被推去主线程降级重跑而拖崩应用。
+   * 清空 Worker 状态后，下一次任务会重新拉起一个干净的 Worker，继续处理剩余文件。
+   */
+  private handleWorkerCrash(reason: string): void {
+    for (const pending of this.pendingTasks.values()) {
+      pending.reject(new WorkerCrashedError(reason))
+    }
+    this.pendingTasks.clear()
+    if (this.worker) {
+      this.worker.terminate().catch(() => {})
+    }
+    this.worker = null
+    this.workerReady = false
+    this.workerInitPromise = null
   }
 }
 

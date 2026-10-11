@@ -53,7 +53,7 @@ async function handleFollowup(args: Record<string, any>): Promise<any> {
   const runtime = SubAgentRuntime.getInstance()
   const launched = runtime.launchFollowup({
     followupOfRunId: String(delegation_id || ''),
-    parentSessionId: store.sessionId,
+    parentSessionId: store.rootSessionId || store.sessionId,
     parentEmployeeId: store.employeeId,
     parentConversationId: store.conversationId || '',
     instruction: String(instruction || ''),

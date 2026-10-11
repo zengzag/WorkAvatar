@@ -10,6 +10,60 @@ const MAX_NAME_CHARS = 50
 /** 描述长度上限 */
 const MAX_DESC_CHARS = 200
 
+/** 内置子智能体模板工具白名单：只读检索类（不写入、不删除、不执行命令） */
+const EXPLORE_TOOL_ALLOWLIST = [
+  'file_read', 'read_image', 'ocr_image', 'report_generated_files',
+  'web_search', 'web_fetch', 'date_time',
+  'kms_search', 'kms_get_content', 'kms_list_collections',
+  'list_employees', 'list_providers',
+]
+
+/**
+ * 内置子智能体模板（随应用发布，source='builtin'，UI 只读、不可删除/修改）。
+ * 作为「开箱即用的预置执行者」，降低主管委托时现场手写 ephemeral_role 的门槛：
+ * - explore：只读检索与归纳，适合跨多来源收集信息并给出结论；
+ * - general：全能力通用执行者，适合独立的实现/生成/评审子任务。
+ */
+const BUILTIN_PROFILES: Array<Pick<SubAgentProfile, 'id' | 'name' | 'description' | 'system_prompt' | 'tools_json' | 'skills_json' | 'provider_id' | 'model_id' | 'source'>> = [
+  {
+    id: 'sap-builtin-explore',
+    name: 'explore',
+    description: '只读检索与归纳：跨多来源收集信息并给出结论，不修改任何文件',
+    system_prompt: [
+      'You are a read-only research specialist.',
+      'Your job is to locate, read, and synthesize information from files, images, the knowledge base, and the web, then return a concise, well-structured answer to the delegating agent.',
+      'Rules:',
+      '- Never create, modify, or delete files, and never run commands that write to disk. You have no write tools available.',
+      '- Read excerpts rather than whole files when only a conclusion is needed; do not dump raw content back.',
+      '- State your search coverage explicitly (what you looked at) and flag anything you could not verify.',
+      '- End with the required Delegation Receipt.',
+    ].join('\n'),
+    tools_json: JSON.stringify(EXPLORE_TOOL_ALLOWLIST),
+    skills_json: '[]',
+    provider_id: null,
+    model_id: null,
+    source: 'builtin',
+  },
+  {
+    id: 'sap-builtin-general',
+    name: 'general',
+    description: '通用执行者：可读写文件并产出交付物，适合独立的实现/生成/评审子任务',
+    system_prompt: [
+      'You are a general-purpose worker agent.',
+      'Complete the delegated task end to end using the tools available, work autonomously, and deliver concrete results.',
+      'Rules:',
+      '- Treat the instruction as the only briefing: it is self-contained, and the delegating agent cannot see your intermediate steps.',
+      '- When the task produces user-facing deliverables, create them as real files and declare them via report_generated_files.',
+      '- Finish with a self-contained report and the required Delegation Receipt.',
+    ].join('\n'),
+    tools_json: '[]',
+    skills_json: '[]',
+    provider_id: null,
+    model_id: null,
+    source: 'builtin',
+  },
+]
+
 function now(): number {
   return Math.floor(Date.now() / 1000)
 }
@@ -64,6 +118,29 @@ class SubAgentProfileService {
     }
   }
 
+  /**
+   * 播种/刷新内置子智能体模板（幂等，启动时调用一次）。
+   * 用 UPSERT 覆盖内容：内置模板只读，随应用升级同步最新提示词与工具白名单。
+   */
+  seedBuiltinProfiles(): void {
+    try {
+      const stmt = DatabaseService.getInstance().getDb().prepare(
+        `INSERT INTO sub_agent_profiles (id, name, description, system_prompt, tools_json, skills_json, provider_id, model_id, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name, description = excluded.description,
+           system_prompt = excluded.system_prompt, tools_json = excluded.tools_json,
+           skills_json = excluded.skills_json, source = 'builtin', updated_at = excluded.updated_at`
+      )
+      const ts = now()
+      for (const p of BUILTIN_PROFILES) {
+        stmt.run(p.id, p.name, p.description, p.system_prompt, p.tools_json, p.skills_json, p.provider_id, p.model_id, p.source, ts, ts)
+      }
+    } catch (err: any) {
+      logger.warn('播种内置子智能体模板失败:', err?.message || err)
+    }
+  }
+
   /** 创建模板；返回 created 或 { error } */
   create(input: {
     name?: unknown
@@ -108,6 +185,7 @@ class SubAgentProfileService {
   update(id: string, input: Record<string, unknown>): { profile?: SubAgentProfile; error?: string } {
     const existing = this.get(id)
     if (!existing) return { error: `模板不存在: ${id}` }
+    if (existing.source === 'builtin') return { error: '内置模板不可修改（可另建自定义模板）' }
     const merged = {
       name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : existing.name,
       description: typeof input.description === 'string' ? input.description.slice(0, MAX_DESC_CHARS) : existing.description,

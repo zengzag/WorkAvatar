@@ -19,6 +19,7 @@ import {
   DEFAULT_TEMPERATURE,
   buildEnrichedHistory,
   createPersistentMessagesCache,
+  toggleSegmentInTree,
 } from './chat-helpers'
 import { useStreamListeners, getPersistentListenersCleanup, getPersistentEmployeeId, setPersistentEmployeeId } from './useStreamListeners'
 import { recoverSubSegmentsFromLog } from './run-recovery'
@@ -2229,9 +2230,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
             if (i !== activeIdx || !b.segments) return b
             return {
               ...b,
-              segments: b.segments.map(s =>
-                s.id === segId ? { ...s, collapsed: !s.collapsed } : s
-              ),
+              segments: toggleSegmentInTree(b.segments, segId) || b.segments,
             }
           }),
         }
@@ -2239,27 +2238,12 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
       if (!m.segments) return m
 
-      // delegation 子段折叠：segId 格式为 `${delSegId}__sub__${subSegId}`
+      // delegation 子段折叠：segId 格式为 `${delSegId}__sub__${subSegId}`（可多层嵌套）；
+      // 统一按目标段 id 在段树中递归查找，使嵌套子任务卡也能正常展开/收起
       const subMatch = segId.match(/^(.+?)__sub__(.+)$/)
-      if (subMatch) {
-        const delSegId = subMatch[1]
-        const subSegId = subMatch[2]
-        const newSegs = m.segments.map(s => {
-          if (s.type !== 'delegation' || s.id !== delSegId || !s.subSegments) return s
-          return {
-            ...s,
-            subSegments: s.subSegments.map(ss =>
-              ss.id === subSegId ? { ...ss, collapsed: !ss.collapsed } : ss
-            ),
-          }
-        })
-        return { ...m, segments: newSegs }
-      }
-
-      const newSegs = m.segments.map(s =>
-        s.id === segId ? { ...s, collapsed: !s.collapsed } : s
-      )
-      return { ...m, segments: newSegs }
+      const targetSegId = subMatch ? subMatch[2] : segId
+      const toggled = toggleSegmentInTree(m.segments, targetSegId)
+      return toggled ? { ...m, segments: toggled } : m
     }))
   }, [])
 

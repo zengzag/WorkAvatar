@@ -9,17 +9,17 @@ import {
 } from '@ant-design/icons'
 import KnowledgeCardDetail from './KnowledgeCardDetail'
 import KMSStopWordsPanel from './KMSStopWordsPanel'
-import type { KnowledgeCard, SearchTraceStep } from './KnowledgeCardDetail'
+import type { KnowledgeCard, SearchTraceStep, KnowledgeCardSourceTarget } from './KnowledgeCardDetail'
 import { formatRelativeTimeShort } from '../../utils/format'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
 
 interface KMSKnowledgeCardsViewProps {
-  onOpenFile?: (filePath: string) => void
+  onPreviewSource?: (target: KnowledgeCardSourceTarget) => void
 }
 
-const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFile }) => {
+const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onPreviewSource }) => {
   const { t, i18n } = useTranslation()
   const { token } = theme.useToken()
   const { message } = App.useApp()
@@ -409,7 +409,7 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
         onClose={closeDetail}
         onRefresh={handleDetailRefresh}
         onDeleted={handleDetailDeleted}
-        onOpenFile={onOpenFile}
+        onPreviewSource={onPreviewSource}
         progressSteps={detailProgressSteps}
         processing={detailProcessing}
       />

@@ -32,11 +32,13 @@ export function tableColumns(db: MigrationDatabase, table: string): ColumnInfo[]
  * 1. conversations.memory_extract_attempts：提取失败重试计数器
  * 2. employee_memories：补 scope 列并放开 employee_id 的 NOT NULL（全局记忆归属为 NULL）
  * 3. employee_memories_fts：按 jieba 预分词重建（旧索引把整段中文视作单 token，中文检索不可用）
+ * 4. employee_memory_vectors：语义召回所需的向量表 + 删除清理触发器
  */
 export function migrateMemorySchema(db: MigrationDatabase): void {
   migrateConversationMemoryAttempts(db)
   migrateEmployeeMemoriesScope(db)
   ensureMemoryFtsDeleteTrigger(db)
+  ensureMemoryVectorTable(db)
   reindexMemoryFtsSegmented(db)
 }
 
@@ -116,6 +118,28 @@ function ensureMemoryFtsDeleteTrigger(db: MigrationDatabase): void {
     AFTER DELETE ON employee_memories
     BEGIN
       DELETE FROM employee_memories_fts WHERE memory_id = OLD.id;
+    END
+  `)
+}
+
+/**
+ * 记忆向量表：与 employee_memories 1:1，存放语义召回所需的 embedding。
+ * - content_hash 用于检测"内容已变但向量未更新"，支撑回填自愈
+ * - 删除触发器兜底：员工级联清理 / purgeMemory / emptyTrash 等直接删主表行的路径
+ */
+function ensureMemoryVectorTable(db: MigrationDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS employee_memory_vectors (
+      memory_id TEXT PRIMARY KEY,
+      model TEXT NOT NULL DEFAULT '',
+      content_hash TEXT NOT NULL DEFAULT '',
+      embedding BLOB NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE TRIGGER IF NOT EXISTS trg_employee_memory_vectors_cleanup
+    AFTER DELETE ON employee_memories
+    BEGIN
+      DELETE FROM employee_memory_vectors WHERE memory_id = OLD.id;
     END
   `)
 }

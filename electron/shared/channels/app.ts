@@ -10,6 +10,8 @@ export const APP_CHANNELS = {
 
   APP_GET_VERSION: 'app:get-version',
   APP_OPEN_LOG_DIR: 'app:open-log-dir',
+  APP_GET_LOG_SIZE: 'app:get-log-size',
+  APP_CLEAR_LOGS: 'app:clear-logs',
   APP_CLEAR_ALL_DATA: 'app:clear-all-data',
   // 前台防休眠：应用处于前台时禁止系统自动熄屏/休眠（查询/设置开关）
   POWER_SAVE_GET: 'power-save:get',

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { interactionContext } from '../../../electron/main/services/unified-interaction.service'
+import { parseEmployeeDelegation } from '../../../electron/shared/types'
 
 /** 通过 mock SubAgentRuntime + DatabaseService 覆盖委托类工具的校验与编排分支 */
 const runtimeState = vi.hoisted(() => ({
@@ -63,6 +64,7 @@ const { delegateTool } = await import('../../../electron/main/services/agent/too
 const { followupTool } = await import('../../../electron/main/services/agent/tools/followup.tool')
 const { launchAgentsTool, awaitAgentsTool } = await import('../../../electron/main/services/agent/tools/launch-agents.tool')
 const { sendMessageTool, readMessagesTool } = await import('../../../electron/main/services/agent/tools/collab-messages.tool')
+const { applyDelegationEnums } = await import('../../../electron/main/services/agent/tools/subagent-tools')
 
 const run = <T>(store: any, fn: () => Promise<T>): Promise<T> =>
   interactionContext.run(store, fn)
@@ -584,5 +586,44 @@ describe('agent/tools/collab-messages', () => {
     expect(sendMessageTool.parameters.required).toEqual(['run_id', 'message'])
     expect(readMessagesTool.onDemand).toBe(false)
     expect(readMessagesTool.parameters.properties).toEqual({})
+  })
+})
+
+describe('委托目标/模板枚举注入（applyDelegationEnums）', () => {
+  it('空候选时原样返回同一对象（不注入空 enum）', () => {
+    expect(applyDelegationEnums(delegateTool, [], [])).toBe(delegateTool)
+  })
+
+  it('delegate_to_employee：注入 target/subagent_profile 枚举并在描述中列出候选', () => {
+    const tool = applyDelegationEnums(delegateTool, [{ id: 'e1', name: '写手' }], [{ id: 'p1', name: 'explore' }])
+    const props = tool.parameters.properties as any
+    expect(props.target_employee_id.enum).toEqual(['e1'])
+    expect(props.target_employee_id.description).toContain('写手(id=e1)')
+    expect(props.subagent_profile_id.enum).toEqual(['p1'])
+    expect(props.subagent_profile_id.description).toContain('explore(id=p1)')
+    // 原工具不被就地修改
+    expect((delegateTool.parameters.properties as any).target_employee_id.enum).toBeUndefined()
+  })
+
+  it('launch_agents：嵌套 tasks[].* 结构同样注入枚举', () => {
+    const tool = applyDelegationEnums(launchAgentsTool, [{ id: 'e1', name: '写手' }], [{ id: 'p1', name: 'general' }])
+    const itemProps = (tool.parameters.properties as any).tasks.items.properties
+    expect(itemProps.target_employee_id.enum).toEqual(['e1'])
+    expect(itemProps.subagent_profile_id.enum).toEqual(['p1'])
+  })
+})
+
+describe('parseEmployeeDelegation 默认开启', () => {
+  it('缺失/空串/非法 JSON 时默认开启（可派发临时角色与模板）', () => {
+    for (const raw of [undefined, null, '', '  ', 'not-json']) {
+      expect(parseEmployeeDelegation(raw)).toMatchObject({ enabled: true, targetIds: [], acceptDelegation: true })
+    }
+  })
+
+  it('显式 {"enabled":false} 仍可关闭；未选目标时 targetIds 为空', () => {
+    expect(parseEmployeeDelegation(JSON.stringify({ enabled: false })).enabled).toBe(false)
+    expect(parseEmployeeDelegation(JSON.stringify({ targetIds: ['e1'] }))).toMatchObject({ enabled: true, targetIds: ['e1'] })
+    expect(parseEmployeeDelegation(JSON.stringify({ enabled: false, targetIds: [], acceptDelegation: false })))
+      .toMatchObject({ enabled: false, acceptDelegation: false })
   })
 })

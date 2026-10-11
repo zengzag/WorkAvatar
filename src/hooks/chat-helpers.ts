@@ -12,6 +12,110 @@ export const CONVERSATION_PAGE_SIZE = 20
 export const SCROLL_BOTTOM_THRESHOLD_PX = 10
 export const DEFAULT_TEMPERATURE = 0.7
 
+/** 段是否命中指定 runId（delegation 段用 runId/delegationId 关联后端运行） */
+function isRunSegment(s: MessageSegment, runId: string): boolean {
+  return s.type === 'delegation' && (s.runId === runId || s.delegationId === runId)
+}
+
+/**
+ * 在段树中递归查找指定 runId 的委托段（含父委托卡 subSegments 内的嵌套子任务）。
+ * 嵌套层级的 run 事件与顶层共用同一会话路由，必须递归查找才能落到正确的卡片。
+ */
+export function findRunSegment(segs: MessageSegment[], runId: string): MessageSegment | null {
+  for (const s of segs) {
+    if (isRunSegment(s, runId)) return s
+    if (s.type === 'delegation' && s.subSegments?.length) {
+      const hit = findRunSegment(s.subSegments, runId)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+/** 在段树中按 runId 不可变更新委托段；未命中返回 null（调用方保持原状态） */
+export function patchRunSegment(
+  segs: MessageSegment[],
+  runId: string,
+  updater: (seg: MessageSegment) => MessageSegment,
+): MessageSegment[] | null {
+  let hit = false
+  const walk = (list: MessageSegment[]): MessageSegment[] =>
+    list.map(s => {
+      if (hit) return s
+      if (isRunSegment(s, runId)) {
+        hit = true
+        return updater(s)
+      }
+      if (s.type === 'delegation' && s.subSegments?.length) {
+        const nextSub = walk(s.subSegments)
+        if (hit) return { ...s, subSegments: nextSub }
+      }
+      return s
+    })
+  const out = walk(segs)
+  return hit ? out : null
+}
+
+/** 把嵌套子任务的委托段追加到发起方委托段（runId=parentRunId）的 subSegments 末尾；未命中返回 null */
+export function appendNestedDelegation(
+  segs: MessageSegment[],
+  parentRunId: string,
+  nested: MessageSegment,
+): MessageSegment[] | null {
+  let hit = false
+  const walk = (list: MessageSegment[]): MessageSegment[] =>
+    list.map(s => {
+      if (hit) return s
+      if (isRunSegment(s, parentRunId)) {
+        hit = true
+        return { ...s, subSegments: [...(s.subSegments || []), nested] }
+      }
+      if (s.type === 'delegation' && s.subSegments?.length) {
+        const nextSub = walk(s.subSegments)
+        if (hit) return { ...s, subSegments: nextSub }
+      }
+      return s
+    })
+  const out = walk(segs)
+  return hit ? out : null
+}
+
+/** 递归映射段树（含 delegation.subSegments），用于统一收尾/清理 */
+export function mapSegmentsTree(
+  segs: MessageSegment[],
+  fn: (seg: MessageSegment) => MessageSegment,
+): MessageSegment[] {
+  return segs.map(s => {
+    const expanded = s.type === 'delegation' && s.subSegments?.length
+      ? { ...s, subSegments: mapSegmentsTree(s.subSegments, fn) }
+      : s
+    return fn(expanded)
+  })
+}
+
+/**
+ * 递归切换段树中指定 id 段的折叠态（含 delegation.subSegments 内任意嵌套层级）；
+ * 未命中返回 null。用于委托卡（含嵌套子任务卡）的展开/收起。
+ */
+export function toggleSegmentInTree(segs: MessageSegment[], segId: string): MessageSegment[] | null {
+  let hit = false
+  const walk = (list: MessageSegment[]): MessageSegment[] =>
+    list.map(s => {
+      if (hit) return s
+      if (s.id === segId) {
+        hit = true
+        return { ...s, collapsed: !s.collapsed }
+      }
+      if (s.type === 'delegation' && s.subSegments?.length) {
+        const next = walk(s.subSegments)
+        if (hit) return { ...s, subSegments: next }
+      }
+      return s
+    })
+  const out = walk(segs)
+  return hit ? out : null
+}
+
 export interface ConversationStreamState {
   isStreaming: boolean
   conversationId: string

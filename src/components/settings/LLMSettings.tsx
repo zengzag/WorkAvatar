@@ -27,7 +27,7 @@ import {
   QuestionCircleOutlined,
   GlobalOutlined,
 } from '@ant-design/icons'
-import type { LLMProvider, LLMModelConfig, LLMModelCategory, LLMProviderType } from '../../types'
+import type { LLMProvider, LLMModelConfig, LLMModelCategory, LLMProviderType, LLMApiFormat } from '../../types'
 import { useTranslation } from 'react-i18next'
 import { invalidateProvidersCache } from '../../hooks/useLlmSettings'
 import { computeModelRenames, syncModelRenamesInStorage } from '../../utils/llm'
@@ -52,6 +52,12 @@ export const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?:
   { value: 'yi', label: '零一万物 (Yi)', labelKey: 'settings.providerYi', group: 'domestic' },
   { value: 'openai-compatible', label: 'OpenAI 兼容接口', labelKey: 'settings.providerOpenaiCompatible', group: 'local' },
   { value: 'lmstudio', label: 'LM Studio', group: 'local' },
+]
+
+export const API_FORMATS: { value: LLMApiFormat; labelKey: string }[] = [
+  { value: 'chat-completions', labelKey: 'settings.apiFormatChatCompletions' },
+  { value: 'anthropic-messages', labelKey: 'settings.apiFormatAnthropicMessages' },
+  { value: 'openai-responses', labelKey: 'settings.apiFormatOpenAIResponses' },
 ]
 
 export const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
@@ -144,6 +150,7 @@ const LLMSettings: React.FC = () => {
     form.resetFields()
     form.setFieldsValue({
       provider_type: 'openai-compatible',
+      api_format: 'chat-completions',
       timeout_ms: 60000,
       api_key: '',
     })
@@ -168,6 +175,7 @@ const LLMSettings: React.FC = () => {
     form.setFieldsValue({
       name: provider.name,
       provider_type: provider.provider_type,
+      api_format: provider.api_format || 'chat-completions',
       base_url: provider.base_url,
       timeout_ms: provider.timeout_ms,
       extra_headers_json: provider.extra_headers_json || '',
@@ -198,7 +206,7 @@ const LLMSettings: React.FC = () => {
         model: defaultChatModel?.model || '',
         embedding_model: defaultEmbeddingModel?.model || '',
         temperature: defaultChatModel?.temperature ?? 0.3,
-        max_tokens: defaultChatModel?.max_tokens ?? 4096,
+        max_tokens: defaultChatModel?.max_tokens ?? 32 * 1024,
         models_json: JSON.stringify(models),
         extra_headers_json: values.extra_headers_json || null,
         extra_body_json: values.extra_body_json || null,
@@ -253,8 +261,9 @@ const LLMSettings: React.FC = () => {
     modelForm.setFieldsValue({
       category: 'chat',
       temperature: 0.7,
-      max_tokens: 4096,
+      max_tokens: 32 * 1024,
       max_retry: 100,
+      context_window: 256 * 1024,
     })
     setModelModalVisible(true)
   }, [modelForm])
@@ -289,7 +298,7 @@ const LLMSettings: React.FC = () => {
         model: values.model,
         category,
         temperature: category === 'embedding' ? 0 : (values.temperature ?? 0.3),
-        max_tokens: category === 'embedding' ? 0 : (values.max_tokens ?? 4096),
+        max_tokens: category === 'embedding' ? 0 : (values.max_tokens ?? 32 * 1024),
         ...(category === 'chat' ? {
           top_p: values.top_p,
           frequency_penalty: values.frequency_penalty,
@@ -481,11 +490,17 @@ const LLMSettings: React.FC = () => {
             } style={{ flex: 1 }}>
               <Input placeholder="https://api.openai.com/v1" />
             </Form.Item>
-            <Form.Item name="api_key" label={t('settings.apiKey')} style={{ flex: 1 }}
-              extra={t('settings.apiKeyHint')}>
-              <Input.Password placeholder="sk-..." />
+            <Form.Item name="api_format" label={
+              <span>{t('settings.apiFormat')} <Tooltip title={t('settings.apiFormatTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+            } style={{ flex: 1 }}>
+              <Select options={API_FORMATS.map(f => ({ value: f.value, label: t(f.labelKey) }))} />
             </Form.Item>
           </div>
+
+          <Form.Item name="api_key" label={t('settings.apiKey')}
+            extra={t('settings.apiKeyHint')}>
+            <Input.Password placeholder="sk-..." />
+          </Form.Item>
 
           <Divider titlePlacement="left" style={{ margin: '12px 0' }}>
             <Space size={4}>

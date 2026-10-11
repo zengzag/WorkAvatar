@@ -106,20 +106,28 @@ export interface EmployeeDelegationConfig {
   acceptDelegation: boolean
 }
 
-/** 解析 delegation_json，容错缺失/非法 JSON，返回默认配置 */
+/** 全局委托开关的 settings KV 键：值 '0'/'false' 关闭；未设置视为开启 */
+export const SETTING_DELEGATION_ENABLED = 'delegation_enabled'
+
+/**
+ * 解析 delegation_json，容错缺失/非法 JSON，返回默认配置。
+ * 缺省即开启委托能力（可派发临时子智能体/子智能体模板）；
+ * 委托给「已有数字员工」仍需在 targetIds 中显式选择目标，未选择时运行时拒绝。
+ * 用户显式配置 {"enabled":false} 可整体关闭。
+ */
 export function parseEmployeeDelegation(json?: string | null): EmployeeDelegationConfig {
-  if (!json) return { enabled: false, targetIds: [], acceptDelegation: true }
+  if (!json) return { enabled: true, targetIds: [], acceptDelegation: true }
   try {
     const o = JSON.parse(json)
     return {
-      enabled: o?.enabled === true,
+      enabled: o?.enabled !== false,
       targetIds: Array.isArray(o?.targetIds)
         ? o.targetIds.filter((x: unknown): x is string => typeof x === 'string')
         : [],
       acceptDelegation: o?.acceptDelegation !== false,
     }
   } catch {
-    return { enabled: false, targetIds: [], acceptDelegation: true }
+    return { enabled: true, targetIds: [], acceptDelegation: true }
   }
 }
 
@@ -166,6 +174,14 @@ export interface Conversation {
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai' | 'opencode-go'
 
+/**
+ * 接口形式（API 协议）：
+ * - chat-completions: v1/chat/completions（OpenAI 兼容，默认）
+ * - anthropic-messages: v1/messages（Anthropic Messages）
+ * - openai-responses: v1/responses（OpenAI Responses）
+ */
+export type LLMApiFormat = 'chat-completions' | 'anthropic-messages' | 'openai-responses'
+
 /** 思考级别：false=关闭，'low'/'medium'/'high'=开启并指定强度 */
 export type ThinkingLevel = false | 'low' | 'medium' | 'high'
 
@@ -195,6 +211,8 @@ export interface LLMProvider {
   name: string
   provider_type: LLMProviderType
   base_url?: string
+  /** 接口形式（API 协议），缺省为 chat-completions */
+  api_format?: LLMApiFormat
   model: string
   embedding_model: string
   temperature: number

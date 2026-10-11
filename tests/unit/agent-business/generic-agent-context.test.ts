@@ -123,6 +123,28 @@ describe('GenericAgent / minimal 模式', () => {
     expect(params.messages).toHaveLength(2) // system + query
     expect((agent as any).buildLoopReminder(10, 100)).toBeUndefined()
   })
+
+  it('即使注册了按需工具/委托目标，极简模式也不注入任何稳定能力块', async () => {
+    const agent = new EmployeeAgent(
+      {
+        name: '主管',
+        instructions: '',
+        model: 'gpt-x',
+        autoDiscoverSkills: false,
+        delegationTargets: [{ id: 'e2', name: '研究员', description: '查资料' }],
+      },
+      undefined
+    )
+    agent.registerTool(onDemandTool)
+    agent.setMinimalMode(true)
+    await agent.runStream({ query: 'q', history: [] }, {}, new AbortController().signal)
+    const params = h.calls[0]
+    const contents = params.messages.map((m: any) => m.content as string)
+    expect(params.toolDefinitions).toEqual([])
+    expect(contents.some((c) => c.startsWith(STABLE_CONTEXT_MSG_PREFIX))).toBe(false)
+    expect(contents.some((c) => c.includes('Delegation (multi-employee collaboration)'))).toBe(false)
+    expect(contents.some((c) => c.includes('calendar_create'))).toBe(false)
+  })
 })
 
 describe('GenericAgent / todo_write 与循环提醒', () => {

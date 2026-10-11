@@ -108,8 +108,6 @@ export interface KMSSettings {
   embeddingModel: KMSModelConfig | null
   summaryModel: KMSModelConfig | null
   searchParams: {
-    maxRounds?: number
-    topK?: number
     resultLimit?: number
     autoReparseHotData?: boolean
     enableKnowledgeCards?: boolean
@@ -172,7 +170,7 @@ export function useKMS() {
   const [kmsSettings, setKmsSettings] = useState<KMSSettings>({
     embeddingModel: null,
     summaryModel: null,
-    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true, enableKnowledgeCards: true, knowledgeCardThreshold: 5, autoRefreshStaleCards: true },
+    searchParams: { resultLimit: 100, autoReparseHotData: true, enableKnowledgeCards: true, knowledgeCardThreshold: 5, autoRefreshStaleCards: true },
     autoIndex: { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 },
   })
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
@@ -454,8 +452,6 @@ export function useKMS() {
           embeddingModel: result.embeddingModel || null,
           summaryModel: result.summaryModel || null,
           searchParams: {
-            maxRounds: result.searchParams?.maxRounds ?? 3,
-            topK: result.searchParams?.topK ?? 10,
             resultLimit: result.searchParams?.resultLimit ?? 100,
             autoReparseHotData: result.searchParams?.autoReparseHotData ?? true,
             enableKnowledgeCards: result.searchParams?.enableKnowledgeCards ?? true,
@@ -477,7 +473,7 @@ export function useKMS() {
   const saveKmsSettings = useCallback(async (params: {
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
+    searchParams?: { resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
     autoIndex?: KMSAutoIndexConfig
   }) => {
     try {

@@ -182,9 +182,9 @@ class SubAgentRuntime {
         "SELECT value FROM settings WHERE key = 'sub_agent_max_parallel'"
       ).get() as { value?: string } | undefined
       const n = row?.value ? parseInt(row.value, 10) : NaN
-      return Number.isFinite(n) && n > 0 ? n : 3
+      return Number.isFinite(n) && n > 0 ? n : 5
     } catch {
-      return 3
+      return 5
     }
   }
 
@@ -586,6 +586,8 @@ class SubAgentRuntime {
       const inputs: any = { instruction: run.instruction, contextFiles: run.contextFiles }
       if (run.followupOfRunId) inputs.followupOfRunId = run.followupOfRunId
       if (run.runInBackground) inputs.runInBackground = true
+      // 模型覆盖随 run 落库，重启后追问可沿用同一模型
+      if (run.providerId && run.modelId) { inputs.providerId = run.providerId; inputs.modelId = run.modelId }
       const result: any = {
         summary: run.summary,
         generatedFiles: run.generatedFiles,
@@ -666,9 +668,9 @@ class SubAgentRuntime {
       }
     }
 
-    // 递归防护
-    if (input.delegationDepth >= 3) {
-      return { success: false, error: `委托深度超限（上限 3 层，当前 ${input.delegationDepth}）`, targetEmployeeName: targetName }
+    // 递归防护：委托上限 2 层（主任务 → 子任务 → 子子任务），第 2 层不得再派发
+    if (input.delegationDepth >= 2) {
+      return { success: false, error: `委托深度超限（上限 2 层：主任务→子任务→子子任务，当前 ${input.delegationDepth}）`, targetEmployeeName: targetName }
     }
     if (input.delegationChain.includes(input.targetEmployeeId)) {
       return { success: false, error: '检测到委托环：目标员工已在委托链中', targetEmployeeName: targetName }
@@ -691,6 +693,8 @@ class SubAgentRuntime {
       autoDetectedFiles: [],
       ephemeral: input.ephemeral,
       lifecycle: isEphemeral ? 'ephemeral' : 'persistent',
+      providerId: input.providerId,
+      modelId: input.modelId,
       runInBackground: input.runInBackground === true,
       outputSchema: input.outputSchema,
     }
@@ -698,7 +702,12 @@ class SubAgentRuntime {
     return { success: true, runId, targetEmployeeName: targetName, targetEmployeeId }
   }
 
-  /** 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托 */
+  /**
+   * 委托设置校验：
+   * - 主管须开启委托能力；
+   * - targetIds 非空时为白名单，目标必须在其中；为空表示不限制（任何接受委托的员工可被委托）；
+   * - 目标须允许被委托（acceptDelegation）。
+   */
   private validateDelegationSettings(parentEmployeeId: string, targetEmployeeId: string, targetName: string): string | undefined {
     // 内联员工（模板任务编排）无委托设置也无 UI 可配置，不走用户侧委托校验
     if (parentEmployeeId.startsWith('inline:') || targetEmployeeId.startsWith('inline:')) {
@@ -710,8 +719,11 @@ class SubAgentRuntime {
     ).all(parentEmployeeId, targetEmployeeId) as Array<{ id: string; delegation_json?: string | null }>
     const parentDelegation = parseEmployeeDelegation(delegationRows.find(r => r.id === parentEmployeeId)?.delegation_json)
     const targetDelegation = parseEmployeeDelegation(delegationRows.find(r => r.id === targetEmployeeId)?.delegation_json)
-    if (!parentDelegation.enabled || !parentDelegation.targetIds.includes(targetEmployeeId)) {
-      return '目标员工不在当前数字员工的可委托列表中，请从上下文信息 [DELEGATION] 段的可委托员工列表中选择'
+    if (!parentDelegation.enabled) {
+      return '当前数字员工未开启委托能力，无法委托子任务'
+    }
+    if (parentDelegation.targetIds.length > 0 && !parentDelegation.targetIds.includes(targetEmployeeId)) {
+      return '目标员工不在当前数字员工已选择的委托范围内，请从上下文信息 [DELEGATION] 段的可委托员工列表中选择'
     }
     if (!targetDelegation.acceptDelegation) {
       return `目标员工 ${targetName} 已设置为不允许被委托任务`
@@ -729,33 +741,34 @@ class SubAgentRuntime {
 
     // 1) 解析原 run：内存优先，回落 DB（重启或内存淘汰后仍可追问）
     const memEntry = this.entries.get(input.followupOfRunId)
-    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string; ephemeral?: EphemeralSubAgentSpec }
+    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string; ephemeral?: EphemeralSubAgentSpec; providerId?: string; modelId?: string }
     if (memEntry) {
       const r = memEntry.run
       origin = {
         runId: r.runId, conversationId: r.conversationId || '', employeeId: r.employeeId,
         parentConversationId: r.parentConversationId, parentRunId: r.parentRunId, status: r.status,
-        ephemeral: r.ephemeral,
+        ephemeral: r.ephemeral, providerId: r.providerId, modelId: r.modelId,
       }
       if (!isTerminal(r.status)) {
         return { success: false, error: '原委托仍在执行中，请等待完成后再追问' }
       }
     } else {
       const row = db.prepare(
-        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status, ephemeral_json
+        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status, ephemeral_json, inputs_json
          FROM sub_agent_runs WHERE run_id = ?`
       ).get(input.followupOfRunId) as
-        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string; ephemeral_json?: string }
+        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string; ephemeral_json?: string; inputs_json?: string }
         | undefined
       if (!row) {
         return { success: false, error: `未找到委托记录: ${input.followupOfRunId}（请使用 delegate_to_employee / followup_delegation 返回的 delegationId）` }
       }
       let ephemeral: EphemeralSubAgentSpec | undefined
       try { if (row.ephemeral_json) ephemeral = JSON.parse(row.ephemeral_json) } catch { /* ignore */ }
+      const inputs = safeParse(row.inputs_json || '') as { providerId?: string; modelId?: string }
       origin = {
         runId: row.run_id, conversationId: row.conversation_id || '', employeeId: row.employee_id,
         parentConversationId: row.parent_conversation_id || '', parentRunId: row.parent_run_id || undefined, status: row.status,
-        ephemeral,
+        ephemeral, providerId: inputs?.providerId, modelId: inputs?.modelId,
       }
       // 重启后内存丢失的僵尸 run（DB 仍为 running/queued）：标记失败后允许追问，子会话历史仍可续用
       if (origin.status === 'running' || origin.status === 'queued') {
@@ -808,6 +821,8 @@ class SubAgentRuntime {
       followupOfRunId: origin.runId,
       ephemeral: origin.ephemeral,
       lifecycle: origin.ephemeral ? 'ephemeral' : 'persistent',
+      providerId: origin.providerId,
+      modelId: origin.modelId,
     }
     this.enqueueRun(run, input)
     return { success: true, runId, targetEmployeeName: target.name }
@@ -1079,6 +1094,8 @@ class SubAgentRuntime {
         targetEmployeeName: run.employeeName,
         targetAvatarType: run.employeeAvatarType,
         instruction: run.instruction,
+        // 发起方 run id：前端据此把子子任务挂到父委托卡内（顶层为空）
+        parentRunId: run.parentRunId,
       })
       this.settle(runId, 'cancelled', { error: '已取消', summary: '' })
       return
@@ -1127,6 +1144,8 @@ class SubAgentRuntime {
       targetAvatarType: run.employeeAvatarType,
       instruction: run.instruction,
       followupOfRunId: run.followupOfRunId,
+      // 发起方 run id：前端据此把子子任务挂到父委托卡内（顶层为空）
+      parentRunId: run.parentRunId,
     })
 
     /** 单轮流式执行（完成门重试会多次调用）；callbacks 闭包复用 finalAnswer 等累积状态 */
@@ -1140,6 +1159,8 @@ class SubAgentRuntime {
           delegationDepth: entry.delegationDepth + 1,
           delegationChain: [...entry.delegationChain, entry.parentEmployeeId],
           parentSessionId,
+          // 根会话逐级透传：子会话再派发时仍以根会话作为事件路由键，避免嵌套子任务事件被前端丢弃
+          rootSessionId: parentSessionId,
           delegationId: runId,
           abortSignal: entry.controller.signal,
           enableThinking: entry.enableThinking,
@@ -1215,12 +1236,17 @@ class SubAgentRuntime {
 
     try {
       const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
-      if (!resolved) {
+      const hasRunOverride = !!(run.providerId && run.modelId)
+      if (!resolved && !hasRunOverride) {
         subError = '无可用 LLM 提供商（请在设置中配置默认模型）'
       } else {
-        let { providerId, modelId } = resolved
-        // 临时角色可选模型覆盖：providerId+modelId 成对才生效（无效则继承主管解析结果）
-        if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
+        let providerId = resolved?.providerId || ''
+        let modelId = resolved?.modelId || ''
+        // 模型覆盖优先级：运行级显式覆盖（模板任务节点/运行指定）> 临时角色覆盖 > 全局默认
+        if (hasRunOverride) {
+          providerId = run.providerId!
+          modelId = run.modelId!
+        } else if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
           providerId = run.ephemeral.providerId
           modelId = run.ephemeral.modelId
         }

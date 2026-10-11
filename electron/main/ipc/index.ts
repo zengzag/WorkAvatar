@@ -19,6 +19,7 @@ import DatabaseService from '../services/database.service'
 import EmployeeProfilingService from '../services/employee-profiling.service'
 import SkillRegistryService from '../services/skill-registry.service'
 import EmployeeAgentService from '../services/employee-agent.service'
+import SubAgentProfileService from '../services/sub-agent-profile.service'
 import EmployeeExportService from '../services/employee-export.service'
 import EmployeeMemoryService from '../services/employee-memory.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
@@ -47,6 +48,9 @@ export function registerIpcHandlers() {
   registerAttachmentHandlers()
   registerSnapshotHandlers()
   registerSubagentHandlers()
+
+  // 播种内置子智能体模板（explore/general）：幂等刷新，作为开箱即用的委托执行者
+  SubAgentProfileService.getInstance().seedBuiltinProfiles()
 
   // 附件后台维护（存量 base64 迁移为附件引用 + 孤儿文件 GC，异步不阻塞启动）
   AttachmentService.getInstance().startupMaintenance()

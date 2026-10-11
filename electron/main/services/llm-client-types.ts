@@ -1,5 +1,5 @@
 import { isMainThread } from 'worker_threads'
-import type { LLMModelConfig } from '../../shared/types'
+import type { LLMModelConfig, LLMApiFormat } from '../../shared/types'
 
 /** LLM 提供商配置（数据库行映射） */
 export interface LLMProviderConfig {
@@ -7,6 +7,7 @@ export interface LLMProviderConfig {
   name: string
   provider_type: string
   base_url?: string
+  api_format?: LLMApiFormat
   model: string
   embedding_model?: string
   api_key?: string

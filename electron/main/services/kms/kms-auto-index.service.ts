@@ -240,6 +240,7 @@ class KMSAutoIndexService {
             }
             searchEngine.indexFileTitle(file.id, file.fileName, file.filePath)
             if (parseResult.fullText) {
+              searchEngine.indexFileDocument(file.id, file.fileName, file.filePath, parseResult.fullText)
               searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
               indexManager.saveLightSummary(file.id, file.fileName, parseResult.fullText)
             }

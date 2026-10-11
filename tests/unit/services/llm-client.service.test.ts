@@ -12,7 +12,7 @@ function createDb(): DatabaseSync {
   const db = new DatabaseSync(':memory:')
   db.exec(`
     CREATE TABLE llm_providers (
-      id TEXT PRIMARY KEY, name TEXT, provider_type TEXT, base_url TEXT, model TEXT,
+      id TEXT PRIMARY KEY, name TEXT, provider_type TEXT, base_url TEXT, api_format TEXT, model TEXT,
       embedding_model TEXT, temperature REAL, max_tokens INTEGER, timeout_ms INTEGER,
       extra_headers_json TEXT, extra_body_json TEXT, is_default INTEGER,
       models_json TEXT, created_at INTEGER
@@ -84,7 +84,7 @@ describe('getProviderConfig', () => {
       api_key: 'sk-test',
       embedding_model: 'text-embedding-3-small',
       temperature: 0.7,
-      max_tokens: 48 * 1024,
+      max_tokens: 32 * 1024,
       timeout_ms: 60000,
     })
   })

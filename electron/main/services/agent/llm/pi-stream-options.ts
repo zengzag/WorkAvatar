@@ -1,13 +1,14 @@
 import type { ThinkingLevel } from '../../../../shared/types'
 import { getProviderExtraRequestHeaders, resolveReasoningEffort } from './provider-compat'
+import { normalizeApiFormat } from './api-format'
 
 /**
- * 统一构造 pi-ai openai-completions stream 的 options（单一入口）。
+ * 统一构造 pi-ai stream 的 options（单一入口，按接口形式分派）。
  * PiAIProvider 与 pi-agent-adapter 共用，集中处理：
- * - 思考强度（reasoningEffort，含 alwaysReasoning provider 的兜底）
+ * - 思考强度（reasoningEffort / Anthropic thinkingEnabled+effort）
  * - 会话亲和 / 供应商附加请求头（headers）
  * - 采样参数（top_p / frequency_penalty / presence_penalty → samplingParams）
- * - 思考预算（thinkingBudget → thinkingBudgets）
+ * - 思考预算（thinkingBudget → thinkingBudgets / Anthropic thinkingBudgetTokens）
  * - 供应商附加请求体（extraBody → onPayload）
  * - 请求超时（timeoutMs）
  * 避免两条链路各自拼装导致行为漂移。
@@ -15,6 +16,8 @@ import { getProviderExtraRequestHeaders, resolveReasoningEffort } from './provid
 export interface PiStreamOptionsInput {
   providerType?: string
   modelId?: string
+  /** 接口形式：chat-completions（默认）/ anthropic-messages / openai-responses */
+  apiFormat?: string
   apiKey?: string
   sessionId?: string
   signal?: AbortSignal
@@ -39,6 +42,13 @@ export interface PiStreamOptionsInput {
 }
 
 export function buildPiStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
+  const apiFormat = normalizeApiFormat(input.apiFormat)
+  if (apiFormat === 'anthropic-messages') return buildAnthropicStreamOptions(input)
+  if (apiFormat === 'openai-responses') return buildOpenAIResponsesStreamOptions(input)
+  return buildOpenAICompletionsStreamOptions(input)
+}
+
+function buildOpenAICompletionsStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
   const samplingParams: Record<string, unknown> = {}
   if (input.topP !== undefined) samplingParams.top_p = input.topP
   if (input.frequencyPenalty !== undefined) samplingParams.frequency_penalty = input.frequencyPenalty
@@ -74,3 +84,52 @@ export function buildPiStreamOptions(input: PiStreamOptionsInput): Record<string
     ...(input.extraBody ? { onPayload: (payload: any) => ({ ...payload, ...input.extraBody }) } : {}),
   }
 }
+
+/**
+ * Anthropic Messages 适配：pi-ai options 与 OpenAI 形态不同。
+ * 思考通过 thinkingEnabled + effort / thinkingBudgetTokens 驱动；
+ * 不发送 top_p 等采样参数（Anthropic 无对应字段）。
+ */
+function buildAnthropicStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
+  const reasoning = resolveReasoningEffort(input.providerType, input.modelId, input.enableThinking)
+  // Anthropic 不使用 OpenAI 会话亲和路由头，仅透传供应商显式附加头
+  const headers: Record<string, string> = { ...(input.extraHeaders || {}) }
+
+  return {
+    ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+    ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    thinkingEnabled: !!reasoning,
+    ...(reasoning === 'low' || reasoning === 'medium' || reasoning === 'high' ? { effort: reasoning } : {}),
+    ...(input.thinkingBudget !== undefined ? { thinkingBudgetTokens: input.thinkingBudget } : {}),
+    ...(input.timeoutMs !== undefined && !input.streaming ? { timeoutMs: input.timeoutMs } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(input.extraBody ? { onPayload: (payload: any) => ({ ...payload, ...input.extraBody }) } : {}),
+  }
+}
+
+/**
+ * OpenAI Responses 适配：reasoningEffort 直接驱动思考；
+ * 仅透传 top_p（frequency_penalty / presence_penalty 非 Responses 字段）。
+ */
+function buildOpenAIResponsesStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
+  const reasoningEffort = resolveReasoningEffort(input.providerType, input.modelId, input.enableThinking)
+  const routingHeaders = getProviderExtraRequestHeaders(input.providerType, input.modelId, input.sessionId)
+  const headers: Record<string, string> = { ...(routingHeaders || {}), ...(input.extraHeaders || {}) }
+
+  return {
+    ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+    ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
+    ...(input.topP !== undefined ? { samplingParams: { top_p: input.topP } } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.timeoutMs !== undefined && !input.streaming ? { timeoutMs: input.timeoutMs } : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    ...(input.extraBody ? { onPayload: (payload: any) => ({ ...payload, ...input.extraBody }) } : {}),
+  }
+}
+

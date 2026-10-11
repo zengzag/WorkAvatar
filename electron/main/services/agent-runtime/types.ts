@@ -49,6 +49,9 @@ export interface AgentRun {
   /** 临时子智能体规格（存在时 run 期注册 inline 员工、结束下线，落库支持追问重建） */
   ephemeral?: EphemeralSubAgentSpec
   lifecycle?: AgentRunLifecycle
+  /** 本次运行的模型覆盖（providerId+modelId 成对生效）；模板任务节点/运行级指定，优先于临时角色与全局默认 */
+  providerId?: string
+  modelId?: string
   /** 最近一次事件时间（Unix ms），供 liveness 派生（运行中才有效） */
   lastActivityAt?: number
   /** 后台派发：立即返回 runId，完成后向主管投递通知消息 */
@@ -76,6 +79,9 @@ export interface LaunchSubAgentInput {
   onEvent?: (eventType: string, data: any) => void
   /** 临时子智能体规格：与 targetEmployeeId 二选一（优先，targetEmployeeId 忽略） */
   ephemeral?: EphemeralSubAgentSpec
+  /** 模型覆盖（providerId+modelId 成对生效）；优先于临时角色与全局默认模型 */
+  providerId?: string
+  modelId?: string
   /** 后台派发：立即返回，结束后通知 */
   runInBackground?: boolean
   /** 结构化输出契约（JSON Schema 对象，阶段四） */

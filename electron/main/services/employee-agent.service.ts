@@ -14,14 +14,16 @@ import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKM
 import {
   listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool, cancelSubagentTool,
   readRunNotificationsTool, taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
+  applyDelegationEnums,
 } from './agent/tools/subagent-tools'
+import SubAgentProfileService from './sub-agent-profile.service'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import { createMemorySearchTool } from './agent/tools/memory-search.tool'
 import { MEMORY_BOUND_TOOL_IDS } from './employee-memory-types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
-import { parseEmployeeDelegation } from '../../shared/types'
+import { parseEmployeeDelegation, SETTING_DELEGATION_ENABLED } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
@@ -232,12 +234,24 @@ class EmployeeAgentService {
       ? this.memoryService.buildInjectionMemoryPrompt(employeeId)
       : undefined
 
-    // 委托能力：由员工委托设置驱动（不再是可配置工具）。
-    // 开启委托即注册委托类工具（允许 targetIds 为空：此时可派发临时子智能体/模板）。
-    // targets 过滤：不存在的员工 + 明确拒绝被委托的员工（运行时 launchSubAgent 仍会做最终校验）。
+    // 委托能力：默认开启（全局开关 delegation_enabled + 员工 delegation_json 双重控制）。
+    // targetIds 仅约束「委托给已有员工」；未选择目标时仍可派发临时子智能体/子智能体模板。
+    // 关闭条件：全局开关关闭 / 员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）
+    //          / 内置与插件员工（专家执行者定位，默认不扮演主管；其委托设置本身也不可编辑）
     const delegation = parseEmployeeDelegation(emp.delegation_json)
-    const delegationTargets = delegation.enabled && delegation.targetIds.length > 0
-      ? this.queryDelegationTargets(delegation.targetIds)
+    const isSubAgentId = emp.id.startsWith('inline:')
+    const isRegisteredId = emp.id.startsWith('builtin:') || emp.id.startsWith('plugin:')
+    const delegationEnabled = delegation.enabled
+      && !minimalMode
+      && this.isDelegationGloballyEnabled()
+      && !isSubAgentId
+      && !isRegisteredId
+    const delegationTargets = delegationEnabled
+      ? this.queryDelegationTargets(delegation.targetIds, emp.id)
+      : []
+    // 可复用子智能体模板（内置 explore/general + 用户自建）：作为「预置执行者」候选，随稳定上下文与工具枚举下发
+    const delegationProfiles = delegationEnabled
+      ? SubAgentProfileService.getInstance().list().map(p => ({ id: p.id, name: p.name, description: p.description }))
       : []
 
     const agentConfig: EmployeeAgentConfig = {
@@ -249,6 +263,7 @@ class EmployeeAgentService {
       apiKey: config.api_key,
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
+      apiFormat: config.api_format,
       supportsImageInput: resolveImageSupport(config.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,
@@ -267,7 +282,8 @@ class EmployeeAgentService {
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       delegationTargets,
-      delegationEnabled: delegation.enabled === true,
+      delegationProfiles,
+      delegationEnabled,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
         // 稳定不变的环境信息（系统环境）保留在 system prompt；
@@ -309,15 +325,30 @@ class EmployeeAgentService {
     const toolModes = this.getEmployeeToolModes(employeeId, memoryEnabled)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
+    // 子会话执行协议工具（台账收尾 + 结构化上报）：与「能否作为主管委托」无关，
+    // 只要当前作为被委托的子会话执行就必须注册——运行时会强制子会话调用它们
+    // （台账收尾 task_item_update、output_schema 的 submit_structured_result），
+    // 缺失会让子会话找不到工具、无法收尾。受限白名单角色（inline/内置/插件员工）同样需要。
+    const isSubSession = !!interactionContext.getStore()?.delegationId
+    const subSessionProtocolTools = [taskItemUpdateTool, taskItemListTool, submitStructuredResultTool]
+
     // 委托类工具（串行委托 + 并行派发 + 追问 + 运行观测/台账/结构化上报）：
-    // 开启委托即注册（targets 可为空，此时支持临时子智能体/模板），不走 employee_tools 三态配置
-    if (delegation.enabled) {
+    // 默认注册（见上方 delegationEnabled），不走 employee_tools 三态配置。
+    // 委托目标/模板以 enum 注入工具 schema，使模型无需先读上下文即可内省可用 id。
+    if (delegationEnabled) {
+      const enumTargets = delegationTargets.map(t => ({ id: t.id, name: t.name }))
+      const enumProfiles = delegationProfiles.map(p => ({ id: p.id, name: p.name }))
       agent.registerTools([
-        delegateTool, followupTool, launchAgentsTool, awaitAgentsTool,
+        applyDelegationEnums(delegateTool, enumTargets, enumProfiles),
+        applyDelegationEnums(launchAgentsTool, enumTargets, enumProfiles),
+        followupTool, awaitAgentsTool,
         listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool,
         cancelSubagentTool, readRunNotificationsTool,
-        taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
+        taskItemCreateTool, ...subSessionProtocolTools,
       ])
+    } else if (isSubSession) {
+      // 不具备委托能力但仍作为子会话执行（受限/内置/插件子智能体）：仅补执行协议工具
+      agent.registerTools(subSessionProtocolTools)
     }
 
     // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置
@@ -432,33 +463,40 @@ class EmployeeAgentService {
   }
 
   /**
-   * 查询可委托员工列表（按员工委托设置 targetIds 过滤）：
-   * 剔除不存在的员工与明确拒绝被委托（acceptDelegation=false）的员工，按名称排序保持提示词稳定。
+   * 查询可委托员工列表（供 [DELEGATION] 段与工具 schema 枚举下发）：
+   * - targetIds 非空 → 白名单模式，仅返回其中的员工；
+   * - targetIds 为空 → 不限制模式，返回全部可被委托的员工（与运行时校验一致）。
+   * 统一过滤：排除自己、明确拒绝被委托（acceptDelegation=false）、已禁用员工；按名称排序保持提示词稳定。
    */
-  private queryDelegationTargets(targetIds: string[]): NonNullable<EmployeeAgentConfig['delegationTargets']> {
-    if (targetIds.length === 0) return []
-    const placeholders = targetIds.map(() => '?').join(',')
-    const rows = this.db.getDb().prepare(
-      `SELECT id, name, description, profile_json, delegation_json FROM employees WHERE id IN (${placeholders})`
-    ).all(...targetIds) as Array<{ id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }>
-    const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
-    for (const r of rows) {
-      if (!parseEmployeeDelegation(r.delegation_json).acceptDelegation) continue
-      // 已禁用的员工不参与委托
-      if (!EmployeeRegistryService.getInstance().isEnabled(r.id)) continue
-      let role: string | undefined
-      try { role = r.profile_json ? JSON.parse(r.profile_json)?.roleName : undefined } catch { /* ignore */ }
-      out.push({ id: r.id, name: r.name, description: r.description, role })
+  private queryDelegationTargets(targetIds: string[], selfEmployeeId: string): NonNullable<EmployeeAgentConfig['delegationTargets']> {
+    const cols = 'id, name, description, profile_json, delegation_json'
+    const candidates = new Map<string, { id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }>()
+    let rows: Array<{ id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }> = []
+    try {
+      rows = (targetIds.length > 0
+        ? this.db.getDb().prepare(`SELECT ${cols} FROM employees WHERE id IN (${targetIds.map(() => '?').join(',')})`).all(...targetIds)
+        : this.db.getDb().prepare(`SELECT ${cols} FROM employees`).all()) as typeof rows
+    } catch { /* DB 异常时不注入委托目标 */ }
+    for (const r of rows) candidates.set(r.id, r)
+
+    // 注册员工（内置/插件）：白名单模式仅补指定 id；不限制模式补全部（DB 影子记录已存在时以 DB 行为准）
+    const registered = targetIds.length > 0
+      ? targetIds.map(id => EmployeeRegistryService.getInstance().getRegistered(id)).filter((r): r is NonNullable<typeof r> => !!r)
+      : EmployeeRegistryService.getInstance().listRegistered()
+    for (const reg of registered) {
+      if (candidates.has(reg.id)) continue
+      candidates.set(reg.id, { id: reg.id, name: reg.name, description: reg.description, profile_json: reg.profile_json, delegation_json: null })
     }
-    // 注册员工（内置/插件）无 DB 记录：委托目标回退注册表（接受委托默认开启；已禁用员工不参与）
-    const foundIds = new Set(rows.map(r => r.id))
-    for (const id of targetIds) {
-      if (foundIds.has(id)) continue
-      const reg = EmployeeRegistryService.getInstance().getRegistered(id)
-      if (!reg || reg.is_enabled === false) continue
+
+    const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
+    for (const c of candidates.values()) {
+      if (!c.id || c.id === selfEmployeeId) continue
+      if (!parseEmployeeDelegation(c.delegation_json).acceptDelegation) continue
+      // 已禁用的员工不参与委托
+      if (!EmployeeRegistryService.getInstance().isEnabled(c.id)) continue
       let role: string | undefined
-      try { role = reg.profile_json ? JSON.parse(reg.profile_json)?.roleName : undefined } catch { /* ignore */ }
-      out.push({ id: reg.id, name: reg.name, description: reg.description, role })
+      try { role = c.profile_json ? JSON.parse(c.profile_json)?.roleName : undefined } catch { /* ignore */ }
+      out.push({ id: c.id, name: c.name, description: c.description, role })
     }
     out.sort((a, b) => a.name.localeCompare(b.name))
     return out
@@ -508,6 +546,19 @@ class EmployeeAgentService {
       }
     }
 
+    // 工具白名单收窄（临时子智能体声明受限能力，如只读检索角色）：
+    // 白名单外一律置 off（applyToolModes 会据此移除工具），仅保留声明内的工具
+    const allowlist = EmployeeRegistryService.getInstance().getToolAllowlist(employeeId)
+    if (allowlist) {
+      const allowed = new Set(allowlist)
+      for (const id of modeMap.keys()) {
+        if (!allowed.has(id)) modeMap.set(id, 'off')
+      }
+      for (const id of allowlist) {
+        if (modeMap.has(id)) modeMap.set(id, 'on')
+      }
+    }
+
     const rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
@@ -525,6 +576,18 @@ class EmployeeAgentService {
       }
     }
     return modeMap
+  }
+
+  /** 全局委托开关（settings KV delegation_enabled；未设置视为开启） */
+  private isDelegationGloballyEnabled(): boolean {
+    try {
+      const row = this.db.getDb()
+        .prepare('SELECT value FROM settings WHERE key = ?')
+        .get(SETTING_DELEGATION_ENABLED) as { value?: string } | undefined
+      return row?.value !== '0' && row?.value !== 'false'
+    } catch {
+      return true
+    }
   }
 
   /** 按员工工具模式过滤并应用 onDemand 标志（off 移除，on_demand 标记按需，on 常驻） */
@@ -631,11 +694,21 @@ class EmployeeAgentService {
       // 插件注入的 system 只作用于本次 run（systemPromptOverride），不写 agent 缓存：
       // 否则无 DB 缓存的新会话会把插件提示词当作会话提示词继续生效并持久化，永久污染会话。
       // KB 范围始终按本轮 collectionIds 更新，与是否覆盖 system 无关。
+      // 语义召回与系统提示词/迭代数解析并发：embedding 调用不串行叠加到首字延迟上；
+      // 任何失败都降级为不注入，不影响本轮对话。
+      const recalledMemoryPromise = (entry.memoryEnabled && !agent.getMinimalMode() && query.trim())
+        ? this.memoryService.buildRecalledMemoryPrompt(employee_id, query).catch(() => undefined)
+        : Promise.resolve(undefined)
+
       const systemPromptCached = system
         ? false
         : await this.loadCachedSystemPrompt(agent, conversation_id)
       this.updateKBContextForAgent(agent, collection_ids, agent.getMinimalMode())
-      const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
+      const [maxIterations, recalledMemoryPrompt] = await Promise.all([
+        this.resolveMaxIterations(provider_id, model_id),
+        recalledMemoryPromise,
+      ])
+      agent.updateRecalledMemoryPrompt(recalledMemoryPrompt)
 
       await agent.runStream(
         {

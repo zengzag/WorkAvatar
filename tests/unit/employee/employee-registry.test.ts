@@ -343,6 +343,27 @@ describe('employee-registry / DBEmployee 与另存副本', () => {
     expect(service.toDBEmployee('builtin:knowledge-base')!.memory_enabled).toBe(0)
   })
 
+  it('toInlineRegisteredEmployee：声明 tools 时生成工具白名单（收窄），未声明则不受限', () => {
+    const restricted = service.toInlineRegisteredEmployee('inline:sub-explore-abc', {
+      name: 'explore', systemPrompt: 'p', tools: ['file_read', 'web_search'],
+    })
+    expect(restricted.toolAllowlist).toEqual(['file_read', 'web_search'])
+    expect(restricted.defaultTools).toEqual(['file_read', 'web_search'])
+
+    const full = service.toInlineRegisteredEmployee('inline:sub-general-abc', { name: 'general', systemPrompt: 'p' })
+    expect(full.toolAllowlist).toBeUndefined()
+  })
+
+  it('getToolAllowlist：仅声明工具的注册员工返回白名单，其余返回 null', () => {
+    const emp = service.toInlineRegisteredEmployee('inline:sub-explore-xyz', {
+      name: 'explore', systemPrompt: 'p', tools: ['file_read'],
+    })
+    service.registerInlineEmployee(emp)
+    expect(service.getToolAllowlist('inline:sub-explore-xyz')).toEqual(['file_read'])
+    expect(service.getToolAllowlist('builtin:knowledge-base')).toBeNull()
+    expect(service.getToolAllowlist('unknown')).toBeNull()
+  })
+
   it('duplicateAsUser 名称追加「（副本）」后缀', () => {
     const copy = service.duplicateAsUser('builtin:plugin-dev') as any
     expect(copy.name).toBe('插件开发助手（副本）')

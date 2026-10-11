@@ -103,7 +103,7 @@ describe('buildDelegationPrompt 补充分支', () => {
       { id: 'e1', name: 'A' },
       { id: 'e1', name: 'A' },
     ])!
-    expect(p.split('\n').filter(l => l.startsWith('- A '))).toHaveLength(2)
+    expect(p.split('\n').filter(l => l.startsWith('- A (id='))).toHaveLength(2)
   })
 })
 

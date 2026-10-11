@@ -11,7 +11,7 @@ import { SecureKeyStorage } from './secure-key-storage'
 const logger = createLogger('LLMClient')
 
 const ALLOWED_PROVIDER_COLUMNS = [
-  'name', 'provider_type', 'base_url', 'model',
+  'name', 'provider_type', 'base_url', 'api_format', 'model',
   'embedding_model', 'temperature', 'max_tokens',
   'timeout_ms', 'extra_headers_json', 'extra_body_json',
   'is_default', 'models_json',
@@ -47,11 +47,12 @@ class LLMClientService {
       name: row.name,
       provider_type: row.provider_type,
       base_url: row.base_url,
+      api_format: row.api_format || 'chat-completions',
       model: row.model,
       embedding_model: row.embedding_model || 'text-embedding-3-small',
       api_key: apiKey || undefined,
       temperature: row.temperature ?? 0.7,
-      max_tokens: row.max_tokens ?? 48 * 1024,
+      max_tokens: row.max_tokens ?? 32 * 1024,
       timeout_ms: row.timeout_ms ?? 60000,
       extra_headers_json: row.extra_headers_json,
       extra_body_json: row.extra_body_json,
@@ -87,7 +88,15 @@ class LLMClientService {
 
     try {
       const headers = buildHeaders(config)
-      const response = await fetch(`${baseURL}/models`, {
+      // anthropic-messages 使用 x-api-key 认证，且 base 不含 /v1（SDK 追加 /v1/messages）
+      let url = `${baseURL}/models`
+      if (config.api_format === 'anthropic-messages') {
+        url = `${baseURL.replace(/\/v1\/?$/i, '')}/v1/models`
+        delete headers['Authorization']
+        if (config.api_key) headers['x-api-key'] = config.api_key
+        headers['anthropic-version'] = '2023-06-01'
+      }
+      const response = await fetch(url, {
         method: 'GET',
         headers,
         signal: controller.signal,
@@ -129,6 +138,7 @@ class LLMClientService {
     name: string
     provider_type: string
     base_url?: string
+    api_format?: string
     model: string
     embedding_model?: string
     api_key?: string
@@ -154,17 +164,18 @@ class LLMClientService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO llm_providers (id, name, provider_type, base_url, model, embedding_model, temperature, max_tokens, timeout_ms, extra_headers_json, extra_body_json, is_default, models_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO llm_providers (id, name, provider_type, base_url, api_format, model, embedding_model, temperature, max_tokens, timeout_ms, extra_headers_json, extra_body_json, is_default, models_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       params.name,
       params.provider_type,
       params.base_url || null,
+      params.api_format || 'chat-completions',
       params.model,
       params.embedding_model || 'text-embedding-3-small',
       params.temperature ?? 0.7,
-      params.max_tokens ?? 48 * 1024,
+      params.max_tokens ?? 32 * 1024,
       params.timeout_ms ?? 60000,
       params.extra_headers_json || null,
       params.extra_body_json || null,

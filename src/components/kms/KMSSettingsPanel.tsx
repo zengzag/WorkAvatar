@@ -52,7 +52,7 @@ interface KMSSettingsPanelProps {
   onSaveSettings: (params: {
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
+    searchParams?: { resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
     autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
   dirs: IndexDir[]
@@ -97,8 +97,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [embeddingModelConfig, setEmbeddingModelConfig] = useState<KMSModelConfig | null>(settings.embeddingModel)
   const [summaryModelConfig, setSummaryModelConfig] = useState<KMSModelConfig | null>(settings.summaryModel)
-  const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 5)
-  const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
   const [resultLimit, setResultLimit] = useState<number>(settings.searchParams?.resultLimit ?? 100)
   const [autoReparseHotData, setAutoReparseHotData] = useState<boolean>(settings.searchParams?.autoReparseHotData ?? true)
   const [enableKnowledgeCards, setEnableKnowledgeCards] = useState<boolean>(settings.searchParams?.enableKnowledgeCards ?? true)
@@ -119,8 +117,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   useEffect(() => {
     setEmbeddingModelConfig(settings.embeddingModel)
     setSummaryModelConfig(settings.summaryModel)
-    setMaxRounds(settings.searchParams?.maxRounds ?? 5)
-    setTopK(settings.searchParams?.topK ?? 10)
     setResultLimit(settings.searchParams?.resultLimit ?? 100)
     setAutoReparseHotData(settings.searchParams?.autoReparseHotData ?? true)
     setEnableKnowledgeCards(settings.searchParams?.enableKnowledgeCards ?? true)
@@ -166,11 +162,11 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     }
     const timer = setTimeout(() => {
       onSaveSettings({
-        searchParams: { maxRounds, topK, resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards },
+        searchParams: { resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards },
       })
     }, 500)
     return () => clearTimeout(timer)
-  }, [maxRounds, topK, resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards, onSaveSettings])
+  }, [resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards, onSaveSettings])
 
   // 自动保存：embedding 最大字符数变化后延迟 500ms 保存
   useEffect(() => {
@@ -302,38 +298,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const renderParamsTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div>
-            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.maxRounds')}</Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.maxRoundsDesc')}</Text>
-          </div>
-          <InputNumber
-            value={maxRounds}
-            onChange={v => setMaxRounds(v || 5)}
-            min={1}
-            max={20}
-            style={{ width: 120 }}
-          />
-        </div>
-
-        <Divider style={{ margin: '12px 0' }} />
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.topK')}</Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.topKDesc')}</Text>
-          </div>
-          <InputNumber
-            value={topK}
-            onChange={v => setTopK(v || 10)}
-            min={3}
-            max={100}
-            style={{ width: 120 }}
-          />
-        </div>
-
-        <Divider style={{ margin: '12px 0' }} />
-
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.resultLimit')}</Text>

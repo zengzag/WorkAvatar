@@ -31,6 +31,7 @@ class LoggerBackend {
   private stream: fs.WriteStream | null = null
   private logFilePath: string | null = null
   private initialized = false
+  private dataDir: string | null = null
   private readonly MAX_LOG_AGE_DAYS = 14
   private readonly APP_LOG_SUBDIR = path.join('.log', 'app')
 
@@ -55,6 +56,7 @@ class LoggerBackend {
       if (!isMainThread && (workerData as any)?.logFilePath) {
         this.logFilePath = (workerData as any).logFilePath as string
       } else if (dataDir) {
+        this.dataDir = dataDir
         const logDir = path.join(dataDir, this.APP_LOG_SUBDIR)
         if (!fs.existsSync(logDir)) {
           fs.mkdirSync(logDir, { recursive: true })
@@ -141,6 +143,27 @@ class LoggerBackend {
         this.stream.end()
       } catch {}
       this.stream = null
+    }
+  }
+
+  /** 关闭当前日志流以释放文件句柄（清空日志前调用），下次写入会用 init 重新打开 */
+  closeStream(): void {
+    if (this.stream) {
+      try {
+        this.stream.end()
+      } catch {}
+      this.stream = null
+    }
+    this.logFilePath = null
+    this.initialized = false
+  }
+
+  /** 重新打开日志文件（清空日志后调用），未持有 dataDir 时按需懒初始化 */
+  reopen(): void {
+    if (this.dataDir) {
+      this.init(this.dataDir)
+    } else {
+      this.initLazy()
     }
   }
 

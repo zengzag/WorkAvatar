@@ -150,7 +150,13 @@ const DelegationSegmentInner: React.FC<{
         </Tooltip>
       )}
       {instruction && (
-        <Tooltip title={instruction}>
+        <Tooltip
+          title={instruction}
+          styles={{
+            root: { maxWidth: 520 },
+            container: { maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+          }}
+        >
           <Text style={{
             fontSize: 11,
             color: token.colorTextQuaternary,
@@ -174,11 +180,6 @@ const DelegationSegmentInner: React.FC<{
             />
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {seg.runGroupIndex === 0 && seg.parallelTotal && seg.parallelTotal > 1 && (
-          <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-            {t('workbench.runGroupTotal', { count: seg.parallelTotal })}
-          </Text>
-        )}
         {duration !== null && (
           <Text style={{ fontSize: 11, color: token.colorTextQuaternary, display: 'flex', alignItems: 'center', gap: 3 }}>
             <ClockCircleOutlined style={{ fontSize: 10 }} />

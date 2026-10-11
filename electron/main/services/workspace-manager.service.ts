@@ -6,6 +6,7 @@ import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import EmployeeRegistryService from './employee-registry.service'
+import SkillRegistryService from './skill-registry.service'
 import { generateId, generateShortId, extractMessagePreview, moveToTrash } from './common-utils'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -96,9 +97,16 @@ class WorkspaceManagerService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, workspace_path, name, description, rules, profile_json, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'default', 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, workspace_path, name, description, rules, profile_json, avatar_type, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'default', 1, 0, 0, 1, ?, ?)
     `).run(employeeId, workspacePath, name, description, rules, profileJson, now, now)
+
+    // 新员工默认开启内置 office 技能（pptx/docx/xlsx）
+    try {
+      SkillRegistryService.getInstance().assignDefaultSkillsToEmployee(employeeId, ['pptx', 'docx', 'xlsx'])
+    } catch (err: any) {
+      logger.warn(`assign default skills failed: ${err?.message || err}`)
+    }
 
     this.broadcastEmployeeChanged()
 
@@ -355,19 +363,33 @@ class WorkspaceManagerService {
     return conv
   }
 
-  /** 在员工工作区下创建任务独立目录（YYYYMMDD_HHmmss，碰撞时追加序号） */
+  /**
+   * 计算任务独立目录路径（YYYYMMDD_HHmmss，碰撞时追加序号），但不实际创建目录。
+   * 工作区懒创建：只有真正写入/执行（file_write / shell_exec / javascript_exec 等）时才落盘，
+   * 避免"任务从不使用工作区"却产生大量空目录；工作区路径本身仍会写入 conversations 供授权与展示使用。
+   */
   private createTaskWorkspace(employeeWorkspace: string): string {
     const ts = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     const base = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
     let dir = path.join(employeeWorkspace, base)
     let i = 1
-    while (fs.existsSync(dir)) {
+    while (this.isTaskWorkspaceTaken(dir)) {
       dir = path.join(employeeWorkspace, `${base}_${i}`)
       i++
     }
-    fs.mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  /** 任务工作区目录是否已被占用：目录已存在或已分配给某个会话（懒创建下目录可能尚未落盘，需查 DB 兜底） */
+  private isTaskWorkspaceTaken(dir: string): boolean {
+    if (fs.existsSync(dir)) return true
+    try {
+      const row = this.db.getDb().prepare('SELECT 1 FROM conversations WHERE workspace_path = ? LIMIT 1').get(dir)
+      return !!row
+    } catch {
+      return false
+    }
   }
 
   /** 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变） */

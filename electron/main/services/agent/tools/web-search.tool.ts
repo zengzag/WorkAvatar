@@ -1,5 +1,5 @@
 import type { ToolDefinition } from './types'
-import { internetSearchService, SearchEngine } from '../../internet-search.service'
+import { internetSearchService, SearchEngine, SearchResult } from '../../internet-search.service'
 import DatabaseService from '../../database.service'
 
 const SUPPORTED_ENGINES: SearchEngine[] = ['google', 'bing', 'baidu', 'duckduckgo']
@@ -67,7 +67,7 @@ export const webSearchTool: ToolDefinition = {
 
       const preferredEngine = (args.engine as SearchEngine) || getDefaultEngine()
 
-      let results = null
+      let results: SearchResult[] = []
       let usedEngine: SearchEngine = preferredEngine
       let lastError: string | null = null
 
@@ -75,12 +75,16 @@ export const webSearchTool: ToolDefinition = {
 
       for (const engine of engineOrder) {
         try {
-          results = await internetSearchService.search(query, engine, count)
-          usedEngine = engine
-          break
+          const found = await internetSearchService.search(query, engine, count)
+          lastError = null
+          // 结果为空也继续降级：反爬/验证页会返回空，而非抛错
+          if (found && found.length > 0) {
+            results = found
+            usedEngine = engine
+            break
+          }
         } catch (err: any) {
           lastError = err.message || String(err)
-          continue
         }
       }
 

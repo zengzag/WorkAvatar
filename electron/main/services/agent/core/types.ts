@@ -55,6 +55,8 @@ export interface AgentConfig {
   apiKey?: string
   baseUrl?: string
   providerType?: string
+  /** 接口形式：chat-completions（默认）/ anthropic-messages / openai-responses */
+  apiFormat?: string
   /** 模型是否支持图片（视觉）输入；由 provider 预设 + 模型设置 supports_image_input 解析 */
   supportsImageInput?: boolean
   enableThinking?: ThinkingLevel

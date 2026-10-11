@@ -1,4 +1,8 @@
-import { STALE_MEMORY_DAYS } from './employee-memory-types'
+import {
+  STALE_MEMORY_DAYS,
+  MEMORY_CONSOLIDATION_TARGET_COUNT,
+  MEMORY_CONSOLIDATION_TARGET_CHARS,
+} from './employee-memory-types'
 
 /** 构建记忆提取 prompt
  *
@@ -112,7 +116,7 @@ export function buildConsolidationPrompt(memoriesText: string): string {
 - 同一类别多个相似偏好合并为一条。
 - 写法规范：偏好用声明式（"用户偏好X"），硬约束/踩坑可用命令式（"不要用X替代Y"）。
 - 重要性评估：critical=硬性约束/关键踩坑/核心角色特征；normal=常规偏好/稳定环境事实；low=次要信息。
-- 总量目标 ≤30 条 / 3000 字符，请主动删除低价值条目腾出空间。
+- 总量目标 ≤${MEMORY_CONSOLIDATION_TARGET_COUNT} 条 / ${MEMORY_CONSOLIDATION_TARGET_CHARS} 字符，请主动删除低价值条目腾出空间。
 
 ${memoriesText}
 

@@ -36,6 +36,8 @@ export class GenericAgent extends BaseAgent {
   protected skillsPrompt: string | undefined
 
   private memoryPrompt: string | undefined
+  /** 本轮按用户问题语义召回的补充记忆块（每轮重建，与 memoryPrompt 的常驻块分工） */
+  private recalledMemoryPrompt: string | undefined
   private kbContextPrompt: string | undefined
   private workspaceContextPrompt: string | undefined
   private taskTimePrompt: string | undefined
@@ -90,6 +92,10 @@ export class GenericAgent extends BaseAgent {
 
   getMemoryPrompt(): string | undefined {
     return this.memoryPrompt
+  }
+
+  updateRecalledMemoryPrompt(prompt: string | undefined): void {
+    this.recalledMemoryPrompt = prompt
   }
 
   updateWorkspaceContextPrompt(prompt: string | undefined): void {
@@ -211,6 +217,9 @@ export class GenericAgent extends BaseAgent {
    * 稳定能力块（冻结后字节不变）：技能清单 + 子类追加的 Capabilities/Delegation。
    */
   private getOrBuildStableContent(useSkills: boolean): string | undefined {
+    // 极简模式：不传工具、不注入任何稳定能力块（技能清单 / Capabilities / Delegation），
+    // 退化为仅基础系统提示词的纯对话，任何新增能力段都不得泄漏到该模式
+    if (this.minimalMode) return undefined
     if (this.cachedStableContent !== undefined) return this.cachedStableContent
     const content = buildStableContextMessageContent({
       skillsPrompt: useSkills ? this.skillsPrompt : undefined,
@@ -236,6 +245,7 @@ export class GenericAgent extends BaseAgent {
       workspaceContextPrompt: this.workspaceContextPrompt,
       taskTimePrompt: this.taskTimePrompt,
       memoryPrompt: this.memoryPrompt,
+      recalledMemoryPrompt: this.recalledMemoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
     })
 

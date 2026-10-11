@@ -14,6 +14,8 @@ import {
   MEMORY_MAX_CHARS,
   MEMORY_MAX_COUNT,
   MEMORY_CONTENT_MAX_CHARS,
+  MEMORY_CONSOLIDATION_TARGET_COUNT,
+  MEMORY_CONSOLIDATION_TARGET_CHARS,
 } from '../../../electron/main/services/employee-memory-types'
 
 describe('employee-memory-prompts / buildExtractionPrompt', () => {
@@ -70,9 +72,12 @@ describe('employee-memory-prompts / buildConsolidationPrompt', () => {
     expect(buildConsolidationPrompt('MEM')).toContain(`>${STALE_MEMORY_DAYS}天未引用`)
   })
 
-  it('总量目标与常量一致', () => {
+  it('总量目标与软目标常量一致，且低于触发阈值以留缓冲', () => {
     const p = buildConsolidationPrompt('MEM')
-    expect(p).toContain(`≤${MEMORY_MAX_COUNT} 条 / ${MEMORY_MAX_CHARS} 字符`)
+    expect(p).toContain(`≤${MEMORY_CONSOLIDATION_TARGET_COUNT} 条 / ${MEMORY_CONSOLIDATION_TARGET_CHARS} 字符`)
+    // 软目标必须低于触发阈值，否则整理后仍会立即再次触发整理
+    expect(MEMORY_CONSOLIDATION_TARGET_COUNT).toBeLessThan(MEMORY_MAX_COUNT)
+    expect(MEMORY_CONSOLIDATION_TARGET_CHARS).toBeLessThan(MEMORY_MAX_CHARS)
   })
 
   it('记忆文本原样嵌入，空文本也能生成模板', () => {

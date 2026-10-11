@@ -291,6 +291,14 @@ describe('extractMemoriesFromConversation', () => {
     expect(extracted).toHaveLength(0)
     expect(svc.listMemories('e1')).toHaveLength(0)
   })
+
+  it('LLM 输出带代码块且字符串内含换行：容错解析', async () => {
+    llmState.output = '```json\n{"memories":[{"key":"mul","topic":"t","content":"第一行\n第二行"}],"delete_keys":[],"update_memories":[],"summary":"s"}\n```'
+    const svc = EmployeeMemoryService.getInstance()
+    const extracted = await svc.extractMemoriesFromConversation('e1', messages, 'p1')
+    expect(extracted).toHaveLength(1)
+    expect(extracted[0].content).toBe('第一行\n第二行')
+  })
 })
 
 describe('consolidateMemories', () => {
@@ -323,6 +331,17 @@ describe('consolidateMemories', () => {
     const r = await svc.consolidateMemories({ scope: 'employee', employeeId: 'e1' }, 'p1')
     expect(r.deleted).toBe(1)
     expect(svc.listMemories('e1')).toHaveLength(1)
+  })
+
+  it('LLM 输出字符串内含换行：容错解析不抛错', async () => {
+    const svc = EmployeeMemoryService.getInstance()
+    svc.createMemory(base({ key: 'a', content: 'aaaa' }))
+    svc.createMemory(base({ key: 'b', content: 'bbbb' }))
+    llmState.output = '{"delete_keys":[],"merge_groups":[],"simplify_updates":[{"key":"a","content":"第一行\n第二行"}]}'
+
+    const r = await svc.consolidateMemories('e1', 'p1')
+    expect(r.simplified).toBe(1)
+    expect(svc.listMemories('e1').find(m => m.key === 'a')!.content).toBe('第一行\n第二行')
   })
 
   it('autoConsolidateIfNeeded：不需要/冷却中返回 null', async () => {

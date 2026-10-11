@@ -21,6 +21,7 @@ export const launchAgentsTool: ToolDefinition = {
   title: '并行派发子任务',
   summary: '拆解多个独立子任务并行派发，立即返回 runIds（可临时角色）',
   description: `将一个任务拆解为多个相互独立的子任务，并行派发执行。适用于需要多名执行者同时分工（如同时调研多份资料、并行生成多个文档）的复杂任务。
+适用信号：存在 2 个及以上相互独立、可并行的子任务。应一次把全部独立子任务发出（并发派发），不要逐个派发；随后用 await_agents 收拢结果。子任务之间存在依赖时改用 delegate_to_employee 串行。
 参数：
 - tasks: 子任务数组（1-${MAX_TASKS} 个），每项包含：
   - 执行者三选一：target_employee_id（已有员工，从上下文信息 [DELEGATION] 段选择）/ ephemeral_role（临时子智能体，字段同 delegate_to_employee）/ subagent_profile_id（模板 id）
@@ -29,7 +30,7 @@ export const launchAgentsTool: ToolDefinition = {
   - task_items: 可选，该子任务的台账要点（子任务需逐项收尾）
 - run_in_background: 可选，true 时全部后台执行（跳过 await 也行，完成后经 read_run_notifications 获取）
 返回：runIds 数组 + 各任务派发结果。**默认调用后立即继续**，随后用 await_agents 等待全部完成并聚合结果。
-限制：不能委托给自己；委托深度上限 3；子任务之间不应有依赖（有依赖请改用 delegate_to_employee 串行）。`,
+限制：不能委托给自己；委托深度上限 2 层（主任务→子任务→子子任务，子子任务不得再派发）；子任务之间不应有依赖（有依赖请改用 delegate_to_employee 串行）。`,
   parameters: {
     type: 'object',
     properties: {
@@ -142,9 +143,12 @@ async function handleLaunchAgents(args: Record<string, any>): Promise<any> {
       continue
     }
     const launched = runtime.launchSubAgent({
-      parentSessionId: store.sessionId,
+      // 根会话 id：嵌套层级也路由到顶层会话，前端才能看到子任务进度
+      parentSessionId: store.rootSessionId || store.sessionId,
       parentEmployeeId: store.employeeId,
       parentConversationId: store.conversationId || '',
+      // 发起方 run id（顶层会话为空）：前端据此把子子任务挂到父委托卡内
+      parentRunId: store.delegationId,
       targetEmployeeId: target.targetEmployeeId || '',
       ephemeral: target.ephemeral,
       instruction: String(task.instruction),

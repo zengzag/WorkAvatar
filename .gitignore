@@ -113,8 +113,6 @@ pnpm-lock.yaml
 # =====================================
 # OS Generated Files
 # =====================================
-# macOS AppleDouble 元数据伴生文件（exFAT/NTFS 等非 APFS 卷上系统自动生成，非源码）
-._*
 Desktop.ini
 Directory.ps1
 ehthumbs.db

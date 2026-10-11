@@ -86,7 +86,8 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
         model: values.model,
         category: 'chat' as const,
         temperature: 0.7,
-        max_tokens: 4096,
+        max_tokens: 32 * 1024,
+        context_window: 256 * 1024,
       }]
       const payload: any = {
         name: values.name,
