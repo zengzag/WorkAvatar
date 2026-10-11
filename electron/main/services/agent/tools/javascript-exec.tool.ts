@@ -5,6 +5,7 @@ import * as fs from 'fs'
 import FilePermissionService, { type ScriptConfirmInput } from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
 import { isFileDeletionCommand } from './command-analyzer'
+import { ensureDir } from '../../common-utils'
 
 /** 路径大小写是否不敏感（Windows）：授权缓存 key 需归一化；macOS/Linux 保持原样避免误匹配 */
 const PATH_CASE_INSENSITIVE = process.platform === 'win32'
@@ -546,6 +547,9 @@ export const javascriptExecTool: ToolDefinition = {
 
       const wrappedCode = `(async () => {\n${code}\n})()`
       const script = new vm.Script(wrappedCode, { filename: 'js-exec.js' })
+
+      // 工作区懒创建：脚本即将执行，确保工作目录存在（区外工作目录不代为创建）
+      if (filePermission.isPathInWorkspace(workingDir)) ensureDir(workingDir)
 
       const resultPromise = script.runInContext(context, { timeout: timeoutMs })
 

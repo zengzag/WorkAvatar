@@ -9,6 +9,7 @@ import FilePermissionService, {
   type ScriptConfirmInput,
 } from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
+import { ensureDir } from '../../common-utils'
 import {
   decideCommandAccess,
   extractInvokedScriptPaths,
@@ -280,6 +281,9 @@ export const shellExecTool: ToolDefinition = {
 
       const timeoutSec = Math.min(Math.max(Number(args.timeout) || 30, 1), 300)
       const timeoutMs = timeoutSec * 1000
+
+      // 工作区懒创建：命令需以工作区为 cwd，执行前确保目录存在（区外 cwd 不代为创建）
+      if (filePermission.isPathInWorkspace(cwd)) ensureDir(cwd)
 
       const runResult = await runCommandPlatform(command, {
         cwd,

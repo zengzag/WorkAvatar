@@ -363,19 +363,33 @@ class WorkspaceManagerService {
     return conv
   }
 
-  /** 在员工工作区下创建任务独立目录（YYYYMMDD_HHmmss，碰撞时追加序号） */
+  /**
+   * 计算任务独立目录路径（YYYYMMDD_HHmmss，碰撞时追加序号），但不实际创建目录。
+   * 工作区懒创建：只有真正写入/执行（file_write / shell_exec / javascript_exec 等）时才落盘，
+   * 避免"任务从不使用工作区"却产生大量空目录；工作区路径本身仍会写入 conversations 供授权与展示使用。
+   */
   private createTaskWorkspace(employeeWorkspace: string): string {
     const ts = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     const base = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
     let dir = path.join(employeeWorkspace, base)
     let i = 1
-    while (fs.existsSync(dir)) {
+    while (this.isTaskWorkspaceTaken(dir)) {
       dir = path.join(employeeWorkspace, `${base}_${i}`)
       i++
     }
-    fs.mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  /** 任务工作区目录是否已被占用：目录已存在或已分配给某个会话（懒创建下目录可能尚未落盘，需查 DB 兜底） */
+  private isTaskWorkspaceTaken(dir: string): boolean {
+    if (fs.existsSync(dir)) return true
+    try {
+      const row = this.db.getDb().prepare('SELECT 1 FROM conversations WHERE workspace_path = ? LIMIT 1').get(dir)
+      return !!row
+    } catch {
+      return false
+    }
   }
 
   /** 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变） */

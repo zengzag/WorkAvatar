@@ -96,6 +96,11 @@ const mockState = vi.hoisted(() => {
       if (s === 'SELECT * FROM conversations WHERE id = ?' || s === 'SELECT workspace_path FROM conversations WHERE id = ?') {
         return { get: (id: string) => conversations.get(id) }
       }
+      if (s.startsWith('SELECT 1 FROM conversations WHERE workspace_path = ?')) {
+        return {
+          get: (p: string) => ([...conversations.values()].some(c => c.workspace_path === p) ? { found: 1 } : undefined),
+        }
+      }
       if (s.startsWith('SELECT employee_id') && s.includes('FROM conversations WHERE id = ?')) {
         return { get: (id: string) => conversations.get(id) }
       }
@@ -361,14 +366,15 @@ describe('workspace-manager / createConversation 任务工作区', () => {
     expect(() => service.createConversation('ghost-employee')).toThrow('Employee not found')
   })
 
-  it('顶层会话在员工工作区下创建独立任务目录并写 FTS', () => {
+  it('顶层会话在员工工作区下分配独立任务目录并写 FTS（目录懒创建，暂不落盘）', () => {
     const emp = service.createEmployee('员工M')
     const conv = service.createConversation(emp.id, undefined, '标题')
     expect(conv.title).toBe('标题')
     expect(conv.parent_conversation_id).toBe('')
     expect(conv.messages_json).toBe('[]')
     expect(conv.workspace_path!.startsWith(emp.workspace_path!)).toBe(true)
-    expect(fs.existsSync(conv.workspace_path!)).toBe(true)
+    // 工作区懒创建：任务未真正写文件前不落盘，避免空目录堆积
+    expect(fs.existsSync(conv.workspace_path!)).toBe(false)
     expect(mockState.ftsRows.filter(r => r.conversation_id === conv.id)).toHaveLength(1)
   })
 
@@ -456,6 +462,7 @@ describe('workspace-manager / updateConversation 与转移', () => {
     const fromRoot = from.workspace_path!
     const toRoot = to.workspace_path!
     const taskDir = conv.workspace_path!
+    fs.mkdirSync(taskDir, { recursive: true })
     fs.writeFileSync(path.join(taskDir, 'f.txt'), 'x')
 
     const moved = service.transferConversations(from.id, to.id)

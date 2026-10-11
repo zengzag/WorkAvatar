@@ -20,6 +20,18 @@ export async function moveToTrash(filePath: string): Promise<'trash' | 'permanen
   }
 }
 
+/**
+ * 确保目录存在（懒创建）：工作区默认不落盘，只有真正写入/执行时才创建，避免产生大量空目录。
+ * 创建失败不抛出，交由后续实际读写操作报错。
+ */
+export function ensureDir(dir?: string | null): void {
+  const p = (dir || '').trim()
+  if (!p) return
+  try {
+    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
+  } catch { /* ignore */ }
+}
+
 export function generateId(): string {
   // 12 字节(96bit)：birthday bound ≈ 2^48 ≈ 281 万亿，杜绝大规模段落索引碰撞
   // 原 4 字节(32bit) 在 65k 条记录时碰撞概率达 50%，大库必崩
