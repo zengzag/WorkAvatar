@@ -447,25 +447,10 @@ const ChatInput: React.FC<{
     for (const f of files) {
       const tokenEl = createFileTokenElement(f.id, f.name, f.path, token)
       // 交由浏览器编辑管线插入（末尾补零宽空格便于继续输入）：
-      // 手动 range.insertNode 会破坏 Chromium 内部光标状态，导致后续输入字符重复
-      const inserted = document.execCommand('insertHTML', false, `${tokenEl.outerHTML}\u200B`)
-      if (!inserted) {
-        // 回退：编辑器不支持 insertHTML 时沿用直接插入
-        const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null
-        if (range) {
-          range.deleteContents()
-          range.insertNode(tokenEl)
-          const spaceNode = document.createTextNode('\u200B')
-          tokenEl.after(spaceNode)
-          range.setStartAfter(spaceNode)
-          range.setEndAfter(spaceNode)
-          sel!.removeAllRanges()
-          sel!.addRange(range)
-        } else {
-          editor.appendChild(tokenEl)
-          editor.appendChild(document.createTextNode('\u200B'))
-        }
-      }
+      // 手动 range.insertNode 会破坏 Chromium 内部光标状态，导致后续输入字符重复。
+      // 注意：Chromium 对含 contenteditable="false" 的 HTML 调用 insertHTML 会返回 false
+      // 但仍完成插入，因此不能依据返回值做回退，否则令牌会被插入两次（文件显示成两份）。
+      document.execCommand('insertHTML', false, `${tokenEl.outerHTML}\u200B`)
     }
 
     // execCommand 插入的是全新的 DOM 节点，需重新绑定令牌交互事件
