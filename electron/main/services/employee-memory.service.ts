@@ -555,7 +555,7 @@ class EmployeeMemoryService {
     const prompt = buildExtractionPrompt(contextParts)
 
     const response = await this.llmChat(providerId, modelId, prompt, {
-      maxTokens: 800,
+      maxTokens: 8192,
       logSource: 'memory_extract',
       sessionId: `memory-extract:${employeeId}`,
     })
@@ -690,7 +690,7 @@ class EmployeeMemoryService {
     let response: string
     try {
       response = await this.llmChat(providerId, modelId, prompt, {
-        maxTokens: 1200,
+        maxTokens: 8192,
         logSource: 'memory_consolidate',
         sessionId: `memory-consolidate:${bucketKey}`,
       })

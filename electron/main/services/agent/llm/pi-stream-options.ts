@@ -41,11 +41,30 @@ export interface PiStreamOptionsInput {
   extraBody?: Record<string, any>
 }
 
+/**
+ * 思考开启时，显式输出预算的下限。
+ *
+ * alwaysReasoning 类 provider（如 opencode-go）不可关闭思考，reasoning token 计入 maxTokens；
+ * 调用方给的小预算（KMS 摘要 400/500/800、任务名 1000 等）会被思考吃光、正文为空，
+ * 表现为 JSON 解析失败等静默故障。故思考开启且显式预算偏小时抬到该下限，保证「思考 + 正文」都放得下。
+ */
+export const REASONING_MIN_TOKENS = 4096
+
 export function buildPiStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
   const apiFormat = normalizeApiFormat(input.apiFormat)
-  if (apiFormat === 'anthropic-messages') return buildAnthropicStreamOptions(input)
-  if (apiFormat === 'openai-responses') return buildOpenAIResponsesStreamOptions(input)
-  return buildOpenAICompletionsStreamOptions(input)
+  const effective = applyReasoningTokenFloor(input)
+  if (apiFormat === 'anthropic-messages') return buildAnthropicStreamOptions(effective)
+  if (apiFormat === 'openai-responses') return buildOpenAIResponsesStreamOptions(effective)
+  return buildOpenAICompletionsStreamOptions(effective)
+}
+
+/** 思考开启且显式 maxTokens 低于下限时抬高；未显式设置（undefined/0）不干预 */
+function applyReasoningTokenFloor(input: PiStreamOptionsInput): PiStreamOptionsInput {
+  const reasoningEffort = resolveReasoningEffort(input.providerType, input.modelId, input.enableThinking)
+  if (!reasoningEffort || input.maxTokens === undefined || input.maxTokens <= 0 || input.maxTokens >= REASONING_MIN_TOKENS) {
+    return input
+  }
+  return { ...input, maxTokens: REASONING_MIN_TOKENS }
 }
 
 function buildOpenAICompletionsStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
