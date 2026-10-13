@@ -10,6 +10,7 @@ import { LRUCache } from '../utils/lru-cache'
 import { getToolDisplayName } from '../utils/tool-display'
 import { useChatScroll } from './useChatScroll'
 import { useLlmSettings } from './useLlmSettings'
+import { useTaskPermissionStore } from '../stores/task-permission.store'
 import { getSceneDefaultModel } from '../utils/default-model'
 import {
   type ConversationStreamState,
@@ -765,6 +766,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const msgImages = opts?.images
       const msgModels = opts?.models
       const msgHighPermission = opts?.highPermission ?? pendingHighPermission
+      // 完全允许（任务级高权限）：新任务首条消息带该模式时登记到新会话，保证后续消息持续生效
+      if (msgHighPermission) useTaskPermissionStore.getState().enable(convId)
 
       if (msgContent || (msgImages && msgImages.length > 0)) {
         setPendingMessage(null)

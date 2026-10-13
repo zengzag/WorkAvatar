@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, useLayoutEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
@@ -391,10 +391,17 @@ const ChatInput: React.FC<{
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [highPermission, setHighPermission] = useState(false)
-  /** 本轮任务高权限模式（确认弹窗中选择"本轮任务不再提醒"后开启，跨消息持续到任务结束或手动关闭） */
-  const taskHighPermission = useTaskPermissionStore((s) => (conversationId ? !!s.enabledKeys[conversationId] : false))
-  const disableTaskHighPermission = useTaskPermissionStore((s) => s.disable)
+  /** 任务级完全允许（高权限）：确认弹窗"本轮任务不再提醒"与执行模式选择器共用同一登记，整个任务期间生效 */
+  const taskFullAllow = useTaskPermissionStore((s) => (conversationId ? !!s.enabledKeys[conversationId] : false))
+  const enableTaskFullAllow = useTaskPermissionStore((s) => s.enable)
+  const disableTaskFullAllow = useTaskPermissionStore((s) => s.disable)
+  /** 新任务尚未创建会话时的完全允许草稿态；会话创建时由 useEmployeeChat 登记到该会话，此处仅负责新任务视图的显示 */
+  const [draftFullAllow, setDraftFullAllow] = useState(false)
+  const fullAllow = conversationId ? taskFullAllow : draftFullAllow
+  // 会话已存在（新任务已创建或切到既有任务）时，完全允许以任务级登记为准，清掉草稿避免残留到其他新任务
+  useEffect(() => {
+    if (conversationId) setDraftFullAllow(false)
+  }, [conversationId])
   const editorRef = useRef<HTMLDivElement>(null)
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
@@ -577,14 +584,12 @@ const ChatInput: React.FC<{
     // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
     // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
     // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
-    const sendHighPermission = highPermission || taskHighPermission
-    onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
+    onSend(content, imageUrls, selectedModels, { highPermission: fullAllow })
     // 清空编辑器
     if (editorRef.current) editorRef.current.innerHTML = ''
     emitDraftChange()
     onDraftChange?.('')
-    setHighPermission(false)
-  }, [hasEditorContent, attachedImages, selectedModels, highPermission, taskHighPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
@@ -917,6 +922,7 @@ const ChatInput: React.FC<{
   const [modelSearchText, setModelSearchText] = useState('')
   const [showKbPicker, setShowKbPicker] = useState(false)
   const [showFileChanges, setShowFileChanges] = useState(false)
+  const [showModePicker, setShowModePicker] = useState(false)
 
   const modelTags = useMemo(() => selectedModels.map((sel, i) => {
     const p = providers.find((p: any) => p.id === sel.providerId)
@@ -1272,6 +1278,112 @@ const ChatInput: React.FC<{
     )
   }, [employees, employeeSearch])
 
+  // 执行模式：纯对话（原极简模式）/ 手动审批（默认）/ 完全允许（任务级高权限），三者互斥
+  const executionMode: 'pureChat' | 'manual' | 'fullAllow' =
+    minimalMode ? 'pureChat' : (fullAllow ? 'fullAllow' : 'manual')
+  // 任务已有内容时模式已冻结（主进程按任务首条消息固定工具与系统提示词），不允许再切换
+  const modeLocked = !canToggleMinimalMode
+
+  /** 关闭完全允许：有会话时撤销任务级登记，新任务模式回落到草稿态 */
+  const clearFullAllow = useCallback(() => {
+    if (conversationId) disableTaskFullAllow(conversationId)
+    setDraftFullAllow(false)
+  }, [conversationId, disableTaskFullAllow])
+
+  const selectExecutionMode = useCallback((mode: 'pureChat' | 'manual' | 'fullAllow') => {
+    setShowModePicker(false)
+    if (mode === executionMode) return
+    // 从纯对话切出需要解除极简模式，受任务冻结限制
+    if (minimalMode && modeLocked) return
+    if (mode === 'pureChat') {
+      if (modeLocked) return
+      onMinimalModeChange(true)
+      clearFullAllow()
+      return
+    }
+    if (mode === 'fullAllow') {
+      if (minimalMode) onMinimalModeChange(false)
+      if (conversationId) enableTaskFullAllow(conversationId)
+      else setDraftFullAllow(true)
+      return
+    }
+    if (minimalMode) onMinimalModeChange(false)
+    clearFullAllow()
+  }, [executionMode, minimalMode, modeLocked, conversationId, onMinimalModeChange, enableTaskFullAllow, clearFullAllow])
+
+  const modeLabel = executionMode === 'pureChat'
+    ? t('workbench.modePureChat')
+    : executionMode === 'fullAllow' ? t('workbench.modeFullAllow') : t('workbench.modeManualApproval')
+  const modeDesc = executionMode === 'pureChat'
+    ? t('workbench.modePureChatDesc')
+    : executionMode === 'fullAllow' ? t('workbench.modeFullAllowDesc') : t('workbench.modeManualApprovalDesc')
+
+  const modePickerContent = useMemo(() => {
+    const options: Array<{
+      key: 'pureChat' | 'manual' | 'fullAllow'
+      icon: React.ReactNode
+      title: string
+      desc: string
+      disabled: boolean
+    }> = [
+      {
+        key: 'pureChat',
+        icon: <MessageOutlined />,
+        title: t('workbench.modePureChat'),
+        desc: t('workbench.modePureChatDesc'),
+        disabled: executionMode !== 'pureChat' && modeLocked,
+      },
+      {
+        key: 'manual',
+        icon: <SafetyOutlined />,
+        title: t('workbench.modeManualApproval'),
+        desc: t('workbench.modeManualApprovalDesc'),
+        disabled: minimalMode && modeLocked,
+      },
+      {
+        key: 'fullAllow',
+        icon: <UnlockOutlined />,
+        title: t('workbench.modeFullAllow'),
+        desc: t('workbench.modeFullAllowDesc'),
+        disabled: minimalMode && modeLocked,
+      },
+    ]
+    return (
+      <div style={{ width: 208, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ padding: '2px 8px 6px', fontSize: 11, color: token.colorTextQuaternary }}>
+          {t('workbench.executionMode')}
+        </div>
+        {options.map(opt => {
+          const selected = executionMode === opt.key
+          return (
+            <div
+              key={opt.key}
+              title={opt.disabled ? t('workbench.modeLockedTip') : undefined}
+              onClick={() => { if (!opt.disabled) selectExecutionMode(opt.key) }}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px',
+                borderRadius: 6,
+                cursor: opt.disabled ? 'not-allowed' : 'pointer',
+                opacity: opt.disabled ? 0.45 : 1,
+                background: selected ? token.colorPrimaryBg : 'transparent',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => { if (!opt.disabled && !selected) e.currentTarget.style.background = token.colorBgTextHover }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = selected ? token.colorPrimaryBg : 'transparent' }}
+            >
+              <span style={{ fontSize: 13, marginTop: 2, color: selected ? token.colorPrimary : token.colorTextSecondary }}>{opt.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, color: selected ? token.colorPrimary : token.colorText }}>{opt.title}</div>
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: token.colorTextTertiary }}>{opt.desc}</div>
+              </div>
+              {selected && <CheckOutlined style={{ fontSize: 11, marginTop: 3, color: token.colorPrimary }} />}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }, [t, token, executionMode, modeLocked, minimalMode, selectExecutionMode])
+
   return (
     <div style={centerMode
       ? { padding: '0 16px', flexShrink: 0, maxWidth: 680, width: '100%', margin: '0 auto' }
@@ -1589,27 +1701,32 @@ const ChatInput: React.FC<{
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {!hideToolbar && (
-                <Tooltip title={
-                  taskHighPermission
-                    ? t('workbench.highPermissionTaskOn')
-                    : (highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff'))
-                }>
-                  <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
-                    onClick={() => {
-                      // 任务级高权限：点击关闭（同步撤销主进程登记），避免界面显示关闭但后端继续放行
-                      if (taskHighPermission) {
-                        disableTaskHighPermission(conversationId)
-                        setHighPermission(false)
-                        return
-                      }
-                      setHighPermission(!highPermission)
-                    }}
+                <Popover
+                  content={modePickerContent}
+                  trigger="click"
+                  placement="topLeft"
+                  arrow={false}
+                  styles={{ container: { padding: 8 } }}
+                  open={showModePicker}
+                  onOpenChange={setShowModePicker}
+                >
+                  <Button type="text" size="small"
+                    title={`${modeLabel}\n${modeDesc}`}
+                    icon={executionMode === 'pureChat'
+                      ? <MessageOutlined style={{ fontSize: 12 }} />
+                      : executionMode === 'fullAllow'
+                        ? <UnlockOutlined style={{ fontSize: 12 }} />
+                        : <SafetyOutlined style={{ fontSize: 12 }} />}
                     style={{
-                      color: highPermission || taskHighPermission ? token.colorWarning : token.colorTextQuaternary,
-                      padding: '0 2px', height: 20, minWidth: 20,
-                      background: highPermission || taskHighPermission ? token.colorWarningBg : 'transparent',
-                    }} />
-                </Tooltip>
+                      color: executionMode === 'pureChat'
+                        ? token.colorPrimary
+                        : executionMode === 'fullAllow' ? token.colorWarning : token.colorTextQuaternary,
+                      padding: '0 6px', height: 20, gap: 4,
+                      background: executionMode === 'fullAllow' ? token.colorWarningBg : 'transparent',
+                    }}>
+                    <span style={{ fontSize: 11 }}>{modeLabel}</span>
+                  </Button>
+                </Popover>
               )}
               {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
               <Tooltip title={t('workbench.attachFile')}>
@@ -1658,14 +1775,9 @@ const ChatInput: React.FC<{
                       style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                       title={t('workbench.knowledgeBase')} />
                   </Popover>
-                  <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>
-                    <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}
-                      onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
-                      style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
-                  </Tooltip>
                   <Tooltip title={t('workbench.selectSkillToExecute')}>
                     <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
-                      <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
+                      <Button type="text" size="small" icon={<ToolOutlined style={{ fontSize: 12 }} />}
                         style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
                     </Dropdown>
                   </Tooltip>
