@@ -465,6 +465,27 @@ const ChatInput: React.FC<{
       bindFileTokenElement(node as HTMLElement, token, removeFileById)
     })
 
+    // Chromium 插入不可编辑节点后不会自动把光标置于其后，需显式移动，
+    // 否则继续输入会插到令牌前方（粘贴文件后光标停在文件前面）
+    const lastFile = files[files.length - 1]
+    const lastTokenEl = editor.querySelector<HTMLElement>(`.${FILE_TOKEN_CLASS}[data-id="${lastFile.id}"]`)
+    if (lastTokenEl) {
+      const range = document.createRange()
+      const next = lastTokenEl.nextSibling
+      // 优先落在令牌后紧跟的零宽空格文本节点内，保持可继续输入
+      if (next && next.nodeType === Node.TEXT_NODE) {
+        range.setStart(next, 0)
+      } else {
+        range.setStartAfter(lastTokenEl)
+      }
+      range.collapse(true)
+      const sel = window.getSelection()
+      if (sel) {
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    }
+
     emitDraftChange()
   }, [token, removeFileById, emitDraftChange])
 
