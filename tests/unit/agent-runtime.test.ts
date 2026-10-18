@@ -283,7 +283,7 @@ describe('SubAgentRuntime', () => {
     expect(runtime.getRun(launched.runId!)?.status).toBe('cancelled')
   })
 
-  it('await 超时：run 未完成返回当前状态（不抛错）', async () => {
+  it('await 超时：run 未完成返回 pending 状态（不报失败、不抛错）', async () => {
     chatStream.mockImplementationOnce(async (_params: any, callbacks: any) => {
       callbacks.onChunk?.('慢任务')
       // 永不 resolve：run 保持 running
@@ -293,6 +293,12 @@ describe('SubAgentRuntime', () => {
     const outcomes = await runtime.awaitRuns([launched.runId!], 50)
     expect(outcomes[0].success).toBe(false)
     expect(['running', 'queued']).toContain(outcomes[0].status)
+    // 未终态 → pending 语义：不得给出「执行失败」错误，也不得误报 output
+    expect(outcomes[0].pending).toBe(true)
+    expect(outcomes[0].error).toBeUndefined()
+    expect(outcomes[0].output).toBeUndefined()
+    // 转为后台通知模式：完成后主管仍可经通知拿到结果
+    expect(runtime.getRun(launched.runId!)?.runInBackground).toBe(true)
   })
 
   it('cancelRun：取消后状态为 cancelled', async () => {

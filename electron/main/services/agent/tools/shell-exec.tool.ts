@@ -10,6 +10,7 @@ import FilePermissionService, {
 } from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
 import { ensureDir } from '../../common-utils'
+import BackgroundShellService from '../../background-shell.service'
 import {
   decideCommandAccess,
   extractInvokedScriptPaths,
@@ -139,38 +140,39 @@ export const shellExecTool: ToolDefinition = {
   title: 'Shell命令执行',
   summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}），用于python/node/git/pip/npm/外部exe等系统级操作。`,
   description:
-    `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}）。
+    `Run a shell command (${IS_WINDOWS ? 'PowerShell' : 'bash'}). Use it for system operations: interpreters, package managers, git, build tools, external executables.
 
-**重要使用规则：**
-1. **禁止用本工具删除文件/目录**：rm / del / Remove-Item / os.remove / shutil.rmtree 等删除命令与含删除逻辑的脚本都会被安全策略拒绝，删除一律改用 file_delete 工具
-2. **不要在命令末尾加 echo $LASTEXITCODE/echo EXIT=$?** —— 工具已自动正确返回原生命令退出码，加echo会掩盖真实退出码导致 exit_code=0
-3. 多行脚本用 stdin_content 参数，command 仅写解释器（如 python -、bash -s），避免 JSON 引号转义
-4. 失败时会自动返回 stderr 全文 + 退出码 + 诊断提示，无需额外探测
-5. Windows 统一使用 PowerShell，**自动检测 pwsh.exe (PowerShell 7) 优先，回退 powershell.exe (PowerShell 5.1)**，自动设置 UTF-8 编码
-6. **长命令会自动写入临时 .ps1 文件执行**，避免命令行参数长度限制
-7. **超时会自动使用 taskkill /T /F 彻底杀死进程树**，避免孤儿进程残留
-8. **依赖顺序**：如果需要先写文件再执行命令，**必须串行调用**（同一批内不要同时 file_write 和 shell_exec 依赖刚写的文件，会有竞态）
+Rules:
+1. Never delete files or directories from a command or script (rm, del, Remove-Item, os.remove, shutil.rmtree, fs.unlink …) — such calls are rejected by policy. Use file_delete.
+2. Do not append \`echo $LASTEXITCODE\` / \`echo EXIT=$?\`: the real exit code is already returned, and echoing it masks the original value.
+3. Put multi-line scripts in stdin_content and keep command as the interpreter only (e.g. \`python -\`), to avoid quoting problems.
+4. Commands that must not block the turn (dev server, watch, long build) set run_in_background=true; you get a task id immediately — read output with shell_output, stop with shell_kill.
+5. If a command depends on a file you just wrote, issue file_write and shell_exec as separate steps: sending both in one batch races.
 
-统一 UTF-8 输出，严格分离 stdout/stderr。`,
+On failure you get stdout, the full stderr, the exit code, the working directory and diagnostic hints. For a long task whose complete log matters, redirect the output to a file instead of relying on captured output.`,
   parameters: {
     type: 'object',
     properties: {
       command: {
         type: 'string',
         description:
-          '要执行的 shell 命令。配合 stdin_content 时写解释器（如 python -、bash -s）'
+          'Command to run. With stdin_content, pass only the interpreter (e.g. python -, bash -s)'
       },
       stdin_content: {
         type: 'string',
         description:
-          '可选：通过 stdin 传给命令的内容。多行长脚本写在这里，command 仅写解释器（如 python -）'
+          'Content piped to the command via stdin — put multi-line scripts here'
       },
-      working_dir: { type: 'string', description: '可选的工作目录（绝对路径），不传则使用员工工作区' },
+      working_dir: { type: 'string', description: 'Absolute working directory; defaults to the workspace' },
       timeout: {
         type: 'number',
-        description: '超时时间（秒），默认 30 秒，最大 300 秒',
+        description: 'Foreground timeout in seconds (default 30, max 300). Ignored when run_in_background is set',
         minimum: 1,
         maximum: 300
+      },
+      run_in_background: {
+        type: 'boolean',
+        description: 'Run without blocking the turn and return a task id immediately (default false). For dev servers, watchers and long builds'
       }
     },
     required: ['command']
@@ -179,107 +181,14 @@ export const shellExecTool: ToolDefinition = {
   timeoutMs: 310_000,
   handler: async (args: any) => {
     try {
-      const command = String(args.command || '').trim()
-      const stdinContent: string | undefined =
-        typeof args.stdin_content === 'string' && args.stdin_content.length > 0
-          ? args.stdin_content
-          : undefined
+      const prep = await prepareShellExecution(args)
+      if (!prep.ok) return prep.result
 
-      if (!command && !stdinContent) {
-        return { success: false, error: 'command 不能为空（stdin_content 存在时 command 仍需指定解释器，如 python -）' }
+      if (args.run_in_background === true) {
+        return startBackgroundTask(prep)
       }
 
-      // 安全检查：合并 command + heredoc 解析出的 body + stdin_content 一起检查
-      const heredocInfo = parseHeredoc(command)
-      const scriptContentForCheck = [
-        command,
-        heredocInfo?.heredocBody || '',
-        stdinContent || ''
-      ].join('\n')
-
-      for (const pattern of dangerousPatterns) {
-        if (pattern.test(scriptContentForCheck)) {
-          return { success: false, error: '命令被安全策略拦截：检测到潜在危险操作' }
-        }
-      }
-
-      // 删除统一走 file_delete：命令文本（含 heredoc/stdin 正文）出现删除原语即拒绝，
-      // 位于高权限判定之前——这是通道策略而非风险确认，不提供绕过
-      if (isFileDeletionCommand(scriptContentForCheck)) {
-        return { success: false, error: DELETION_FORBIDDEN_HINT }
-      }
-
-      const isWrite = isFileWriteCommand(scriptContentForCheck)
-
-      const ctx = interactionContext.getStore()
-      // 单条消息级高权限 或 本轮任务级高权限（确认弹窗中用户选择"本轮任务不再提醒"）
-      const highPermission = !!ctx?.highPermission
-        || UnifiedInteractionService.getInstance().isTaskHighPermission()
-
-      const employeeWorkspace = getWorkspacePath()
-      const cwd = args.working_dir || employeeWorkspace || process.cwd()
-
-      // 命令文本干净时，继续检查被执行的脚本文件内容（先写脚本再执行是常见绕过路径）
-      const scriptWithDeletion = findDeletionInInvokedScripts(command, cwd)
-      if (scriptWithDeletion) {
-        return {
-          success: false,
-          error: `脚本 ${scriptWithDeletion} 内含删除操作，已被安全策略拒绝执行。${DELETION_FORBIDDEN_HINT}`,
-        }
-      }
-
-      if (isWrite && !highPermission) {
-        // 脚本触发：弹窗按"即将执行脚本 + 脚本原文"呈现，不再按单个文件/文件夹措辞
-        const scriptInput: ScriptConfirmInput = {
-          language: IS_WINDOWS ? 'powershell' : 'bash',
-          content: scriptContentForCheck,
-        }
-        // 纯函数决策：区外字面路径批量授权 / cwd 区外目录授权 / 变量目标保守确认 / 区内放行
-        const decision = decideCommandAccess({
-          command: scriptContentForCheck,
-          cwd,
-          isWrite,
-          boundary: {
-            isInside: p => filePermission.isPathInWorkspace(p),
-            isAuthorized: p => filePermission.isPathAuthorized(p),
-          },
-        })
-
-        if (decision.kind === 'authorize-paths') {
-          const result = await filePermission.authorizeFileOperation('修改', decision.paths, { script: scriptInput })
-          if (!result.allowed) return { success: false, error: result.error }
-        } else if (decision.kind === 'authorize-dir') {
-          // 授权范围就是 cwd 本身（含子树），不能取其父目录
-          const result = await filePermission.authorizeFileOperation(
-            '修改', [decision.dir], { scopeDir: decision.dir, script: scriptInput },
-          )
-          if (!result.allowed) return { success: false, error: result.error }
-        } else if (decision.kind === 'confirm-command') {
-          // 目标含变量/波浪线/斜杠开关无法静态归类，逐条命令保守确认
-          if (!ctx) {
-            return { success: false, error: '脚本写入工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝执行' }
-          }
-          try {
-            const interactionService = UnifiedInteractionService.getInstance()
-            const response = await interactionService.request({
-              type: 'confirm',
-              title: SCRIPT_CONFIRM_TITLE,
-              message: buildScriptConfirmMessage([]),
-              danger: true,
-              source: 'security:shell_write',
-              script: toScriptDisclosure(scriptInput),
-            })
-            if (response.cancelled || response.confirmed !== true) {
-              return { success: false, error: '用户取消了脚本的执行' }
-            }
-          } catch {
-            return { success: false, error: '脚本执行确认失败，操作已取消' }
-          }
-        }
-        // kind === 'allow'：工作区内写入自动放行（工作区即用户授权的沙箱边界）
-      }
-
-      const timeoutSec = Math.min(Math.max(Number(args.timeout) || 30, 1), 300)
+      const { command, stdinContent, cwd, timeoutSec } = prep
       const timeoutMs = timeoutSec * 1000
 
       // 工作区懒创建：命令需以工作区为 cwd，执行前确保目录存在（区外 cwd 不代为创建）
@@ -359,4 +268,143 @@ export const shellExecTool: ToolDefinition = {
   selfAuthorized: true,
   // shell_exec 从按需工具提升为常驻工具：直接加入 LLM tools 数组
   onDemand: false,
+}
+
+/** 命令准备阶段的成功结果：已完成安全校验与文件授权 */
+type ShellPrepareOk = { ok: true; command: string; stdinContent?: string; cwd: string; timeoutSec: number }
+
+/**
+ * 命令执行前的统一准备：参数校验 → 危险/删除通道策略 → 文件授权。
+ * 前台执行与后台执行共用，保证两者权限判定完全一致（后台不因"不阻塞"而降低门槛）。
+ */
+async function prepareShellExecution(
+  args: any,
+): Promise<ShellPrepareOk | { ok: false; result: { success: false; error?: string } }> {
+  const fail = (error?: string) => ({ ok: false as const, result: { success: false as const, error } })
+
+  const command = String(args.command || '').trim()
+  const stdinContent: string | undefined =
+    typeof args.stdin_content === 'string' && args.stdin_content.length > 0
+      ? args.stdin_content
+      : undefined
+
+  if (!command && !stdinContent) {
+    return fail('command 不能为空（stdin_content 存在时 command 仍需指定解释器，如 python -）')
+  }
+
+  // 安全检查：合并 command + heredoc 解析出的 body + stdin_content 一起检查
+  const heredocInfo = parseHeredoc(command)
+  const scriptContentForCheck = [
+    command,
+    heredocInfo?.heredocBody || '',
+    stdinContent || ''
+  ].join('\n')
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(scriptContentForCheck)) {
+      return fail('命令被安全策略拦截：检测到潜在危险操作')
+    }
+  }
+
+  // 删除统一走 file_delete：命令文本（含 heredoc/stdin 正文）出现删除原语即拒绝，
+  // 位于高权限判定之前——这是通道策略而非风险确认，不提供绕过
+  if (isFileDeletionCommand(scriptContentForCheck)) {
+    return fail(DELETION_FORBIDDEN_HINT)
+  }
+
+  const isWrite = isFileWriteCommand(scriptContentForCheck)
+
+  const ctx = interactionContext.getStore()
+  // 单条消息级高权限 或 本轮任务级高权限（确认弹窗中用户选择"本轮任务不再提醒"）
+  const highPermission = !!ctx?.highPermission
+    || UnifiedInteractionService.getInstance().isTaskHighPermission()
+
+  const employeeWorkspace = getWorkspacePath()
+  const cwd = args.working_dir || employeeWorkspace || process.cwd()
+
+  // 命令文本干净时，继续检查被执行的脚本文件内容（先写脚本再执行是常见绕过路径）
+  const scriptWithDeletion = findDeletionInInvokedScripts(command, cwd)
+  if (scriptWithDeletion) {
+    return fail(`脚本 ${scriptWithDeletion} 内含删除操作，已被安全策略拒绝执行。${DELETION_FORBIDDEN_HINT}`)
+  }
+
+  if (isWrite && !highPermission) {
+    // 脚本触发：弹窗按"即将执行脚本 + 脚本原文"呈现，不再按单个文件/文件夹措辞
+    const scriptInput: ScriptConfirmInput = {
+      language: IS_WINDOWS ? 'powershell' : 'bash',
+      content: scriptContentForCheck,
+    }
+    // 纯函数决策：区外字面路径批量授权 / cwd 区外目录授权 / 变量目标保守确认 / 区内放行
+    const decision = decideCommandAccess({
+      command: scriptContentForCheck,
+      cwd,
+      isWrite,
+      boundary: {
+        isInside: p => filePermission.isPathInWorkspace(p),
+        isAuthorized: p => filePermission.isPathAuthorized(p),
+      },
+    })
+
+    if (decision.kind === 'authorize-paths') {
+      const result = await filePermission.authorizeFileOperation('修改', decision.paths, { script: scriptInput })
+      if (!result.allowed) return fail(result.error)
+    } else if (decision.kind === 'authorize-dir') {
+      // 授权范围就是 cwd 本身（含子树），不能取其父目录
+      const result = await filePermission.authorizeFileOperation(
+        '修改', [decision.dir], { scopeDir: decision.dir, script: scriptInput },
+      )
+      if (!result.allowed) return fail(result.error)
+    } else if (decision.kind === 'confirm-command') {
+      // 目标含变量/波浪线/斜杠开关无法静态归类，逐条命令保守确认
+      if (!ctx) {
+        return fail('脚本写入工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝执行')
+      }
+      try {
+        const interactionService = UnifiedInteractionService.getInstance()
+        const response = await interactionService.request({
+          type: 'confirm',
+          title: SCRIPT_CONFIRM_TITLE,
+          message: buildScriptConfirmMessage([]),
+          danger: true,
+          source: 'security:shell_write',
+          script: toScriptDisclosure(scriptInput),
+        })
+        if (response.cancelled || response.confirmed !== true) {
+          return fail('用户取消了脚本的执行')
+        }
+      } catch {
+        return fail('脚本执行确认失败，操作已取消')
+      }
+    }
+    // kind === 'allow'：工作区内写入自动放行（工作区即用户授权的沙箱边界）
+  }
+
+  const timeoutSec = Math.min(Math.max(Number(args.timeout) || 30, 1), 300)
+  return { ok: true, command, stdinContent, cwd, timeoutSec }
+}
+
+/** 后台执行分支：命令已通过同一套安全校验与文件授权，此处仅切换执行方式 */
+function startBackgroundTask(prep: ShellPrepareOk) {
+  const ctx = interactionContext.getStore()
+  // 属主键与授权缓存一致：优先 conversationId，无 DB 会话时降级 sessionId
+  const ownerKey = ctx?.conversationId || ctx?.sessionId || 'unknown'
+  const started = BackgroundShellService.getInstance().start({
+    command: prep.command,
+    stdinContent: prep.stdinContent,
+    cwd: prep.cwd,
+    ownerKey,
+  })
+  if (!started.ok) return { success: false, error: started.error }
+
+  const snapshot = started.snapshot
+  return {
+    success: true,
+    output: [
+      `已在后台启动：任务 ID ${snapshot.id}${snapshot.pid ? `（PID ${snapshot.pid}）` : ''}`,
+      `工作目录: ${snapshot.cwd}`,
+      '后台任务不设超时，也不随本轮对话结束而终止；stdout 与 stderr 按产出顺序合并记录。',
+      `读取输出: shell_output(task_id="${snapshot.id}")（续读传 offset，等待新输出传 wait_ms）`,
+      `终止任务: shell_kill(task_id="${snapshot.id}")；应用退出时会统一清理全部后台任务。`,
+    ].join('\n'),
+  }
 }

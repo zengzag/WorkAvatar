@@ -257,15 +257,18 @@ const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
     supportsStrictMode: false,
   },
 
-  // OpenCode Go（opencode.ai/zen/go）：低成本开源编程模型订阅网关（OpenAI 兼容端点）。
-  // 依据 pi-ai 0.85.1 内置的 opencode-go provider（providers/data/opencode-go.json）：
+  // OpenCode Go（opencode.ai/inference/go）：低成本开源编程模型订阅网关（OpenAI 兼容端点）。
+  // 依据 pi-ai 1.3.0 内置的 opencode-go provider（providers/data/opencode-go.json）：
   // - 全部模型 reasoning=true；部分「always think」模型不可关闭思考，缺 reasoning 参数报 1210
   // - 聚合 GLM / Kimi / DeepSeek / MiMo / MiniMax / Qwen 等异构模型，统一 max_tokens 字段
   // - 不支持 store / developer role；聚合网关不做严格 schema，保守关闭 strict mode
   // - deepseek-v4 / kimi 系模型多轮工具调用需回传 reasoning_content
+  // - 网关已从 opencode.ai/zen/go 迁至 opencode.ai/inference/go（旧地址失效，见 database.service 迁移）
   // - 要求客户端携带会话路由头 x-opencode-session + 客户端标识 x-opencode-client，
   //   以便把同一会话固定到同一上游实例、提升 prompt cache 命中；缺失 x-opencode-session
-  //   的请求会被上游直接拒绝（400 MissingSessionID），故标记 requireSessionId 注入兜底值
+  //   的请求会被上游直接拒绝（400 MissingSessionID），故标记 requireSessionId 注入兜底值。
+  //   注：pi-ai 1.x 在 provider 层（withOpenCodeSessionHeader）自动注入该头，但本项目直接调用
+  //   api 模块（不走 provider），故仍由此处注入
   'opencode-go': {
     ...DEFAULT,
     supportsDeveloperRole: false,

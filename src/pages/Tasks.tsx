@@ -6,6 +6,7 @@ import type { MenuProps } from 'antd'
 import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined, SettingOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
+import BackgroundShellBar from '../components/workbench/BackgroundShellBar'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
 import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSidebar'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
@@ -947,6 +948,8 @@ const Tasks: React.FC = () => {
                   <div ref={messagesEndRef} />
                 </div>
               )}
+              {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}
+              <BackgroundShellBar conversationId={activeConversationId ?? undefined} />
               <ChatInput
                 onSend={handleSendWithReset}
                 onStop={handleStop}

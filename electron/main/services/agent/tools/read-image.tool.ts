@@ -17,11 +17,11 @@ export const readImageTool: ToolDefinition = {
   name: 'read_image',
   title: '读取图片',
   summary: '读取本地图片供视觉模型直接查看图片内容。',
-  description: '读取本地图片文件，把图片视觉内容提供给模型直接查看（需要当前模型支持图片输入）。适合识别布局、图表、颜色等非文字信息；若只关注图片中的文字，优先使用 ocr_image。支持 png/jpg/jpeg/bmp/tiff/webp/gif 格式，单文件不超过 6MB。',
+  description: 'Read a local image and hand its visual content to the model (requires an image-capable model). Use it for layout, charts and colours; if you only need the text in the image, prefer ocr_image. Supports png/jpg/jpeg/bmp/tiff/webp/gif, up to 6MB.',
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '图片文件绝对路径' },
+      path: { type: 'string', description: 'Absolute image file path' },
     },
     required: ['path'],
   },

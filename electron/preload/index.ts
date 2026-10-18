@@ -16,6 +16,7 @@ import type {
   AttachmentSaveResult,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
+  StorageCategoryKey,
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
@@ -77,6 +78,8 @@ import type {
   PluginMessageActionInfo,
   FileChangeItem,
   SnapshotRevertResult,
+  ShellBgKillResult,
+  ShellBgTaskItem,
   SubAgentProfile,
   SubAgentProfileCreateParams,
   SubAgentProfileUpdateParams,
@@ -233,8 +236,10 @@ const electronAPI = {
     setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
-    getLogSize: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_LOG_SIZE),
     clearLogs: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_LOGS),
+    // 存储占用分类统计 / 打开指定分类目录（文件型分类在资源管理器中定位）
+    getStorageUsage: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_STORAGE_USAGE),
+    openStoragePath: (key: StorageCategoryKey) => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_PATH, { key }),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
     // 防休眠：查询/设置"窗口未全部关闭时禁止系统熄屏/休眠"
@@ -479,6 +484,19 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_LIST, { conversationId }) as Promise<FileChangeItem[]>,
     revert: (conversationId: string, ids?: string[]) =>
       ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_REVERT, { conversationId, ids }) as Promise<SnapshotRevertResult>,
+  },
+
+  // 后台终端任务：列出当前会话运行中的长跑命令并手动终止（agent 异常中止后的用户侧兜底）
+  shellBg: {
+    list: (conversationId?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SHELL_BG_LIST, { conversationId }) as Promise<ShellBgTaskItem[]>,
+    kill: (taskId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SHELL_BG_KILL, { taskId }) as Promise<ShellBgKillResult>,
+    onChanged: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.SHELL_BG_CHANGED, handler)
+      return () => { ipcRenderer.removeListener(IPC_CHANNELS.SHELL_BG_CHANGED, handler) }
+    },
   },
 
   // 宿主通用通知（自动化完成 / ask_user 交互等）：插件通知（日历提醒）经插件桥广播，不占宿主通道

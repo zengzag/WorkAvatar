@@ -10,6 +10,7 @@ import { registerMcpHandlers } from './mcp.handlers'
 import { registerPluginHandlers } from './plugin.handlers'
 import { registerAttachmentHandlers } from './attachment.handlers'
 import { registerSnapshotHandlers } from './snapshot.handlers'
+import { registerShellBgHandlers } from './shell-bg.handlers'
 import { registerSubagentHandlers } from './subagent.handlers'
 import AttachmentService from '../services/attachment.service'
 import KMSService from '../services/kms/kms.service'
@@ -47,6 +48,7 @@ export function registerIpcHandlers() {
   registerPluginHandlers()
   registerAttachmentHandlers()
   registerSnapshotHandlers()
+  registerShellBgHandlers()
   registerSubagentHandlers()
 
   // 播种内置子智能体模板（explore/general）：幂等刷新，作为开箱即用的委托执行者

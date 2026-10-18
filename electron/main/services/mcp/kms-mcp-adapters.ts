@@ -17,10 +17,12 @@ import type { ToolDefinition } from '../agent/tools/types'
 const EXCLUDED_MCP_TOOL_IDS = new Set<string>([
   // files（文件管理）
   'file_read', 'file_write', 'file_edit', 'file_delete',
+  // programming（代码定位与批量修改，同属文件管理）
+  'file_list', 'grep', 'apply_patch',
   // scripting（代码执行）
   'javascript_exec',
   // shell（命令行执行）
-  'shell_exec',
+  'shell_exec', 'shell_output', 'shell_kill',
   // ask_user（向用户询问）
   'ask_user',
 ])

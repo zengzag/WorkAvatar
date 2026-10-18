@@ -9,6 +9,7 @@ import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
 import EmployeeRegistryService from './services/employee-registry.service'
 import WindowStateService from './services/window-state.service'
+import BackgroundShellService from './services/background-shell.service'
 import mainUiI18n from './services/ui-i18n.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
@@ -734,6 +735,12 @@ app.on('will-quit', () => {
     LoggerBackend.getInstance().destroy()
   } catch (error) {
     logger.error('Failed to destroy logger:', error)
+  }
+  // 终止全部后台终端任务，避免残留孤儿进程
+  try {
+    BackgroundShellService.getInstance().disposeAll()
+  } catch (error) {
+    logger.error('Failed to dispose background shells:', error)
   }
 })
 

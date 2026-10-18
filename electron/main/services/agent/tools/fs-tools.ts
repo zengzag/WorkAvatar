@@ -7,6 +7,7 @@ import FileSnapshotService, { MAX_SNAPSHOT_FILE_BYTES, type FileChangeKind } fro
 import { moveToTrash } from '../../common-utils'
 import { isFsRoot, isWithinPath, normalizePath } from '../../path-normalize'
 import { buildUnifiedDiff } from './text-diff'
+import { expandGlobPattern, isGlobPattern } from './glob-engine'
 import { isIrreversibleTool } from './tool-permission'
 import type { DiffDisclosure } from '../../../../shared/types'
 
@@ -20,7 +21,8 @@ import type { DiffDisclosure } from '../../../../shared/types'
  *   file_delete  删除文件/目录（移入回收站）
  *   report_generated_files  声明需要展示给用户的成品文件
  *
- * 说明：创建/移动/复制/重命名/列目录/搜索/查看信息等文件操作已移除，统一由 shell_exec 覆盖；
+ * 说明：列目录与按内容/通配检索由编程工具 file_list / grep 提供（见 file-list.tool.ts、grep.tool.ts）；
+ * 创建/移动/复制/重命名/查看信息等其余文件操作仍由 shell_exec 覆盖。
  * 删除是唯一例外——shell_exec / javascript_exec 中的删除一律被拒绝，必须走 file_delete
  * （路径可静态判定、移入回收站可恢复、操作可审计）。
  *
@@ -35,7 +37,7 @@ export function getWorkspacePath(): string | null {
 }
 
 /** 解析工具入参路径：绝对路径原样；相对路径按工作区解析（无工作区时回退主进程 cwd），不落到应用目录 */
-function resolveToolPath(raw: string): string {
+export function resolveToolPath(raw: string): string {
   return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(getWorkspacePath() || process.cwd(), raw)
 }
 
@@ -54,7 +56,7 @@ const MAX_LENGTH_LIMIT = 50000
 const fileSnapshot = FileSnapshotService.getInstance()
 
 /** 读取文件改动前状态：内容超上限/二进制/非 UTF-8 时只登记存在性（不可还原），避免回滚损坏原文件 */
-function readFileState(filePath: string): { exists: boolean; content: string; restorable: boolean } {
+export function readFileState(filePath: string): { exists: boolean; content: string; restorable: boolean } {
   try {
     const stat = fs.statSync(filePath)
     if (!stat.isFile()) return { exists: true, content: '', restorable: false }
@@ -74,7 +76,7 @@ function readFileState(filePath: string): { exists: boolean; content: string; re
 }
 
 /** 授权通过后登记快照（被拒绝的操作不产生回滚记录） */
-function recordSnapshot(
+export function recordSnapshot(
   toolName: string,
   changeKind: FileChangeKind,
   filePath: string,
@@ -91,9 +93,29 @@ function recordSnapshot(
 }
 
 /** 工具结果中的 diff 展示块（无改动时返回空串；截断提示由 buildUnifiedDiff 内嵌，不重复追加） */
-function diffSuffix(diff: DiffDisclosure): string {
+export function diffSuffix(diff: DiffDisclosure): string {
   if (!diff.content) return ''
   return `\n\n\`\`\`diff\n${diff.content}\n\`\`\``
+}
+
+/**
+ * 读取可编辑的 UTF-8 文本文件（file_edit / apply_patch 共用）。
+ * 二进制与非 UTF-8（如 GBK）显式拒绝——写回会静默损坏原文件。
+ */
+export function readEditableText(
+  filePath: string,
+  resolved: string,
+): { ok: true; content: string } | { ok: false; error: string } {
+  if (!fs.existsSync(resolved)) return { ok: false, error: `文件不存在: ${filePath}` }
+  if (!fs.statSync(resolved).isFile()) return { ok: false, error: `路径不是文件: ${filePath}` }
+  const buf = fs.readFileSync(resolved)
+  if (buf.includes(0)) return { ok: false, error: `文件是二进制文件，无法进行文本编辑: ${filePath}` }
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
+    return { ok: true, content: text.replace(/\r\n/g, '\n') }
+  } catch {
+    return { ok: false, error: `文件不是有效的 UTF-8 文本，无法进行文本编辑（请用 shell 命令处理编码转换后重试）: ${filePath}` }
+  }
 }
 
 // ====== file_read：读取文件内容 ======
@@ -102,15 +124,15 @@ export const fileReadTool: ToolDefinition = {
   id: 'file_read',
   name: 'file_read',
   title: '读取文件',
-  description: `读取本地文件内容。支持文本文件直接读取，parse=true 可解析 PDF/DOCX/XLSX/PPTX/图片 OCR。offset/max_length 分段读取（默认${DEFAULT_MAX_LENGTH}字符），默认显示行号。`,
+  description: `Read a local file. Text files are returned as-is, line-numbered by default; page through large files with offset/max_length. Set parse=true to extract text from PDF/DOCX/XLSX/PPTX or run OCR on an image instead of reading raw bytes.`,
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '目标文件绝对路径' },
-      offset: { type: 'number', description: '起始字符偏移量（默认0）', minimum: 0 },
-      max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，上限${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
-      parse: { type: 'boolean', description: '是否解析二进制文档（PDF/DOCX/XLSX/PPTX/图片OCR），默认false' },
-      show_line_numbers: { type: 'boolean', description: '是否显示行号（默认true）' },
+      path: { type: 'string', description: 'Absolute file path' },
+      offset: { type: 'number', description: 'Start character offset (default 0)', minimum: 0 },
+      max_length: { type: 'number', description: `Max characters to return (default ${DEFAULT_MAX_LENGTH}, max ${MAX_LENGTH_LIMIT})`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
+      parse: { type: 'boolean', description: 'Extract text from PDF/DOCX/XLSX/PPTX/images (default false)' },
+      show_line_numbers: { type: 'boolean', description: 'Prefix each line with its number (default true)' },
     },
     required: ['path'],
   },
@@ -131,13 +153,13 @@ export const fileWriteTool: ToolDefinition = {
   id: 'file_write',
   name: 'file_write',
   title: '写入文件',
-  description: '写入文件，自动建父目录。append=true 追加到文件末尾（默认false，覆盖）。工作区外操作需确认。',
+  description: 'Write a file, creating parent directories as needed. Overwrites by default; append=true appends to the end. Writes outside the workspace need user confirmation.',
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '目标文件绝对路径' },
-      content: { type: 'string', description: '写入内容' },
-      append: { type: 'boolean', description: '是否追加模式（默认false，覆盖）' },
+      path: { type: 'string', description: 'Absolute file path' },
+      content: { type: 'string', description: 'File content' },
+      append: { type: 'boolean', description: 'Append instead of overwrite (default false)' },
     },
     required: ['path', 'content'],
   },
@@ -162,24 +184,28 @@ export const fileEditTool: ToolDefinition = {
   name: 'file_edit',
   title: '编辑文件',
   summary: '对文件部分内容做精确修改（替换/插入/删除），避免全量重写。replace 精确字符串替换；insert 按行号或锚点插入；delete 按行范围或锚点删除。',
-  description: '对已有文件进行部分内容修改，避免每次全量重写。replace: 精确字符串替换（old_string→new_string，默认唯一匹配，replace_all=true 替换全部，new_string 为空即删除）；insert: 插入内容（after_string 锚点优先，否则按 line 行号前插入，都不传则追加末尾）；delete: 删除内容（old_string 精确删除优先，否则按 start_line/end_line 行范围删除）。文件必须已存在。工作区外操作需确认。',
+  description: `Make a targeted change to an existing file instead of rewriting it whole.
+
+replace needs old_string to match the file exactly and uniquely — add surrounding context, or set replace_all=true. insert and delete locate their target by an anchor string or by line number.
+
+The file must already exist: use file_write to create it, or apply_patch to change several files in one step.`,
   parameters: {
     type: 'object',
     properties: {
       operation: {
         type: 'string',
         enum: ['replace', 'insert', 'delete'],
-        description: '操作类型：replace 替换 / insert 插入 / delete 删除',
+        description: 'replace / insert / delete',
       },
-      path: { type: 'string', description: '目标文件绝对路径（必须已存在）' },
-      old_string: { type: 'string', description: 'replace: 要查找的精确文本；delete: 要删除的精确文本。默认必须唯一匹配，replace_all=true 时替换全部' },
-      new_string: { type: 'string', description: 'replace: 替换文本（空字符串=删除该文本）' },
-      replace_all: { type: 'boolean', description: 'replace: 是否替换所有匹配（默认false，仅替换唯一匹配）' },
-      content: { type: 'string', description: 'insert: 要插入的内容' },
-      after_string: { type: 'string', description: 'insert: 在该字符串首次出现后插入（优先于 line）' },
-      line: { type: 'number', description: 'insert: 在该行号前插入（1-based，0或不传=追加末尾）', minimum: 0 },
-      start_line: { type: 'number', description: 'delete: 起始行号（1-based，含）', minimum: 1 },
-      end_line: { type: 'number', description: 'delete: 结束行号（1-based，含）', minimum: 1 },
+      path: { type: 'string', description: 'Absolute file path (must already exist)' },
+      old_string: { type: 'string', description: 'replace/delete: exact text to find; must match uniquely unless replace_all=true' },
+      new_string: { type: 'string', description: 'replace: replacement text (empty string deletes the match)' },
+      replace_all: { type: 'boolean', description: 'replace: replace every occurrence (default false)' },
+      content: { type: 'string', description: 'insert: content to insert' },
+      after_string: { type: 'string', description: 'insert: insert right after this string (takes precedence over line)' },
+      line: { type: 'number', description: 'insert: insert before this line (1-based; 0 or omitted appends at end)', minimum: 0 },
+      start_line: { type: 'number', description: 'delete: first line to remove (1-based, inclusive)', minimum: 1 },
+      end_line: { type: 'number', description: 'delete: last line to remove (1-based, inclusive)', minimum: 1 },
     },
     required: ['operation', 'path'],
   },
@@ -214,22 +240,23 @@ export const fileDeleteTool: ToolDefinition = {
   name: 'file_delete',
   title: '删除文件/文件夹',
   summary: '删除文件或文件夹（移入回收站，可恢复），支持一次传多个路径与 * ? ** 通配符批量删除。删除一律使用本工具，禁止用 shell 命令或脚本删除。',
-  description: `删除文件或目录（移入系统回收站，可恢复，非永久删除）。
-- 删除文件/目录一律使用 file_delete：不要用 shell_exec（rm/del/Remove-Item 等）或 javascript_exec 等脚本删除，这些方式会被安全策略拒绝。
-- paths 支持传多个路径；每个路径可含通配符（* 匹配单段内任意字符，? 匹配单字符，** 跨目录段匹配），匹配到的所有真实路径都会被删除。
-- 目录需显式传 recursive=true 才会删除其内容；非空目录未传时返回错误而非静默删除。
-- 盘根（C:\\、/）与工作区根目录及其上级目录禁止删除。
-- 工作区外删除需用户确认（对展开后的真实路径统一判定，一次弹窗批量授权）。`,
+  description: `Delete files or directories by moving them to the system trash (recoverable).
+
+- path or paths: several targets may be passed at once; each may contain the wildcards * ? ** and every real match is deleted.
+- recursive=true is required to delete a non-empty directory; without it you get an error rather than a silent delete.
+- Drive roots, filesystem roots, and the workspace root (or any ancestor of it) are refused.
+- Deletion must always go through file_delete: rm / del / Remove-Item and script-based deletion are rejected by policy.
+- Targets outside the workspace need confirmation. Deletion is irreversible, so the confirmation cannot be covered by "always allow".`,
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '目标文件或目录路径（绝对路径；相对路径按当前工作区解析）。与 paths 二选一' },
+      path: { type: 'string', description: 'File or directory to delete (absolute path, or relative to the workspace). Provide this or paths' },
       paths: {
         type: 'array',
-        description: '批量删除的目标路径列表（可混合普通路径与含 * ? ** 通配符的路径），相对路径按当前工作区解析',
+        description: 'Targets to delete; plain paths and wildcard patterns (* ? **) may be mixed. Relative paths resolve against the workspace',
         items: { type: 'string' },
       },
-      recursive: { type: 'boolean', description: '删除目录时是否递归删除其内容（默认false）' },
+      recursive: { type: 'boolean', description: 'Delete the contents of a directory as well (default false)' },
     },
     required: [],
   },
@@ -265,16 +292,15 @@ export const reportGeneratedFilesTool: ToolDefinition = {
   name: 'report_generated_files',
   title: '展示生成文件',
   summary: '任务中创建或修改了用户关心的成品文档时，调用此工具声明文件路径，前端会在消息下方展示可预览卡片。',
-  description: `声明本次任务中要让用户看到的成品文件（如 Word/Excel/PPT/PDF/图片等）。
-创建或修改此类文档后，在最终回复前调用一次，传入所有成品文件的绝对路径。
-仅声明用户能直接消费的成品，不要声明临时文件、配置、脚本、中间产物。
-路径需为绝对路径；不存在或扩展名不在白名单的路径会被静默过滤。`,
+  description: `Declare the deliverable files this task produced (Word / Excel / PowerPoint / PDF / images) so the user gets preview cards.
+
+Call it once before your final reply, passing the absolute path of every deliverable. Declare only what the user will consume — not temporary files, configs, scripts or intermediate artifacts. Paths that do not exist, are not files, or have an extension outside the preview whitelist are silently dropped.`,
   parameters: {
     type: 'object',
     properties: {
       files: {
         type: 'array',
-        description: '成品文件绝对路径列表',
+        description: 'Absolute paths of the deliverable files',
         items: { type: 'string' },
       },
     },
@@ -462,104 +488,6 @@ async function writeFile(args: any) {
 
 // ====== file_delete 实现 ======
 
-const IS_WINDOWS = process.platform === 'win32'
-
-/** 通配展开的结果数与扫描目录数上限，防止失控扫描 */
-const GLOB_RESULT_LIMIT = 1000
-const GLOB_SCAN_LIMIT = 20000
-
-/** 是否含 glob 通配符（* ? [..]） */
-function isGlobPattern(p: string): boolean {
-  return /[*?[]/.test(p)
-}
-
-/** 扫描超限信号 */
-class GlobScanOverflow extends Error {}
-
-/** 将单个路径段通配转为正则源（* ? [abc] [!abc]），不跨目录分隔符 */
-function segmentToRegexSource(seg: string): string {
-  let re = ''
-  for (let i = 0; i < seg.length; i++) {
-    const ch = seg[i]
-    if (ch === '*') { re += '[^\\\\/]*'; continue }
-    if (ch === '?') { re += '[^\\\\/]'; continue }
-    if (ch === '[') {
-      const close = seg.indexOf(']', i + 1)
-      if (close === -1) { re += '\\['; continue }
-      let body = seg.slice(i + 1, close)
-      const negated = body.startsWith('!') || body.startsWith('^')
-      if (negated) body = body.slice(1)
-      re += `[${negated ? '^' : ''}${body.replace(/\\/g, '\\\\')}]`
-      i = close
-      continue
-    }
-    re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  }
-  return re
-}
-
-/** 递归通配匹配：segs 为按 / 拆分的模式段，idx 从首个通配段开始 */
-function walkMatch(dir: string, segs: string[], idx: number, out: string[], tick: () => void): void {
-  if (out.length >= GLOB_RESULT_LIMIT) return
-  tick()
-  if (idx >= segs.length) { out.push(dir); return }
-  const seg = segs[idx]
-  const isLast = idx === segs.length - 1
-
-  if (seg === '**') {
-    // ** 可匹配零段或多段目录
-    if (!isLast) walkMatch(dir, segs, idx + 1, out, tick)
-    let entries: fs.Dirent[]
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
-    for (const e of entries) {
-      const full = path.join(dir, e.name)
-      if (isLast) {
-        out.push(full)
-        if (e.isDirectory()) walkMatch(full, segs, idx, out, tick)
-      } else if (e.isDirectory()) {
-        walkMatch(full, segs, idx, out, tick)
-      }
-      if (out.length >= GLOB_RESULT_LIMIT) return
-    }
-    return
-  }
-
-  const re = new RegExp(`^${segmentToRegexSource(seg)}$`, IS_WINDOWS ? 'i' : '')
-  let entries: fs.Dirent[]
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
-  for (const e of entries) {
-    if (!re.test(e.name)) continue
-    const full = path.join(dir, e.name)
-    if (isLast) out.push(full)
-    else if (e.isDirectory()) walkMatch(full, segs, idx + 1, out, tick)
-    if (out.length >= GLOB_RESULT_LIMIT) return
-  }
-}
-
-/** 展开通配路径为匹配到的真实绝对路径（相对路径先按工作区解析） */
-function expandGlob(raw: string): string[] {
-  const resolvedPattern = resolveToolPath(raw)
-  // 从首个通配字符前的静态前缀确定扫描起点
-  const firstGlobChar = resolvedPattern.search(/[*?[]/)
-  const staticPart = firstGlobChar === -1 ? resolvedPattern : resolvedPattern.slice(0, firstGlobChar)
-  const base = /[\\/]$/.test(staticPart)
-    ? path.resolve(staticPart)
-    : path.dirname(path.resolve(staticPart))
-  const segs = resolvedPattern.replace(/\\/g, '/').split('/').filter(s => s !== '' && s !== '.')
-  const firstGlobSeg = segs.findIndex(isGlobPattern)
-
-  const out: string[] = []
-  let scanned = 0
-  try {
-    walkMatch(base, segs, firstGlobSeg, out, () => {
-      if (++scanned > GLOB_SCAN_LIMIT) throw new GlobScanOverflow()
-    })
-  } catch (e) {
-    if (!(e instanceof GlobScanOverflow)) throw e
-  }
-  return out
-}
-
 async function deleteFile(args: any) {
   // 兼容单个 path 与批量 paths 两种入参
   const inputs: string[] = []
@@ -578,7 +506,7 @@ async function deleteFile(args: any) {
   const unmatched: string[] = []
   for (const raw of inputs) {
     if (isGlobPattern(raw)) {
-      const matched = expandGlob(raw)
+      const matched = expandGlobPattern(resolveToolPath(raw)).matches
       if (matched.length === 0) unmatched.push(raw)
       else for (const m of matched) targetSet.add(path.resolve(m))
     } else {
@@ -670,18 +598,10 @@ async function loadEditTarget(args: any): Promise<{ content: string; resolved: s
 
   const resolved = resolveToolPath(filePath)
   if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
-  if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
-  // 非 UTF-8（如 GBK）或二进制文件无法安全做文本编辑（写回会静默损坏），显式拒绝
-  const buf = fs.readFileSync(resolved)
-  if (buf.includes(0)) return { success: false, error: `文件是二进制文件，无法进行文本编辑: ${filePath}` }
-  let content: string
-  try {
-    content = new TextDecoder('utf-8', { fatal: true }).decode(buf)
-  } catch {
-    return { success: false, error: `文件不是有效的 UTF-8 文本，无法进行文本编辑（请用 shell 命令处理编码转换后重试）: ${filePath}` }
-  }
-  return { content: content.replace(/\r\n/g, '\n'), resolved }
+  const read = readEditableText(filePath, resolved)
+  if (!read.ok) return { success: false, error: read.error }
+  return { content: read.content, resolved }
 }
 
 /**

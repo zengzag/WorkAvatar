@@ -164,11 +164,13 @@ describe('runPiAgentLoop / 消息转换', () => {
     expect(h.agentLoopCalls).toHaveLength(1)
     expect(h.agentLoopContinueCalls).toHaveLength(0)
     const [prompts, context] = h.agentLoopCalls[0]
-    expect(context.systemPrompt).toBe('S1\n\nS2')
+    // pi-ai 1.x：提示词与工具声明折叠为 transcript 首条 system 消息（不再走 context.systemPrompt）
+    expect(context.messages[0].role).toBe('system')
+    expect(context.messages[0].content).toBe('S1\n\nS2')
     expect(prompts).toHaveLength(1)
     expect(prompts[0].content).toBe('last question')
     // context 内的 user 不含最后一条
-    expect(context.messages.map((m: any) => m.role)).toEqual(['user', 'assistant', 'toolResult'])
+    expect(context.messages.map((m: any) => m.role)).toEqual(['system', 'user', 'assistant', 'toolResult'])
   })
 
   it('无 user 消息时走 agentLoopContinue 且 prompts 为空', async () => {
@@ -227,7 +229,7 @@ describe('runPiAgentLoop / 消息转换', () => {
       ],
     })
     await runPiAgentLoop(params)
-    const asst = h.agentLoopCalls[0][1].messages[0]
+    const asst = h.agentLoopCalls[0][1].messages[1]
     expect(asst.role).toBe('assistant')
     expect(asst.content[0]).toEqual({ type: 'text', text: '正文' })
     expect(asst.content[1]).toEqual({ type: 'thinking', thinking: '思考中', thinkingSignature: 'reasoning_content' })
@@ -240,7 +242,7 @@ describe('runPiAgentLoop / 消息转换', () => {
   it('assistant 空内容不产生 text part', async () => {
     const { params } = makeHarness({ messages: [systemMsg('S'), asstMsg(''), userMsg('q')] })
     await runPiAgentLoop(params)
-    expect(h.agentLoopCalls[0][1].messages[0].content).toEqual([])
+    expect(h.agentLoopCalls[0][1].messages[1].content).toEqual([])
   })
 
   it('tool 消息 → toolResult（空内容为 [] 且 toolCallId 兜底空串）', async () => {
@@ -248,7 +250,8 @@ describe('runPiAgentLoop / 消息转换', () => {
       messages: [systemMsg('S'), userMsg('u'), toolMsg('', undefined), userMsg('q')],
     })
     await runPiAgentLoop(params)
-    const [user1, tool1] = h.agentLoopCalls[0][1].messages
+    const [sys1, user1, tool1] = h.agentLoopCalls[0][1].messages
+    expect(sys1.role).toBe('system')
     expect(user1.role).toBe('user')
     expect(tool1).toMatchObject({ role: 'toolResult', toolCallId: '', toolName: '', content: [], isError: false })
   })
@@ -258,7 +261,7 @@ describe('runPiAgentLoop / 消息转换', () => {
       messages: [{ role: 'system', content: undefined as any }, userMsg('q')],
     })
     await runPiAgentLoop(params)
-    expect(h.agentLoopCalls[0][1].systemPrompt).toBe('')
+    expect(h.agentLoopCalls[0][1].messages[0]).toMatchObject({ role: 'system', content: '' })
   })
 })
 
@@ -659,7 +662,7 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(out).toEqual(msgs)
   })
 
-  it('convertToLlm 对无图片的消息与其入参相等（视觉注入新建数组），shouldStopAfterTurn 按 maxIterations 计数', async () => {
+  it('convertToLlm 对无图片的消息与其入参相等（视觉注入新建数组），finishTurn 按 maxIterations 结束', async () => {
     const harness = makeHarness({ maxIterations: 2 })
     await runPiAgentLoop(harness.params)
     const config = h.agentLoopCalls[0][2]
@@ -684,9 +687,10 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(out).toHaveLength(2)
     expect(out[1].content).toEqual([{ type: 'text', text: '已读取图片' }, { type: 'text', text: expect.stringContaining('This model does not support image input') }])
     expect(config.toolExecution).toBe('sequential')
-    expect(config.shouldStopAfterTurn()).toBe(false)
-    expect(config.shouldStopAfterTurn()).toBe(true)
-    expect(config.shouldStopAfterTurn()).toBe(true)
+    // finishTurn：未达上限返回 undefined（正常调度），到达上限返回 end 结束本次 run
+    expect(config.finishTurn()).toBeUndefined()
+    expect(config.finishTurn()).toEqual({ action: 'end' })
+    expect(config.finishTurn()).toEqual({ action: 'end' })
   })
 
   it('enableThinking / sessionId 按需注入 loopConfig', async () => {
@@ -815,7 +819,18 @@ describe('wrapStreamWithLogging（经 streamFn 驱动）', () => {
       },
     ])
     const streamFn = await captureWrappedStream()
-    const wrapped: any = await streamFn(undefined, { systemPrompt: 'SYS', messages: [{ role: 'user', content: 'q' }], tools: [{ name: 'tool_a', description: 'd', parameters: {} }] }, { temperature: 0.5, maxTokens: 100 })
+    // pi-agent-core 1.x 传入的是已归一化 transcript：提示词/工具声明在首条 system 消息里
+    const wrapped: any = await streamFn(undefined, {
+      messages: [
+        {
+          role: 'system',
+          content: 'SYS',
+          toolsAdded: [{ name: 'tool_a', description: 'd', parameters: {} }],
+          timestamp: 0,
+        },
+        { role: 'user', content: 'q', timestamp: 0 },
+      ],
+    }, { temperature: 0.5, maxTokens: 100 })
 
     const received: any[] = []
     for await (const ev of wrapped) received.push(ev.type)

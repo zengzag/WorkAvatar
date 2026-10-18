@@ -10,6 +10,7 @@ import { PLUGIN_CHANNELS } from './plugin'
 import { NOTIFY_CHANNELS } from './notification'
 import { ATTACHMENT_CHANNELS } from './attachment'
 import { SNAPSHOT_CHANNELS } from './snapshot'
+import { SHELL_BG_CHANNELS } from './shell-bg'
 import { SUBAGENT_CHANNELS } from './subagent'
 
 export const IPC_CHANNELS = {
@@ -25,6 +26,7 @@ export const IPC_CHANNELS = {
   ...NOTIFY_CHANNELS,
   ...ATTACHMENT_CHANNELS,
   ...SNAPSHOT_CHANNELS,
+  ...SHELL_BG_CHANNELS,
   ...SUBAGENT_CHANNELS,
 } as const
 
@@ -40,4 +42,5 @@ export * from './plugin'
 export * from './notification'
 export * from './attachment'
 export * from './snapshot'
+export * from './shell-bg'
 export * from './subagent'

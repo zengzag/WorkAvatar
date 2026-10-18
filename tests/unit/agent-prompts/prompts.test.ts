@@ -61,7 +61,7 @@ describe('agent/business/prompts / buildEmployeeSystemPrompt', () => {
     const withFlag = buildEmployeeSystemPrompt({ name: 'A', instructions: '', hasFileDelete: true })
     const without = buildEmployeeSystemPrompt({ name: 'A', instructions: '' })
     expect(withFlag).toContain('file_delete')
-    expect(withFlag).toMatch(/Never delete via shell_exec/)
+    expect(withFlag).toMatch(/Delete files and directories only through file_delete/)
     expect(without).not.toContain('file_delete')
   })
 

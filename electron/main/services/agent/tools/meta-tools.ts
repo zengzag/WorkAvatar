@@ -37,12 +37,12 @@ function formatParameters(params: ToolDefinition['parameters']): string {
 function formatToolsSummary(tools: ToolDefinition[]): string {
   const lines = tools.map(t => `- ${t.name}: ${t.summary || t.title}`)
   return [
-    `可用按需工具（共 ${tools.length} 个）：`,
+    `Available on-demand tools (${tools.length}):`,
     '',
     lines.join('\n'),
     '',
-    '调用 invoke_tool(tool_name="工具名", args={...}) 使用工具。',
-    '如需查看工具的详细参数说明，调用 list_available_tools(tool_name="工具名") 或 list_available_tools(tool_name=["工具名1", "工具名2"]) 一次获取多个工具详情。',
+    'Call them with invoke_tool(tool_name="<name>", args={...}).',
+    'For the full parameter reference of one or more tools, call list_available_tools(tool_name="<name>") or list_available_tools(tool_name=["<name1>", "<name2>"]).',
   ].join('\n')
 }
 
@@ -74,7 +74,7 @@ export function createListAvailableToolsTool(
     id: 'list_available_tools',
     name: 'list_available_tools',
     title: '列出可用工具',
-    description: '列出当前可用的按需工具。无参数时返回所有工具的名称和一句话功能描述（摘要模式）；传入 tool_name 时返回指定工具的完整参数说明（详情模式），tool_name 支持字符串或字符串数组，可一次获取多个工具详情。当常用工具无法满足需求时（如需检索资料库、管理日程、生成文档等），先调用本工具浏览可用工具，再按需获取详细参数说明，最后用 invoke_tool 调用。',
+    description: 'List the on-demand tools that are available but not declared in this request. Call it without arguments for one-line summaries of every on-demand tool, or pass tool_name (a string or an array) for the full parameter reference of specific tools. Use it when the always-available tools cannot cover the task, then run the tool through invoke_tool.',
     parameters: {
       type: 'object',
       properties: {
@@ -235,7 +235,7 @@ export function createInvokeToolTool(
     id: 'invoke_tool',
     name: 'invoke_tool',
     title: '调用按需工具',
-    description: '调用按需工具。先用 list_available_tools 获取工具名和参数说明，再将参数组装为 args 对象传入。args 的结构由对应工具的参数说明决定。失败时返回结构化错误上下文（错误类型、修复建议、工具输出、已生成文件），请据此修正参数或代码后重试。',
+    description: 'Call an on-demand tool. Pass tool_name (from list_available_tools) and its arguments as an object. On failure the result includes the error type, a suggested fix, the tool\'s own debug output and any files it already wrote, so you can correct the arguments and retry.',
     parameters: {
       type: 'object',
       properties: {

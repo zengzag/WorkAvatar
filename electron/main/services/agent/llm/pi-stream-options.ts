@@ -111,8 +111,10 @@ function buildOpenAICompletionsStreamOptions(input: PiStreamOptionsInput): Recor
  */
 function buildAnthropicStreamOptions(input: PiStreamOptionsInput): Record<string, any> {
   const reasoning = resolveReasoningEffort(input.providerType, input.modelId, input.enableThinking)
-  // Anthropic 不使用 OpenAI 会话亲和路由头，仅透传供应商显式附加头
-  const headers: Record<string, string> = { ...(input.extraHeaders || {}) }
+  // 供应商会话路由头（如 opencode-go 的 x-opencode-session，缺失会被上游以 MissingSessionID 拒绝）
+  // 与接口形式无关，三种形态都要带；供应商显式配置的附加头优先
+  const routingHeaders = getProviderExtraRequestHeaders(input.providerType, input.modelId, input.sessionId)
+  const headers: Record<string, string> = { ...(routingHeaders || {}), ...(input.extraHeaders || {}) }
 
   return {
     ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),

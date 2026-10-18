@@ -53,6 +53,10 @@ export type {
   SettingsSetParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
+  StorageCategoryKey,
+  StorageCategoryUsage,
+  StorageUsageResult,
+  StoragePathParams,
 } from './channels/app'
 export type {
   KMSAddDirParams,
@@ -121,6 +125,13 @@ export type {
   FileChangeItem,
   SnapshotRevertResult,
 } from './channels/snapshot'
+export type {
+  ShellBgStatus,
+  ShellBgListParams,
+  ShellBgKillParams,
+  ShellBgKillResult,
+  ShellBgTaskItem,
+} from './channels/shell-bg'
 export type {
   SubAgentProfileCreateParams,
   SubAgentProfileUpdateParams,

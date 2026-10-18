@@ -155,6 +155,15 @@ describe('agent/tools/delegate_to_employee', () => {
       .toBe('委托执行失败')
   })
 
+  it('等待超时但子任务仍在执行：返回 pending 而非失败', async () => {
+    runtimeState.launchQueue = [{ success: true, runId: 'r1', targetEmployeeName: '小王' }]
+    runtimeState.outcomes = [{ runId: 'r1', status: 'running', success: false, pending: true }]
+    const res = await run(PARENT, () => delegateTool.handler!({ target_employee_id: 'e1', instruction: '做' }) as Promise<any>)
+    expect(res).toMatchObject({ success: true, pending: true, delegationId: 'r1', targetEmployeeName: '小王' })
+    expect(res.output).toContain('仍在执行中')
+    expect(res.error).toBeUndefined()
+  })
+
   it('上下文参数（深度/链/权限/思考/文件）完整下传给 runtime', async () => {
     runtimeState.launchQueue = [{ success: true, runId: 'r1', targetEmployeeName: '小王' }]
     runtimeState.outcomes = [{ runId: 'r1', success: true, output: 'ok' }]
@@ -334,6 +343,16 @@ describe('agent/tools/followup_delegation', () => {
       .toBe('轮数超限')
   })
 
+  it('等待超时但追问的子任务仍在执行：返回 pending 而非失败', async () => {
+    runtimeState.launchQueue = [{ success: true, runId: 'r4', targetEmployeeName: '小王' }]
+    runtimeState.outcomes = [{ runId: 'r4', status: 'running', success: false, pending: true }]
+    const res = await run(PARENT, () => followupTool.handler!({ delegation_id: 'd1', instruction: '再改' }) as Promise<any>)
+    expect(res).toMatchObject({ success: true, pending: true, delegationId: 'r4', followupOfDelegationId: 'd1' })
+    expect(res.output).toContain('尚未结束')
+    expect(res.output).toContain('不要向用户报告失败')
+    expect(res.error).toBeUndefined()
+  })
+
   it('非字符串参数被 String() 归一（undefined → 空串）', async () => {
     runtimeState.launchQueue = [{ success: true, runId: 'r2', targetEmployeeName: '小王' }]
     runtimeState.outcomes = [{ runId: 'r2', success: true, output: 'ok' }]
@@ -462,14 +481,15 @@ describe('agent/tools/await_agents', () => {
     expect(runtimeState.awaitCalls).toHaveLength(0)
   })
 
-  it('timeout_seconds 夹取到 (0, 300] 秒，缺省 280s', async () => {
+  it('timeout_seconds 夹取到 (0, 280] 秒（严格小于工具层 300s 超时），缺省 280s', async () => {
     runtimeState.outcomes = []
     await awaitAgentsTool.handler!({ run_ids: ['r1'] })
     await awaitAgentsTool.handler!({ run_ids: ['r1'], timeout_seconds: 1000 })
     await awaitAgentsTool.handler!({ run_ids: ['r1'], timeout_seconds: 0 })
     await awaitAgentsTool.handler!({ run_ids: ['r1'], timeout_seconds: -5 })
     await awaitAgentsTool.handler!({ run_ids: ['r1'], timeout_seconds: '30' })
-    expect(runtimeState.awaitCalls.map(c => c.timeoutMs)).toEqual([280000, 300000, 280000, 280000, 280000])
+    await awaitAgentsTool.handler!({ run_ids: ['r1'], timeout_seconds: 100 })
+    expect(runtimeState.awaitCalls.map(c => c.timeoutMs)).toEqual([280000, 280000, 280000, 280000, 280000, 100000])
   })
 
   it('聚合成功/失败结果，部分成功时 success 为 true', async () => {
@@ -481,6 +501,21 @@ describe('agent/tools/await_agents', () => {
     expect(res.success).toBe(true)
     expect(res.output).toBe('[✓ r1] 第一行\n[✗ r2] 失败原因')
     expect(res.results).toHaveLength(2)
+  })
+
+  it('仍在执行中的子任务（pending）标记为进行中，且不算失败', async () => {
+    runtimeState.outcomes = [
+      { runId: 'r1', status: 'running', success: false, pending: true },
+      { runId: 'r2', success: true, output: '完成' },
+    ]
+    const res = await awaitAgentsTool.handler!({ run_ids: ['r1', 'r2'] }) as Promise<any>
+    expect(res.success).toBe(true)
+    expect(res.output).toContain('[⏳ r1] 仍在执行中')
+    expect(res.output).toContain('[✓ r2] 完成')
+    expect(res.output).toContain('不是失败')
+    // 全部 pending 时同样不判为失败
+    runtimeState.outcomes = [{ runId: 'r1', status: 'running', success: false, pending: true }]
+    expect((await awaitAgentsTool.handler!({ run_ids: ['r1'] }) as Promise<any>).success).toBe(true)
   })
 
   it('全部失败时 success 为 false', async () => {
@@ -598,9 +633,9 @@ describe('委托目标/模板枚举注入（applyDelegationEnums）', () => {
     const tool = applyDelegationEnums(delegateTool, [{ id: 'e1', name: '写手' }], [{ id: 'p1', name: 'explore' }])
     const props = tool.parameters.properties as any
     expect(props.target_employee_id.enum).toEqual(['e1'])
-    expect(props.target_employee_id.description).toContain('写手(id=e1)')
+    expect(props.target_employee_id.description).toContain('写手 (id=e1)')
     expect(props.subagent_profile_id.enum).toEqual(['p1'])
-    expect(props.subagent_profile_id.description).toContain('explore(id=p1)')
+    expect(props.subagent_profile_id.description).toContain('explore (id=p1)')
     // 原工具不被就地修改
     expect((delegateTool.parameters.properties as any).target_employee_id.enum).toBeUndefined()
   })

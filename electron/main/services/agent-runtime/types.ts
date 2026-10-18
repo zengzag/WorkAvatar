@@ -125,6 +125,8 @@ export interface AgentRunOutcome {
   employeeName?: string
   status: AgentRunStatus
   success: boolean
+  /** 等待超时但运行尚未结束（仍在排队/执行）——不等于失败，须与 failed 区分 */
+  pending?: boolean
   output?: string
   error?: string
   tokenUsage?: AgentRunTokenUsage

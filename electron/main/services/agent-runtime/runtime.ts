@@ -885,6 +885,12 @@ class SubAgentRuntime {
       } finally {
         if (timer) clearTimeout(timer)
       }
+      // 等待超时而 run 仍未结束：转为后台通知模式（完成后向主管投递通知），
+      // 避免主管只拿到一次「未完成」结果后再也无法获知终态
+      if (!isTerminal(entry.run.status) && !entry.run.runInBackground) {
+        entry.run.runInBackground = true
+        this.persistRun(entry.run)
+      }
       return this.buildOutcome(entry.run)
     })
     return Promise.all(waiters)
@@ -916,6 +922,11 @@ class SubAgentRuntime {
     }
     if (run.status === 'cancelled') {
       return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '已取消', conversationId: run.conversationId }
+    }
+    // 未终态（等待超时、仍在排队/执行）：不是失败，交由调用方按 pending 语义呈现，
+    // 避免把「仍在运行」误报为执行失败（主管 LLM 与前端委托卡都会因此误判）
+    if (!isTerminal(run.status)) {
+      return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, pending: true, conversationId: run.conversationId }
     }
     return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '执行失败', conversationId: run.conversationId }
   }

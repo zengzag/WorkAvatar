@@ -12,6 +12,10 @@ import {
   type ImageContent,
   type ToolCall as PiToolCall,
   type Usage as PiUsage,
+  createInitialSystemMessage,
+  toToolDeclaration,
+  getCurrentSystemPrompt,
+  getCurrentTools,
 } from '@earendil-works/pi-ai'
 import type {
   AgentTool,
@@ -89,9 +93,7 @@ function createStreamFn(config: AgentConfig): StreamFn {
     // push partialMessage / 替换为 finalMessage（agent-loop.js streamAssistantResponse），
     // 而 convertToLlm 返回同一数组引用，若不快照，日志 request.messages 会混入当次 LLM 回答
     const contextSnapshot: Context = {
-      systemPrompt: context.systemPrompt,
       messages: [...context.messages],
-      ...(context.tools ? { tools: context.tools } : {}),
     }
     // 采样 / 传输设置：AgentConfig.stream（模型/供应商配置派生）优先，其次尊重 pi-agent-core 透传的 options
     const stream = config.stream || {}
@@ -137,10 +139,15 @@ function createStreamFn(config: AgentConfig): StreamFn {
 /** pi Context.messages → LLM 日志格式（OpenAI 风格，与 PiAIProvider.sanitizeMessagesForLog 一致） */
 function piContextToLogMessages(context: Context): any[] {
   const messages: any[] = []
-  if (context.systemPrompt) {
-    messages.push({ role: 'system', content: context.systemPrompt })
+  // pi-ai 1.x 把系统提示词与工具声明折叠进首条 system 消息，还原出提示词便于日志阅读
+  const systemPrompt = getCurrentSystemPrompt(context.messages)
+  if (systemPrompt) {
+    messages.push({ role: 'system', content: systemPrompt })
   }
   for (const m of context.messages) {
+    if (m.role === 'system') {
+      continue
+    }
     if (m.role === 'user') {
       const content = typeof m.content === 'string'
         ? m.content
@@ -258,7 +265,7 @@ function wrapStreamWithLogging(
     const latencyMs = Date.now() - logMeta.startTime
     const request = {
       messages: piContextToLogMessages(logMeta.context),
-      tools: piToolsToLogTools(logMeta.context.tools),
+      tools: piToolsToLogTools(getCurrentTools(logMeta.context.messages)),
       temperature: logMeta.options?.temperature,
       max_tokens: logMeta.options?.maxTokens,
       stream: true as const,
@@ -827,9 +834,14 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
     }
   }
 
+  // pi-ai 1.x 的 AgentContext 不再承载 systemPrompt/tools：提示词与工具声明折叠为
+  // transcript 首条 system 消息（tools 仍用于工具执行）
+  const systemMessage = createInitialSystemMessage(systemPrompt, agentTools.map(toToolDeclaration))
   const piAgentContext: PiAgentContext = {
-    systemPrompt: systemPrompt || '',
-    messages: contextMessages as AgentMessage[],
+    messages: [
+      ...(systemMessage ? [systemMessage] : []),
+      ...contextMessages,
+    ] as AgentMessage[],
     tools: agentTools,
   }
 
@@ -861,9 +873,10 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
       return converted
     },
     transformContext: async (msgs: AgentMessage[]) => trimPiToolResults(msgs),
-    shouldStopAfterTurn: () => {
+    // pi-ai 1.x 以 finishTurn 取代 shouldStopAfterTurn：undefined 表示正常调度，end 表示结束本次 run
+    finishTurn: () => {
       turnCount++
-      return turnCount >= maxIterations
+      return turnCount >= maxIterations ? { action: 'end' as const } : undefined
     },
     toolExecution: 'sequential',
     // pi-agent-core 通过 config.reasoning 传给 streamFn 的 options.reasoning

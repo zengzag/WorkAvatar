@@ -19,18 +19,17 @@ export const followupTool: ToolDefinition = {
   name: 'followup_delegation',
   title: '追问子智能体',
   summary: '针对已完成委托的结果追问/补充要求，子智能体保留原任务上下文',
-  description: `针对已完成委托（delegate_to_employee 或 followup_delegation）的执行结果进行追问，同一子智能体保留原任务全部上下文继续多轮协作。
-适用场景：结果存在错误、缺失细节、不满足验收标准，需要修正或补充而非重新委托。
-参数：
-- delegation_id: 目标委托 id（delegate_to_employee / followup_delegation 返回结果中的 delegationId）
-- instruction: 追问内容（明确指出问题所在与期望的修正结果）
-返回：子智能体基于历史上下文的追问结果摘要与产物文件清单。
-限制：只能追问已结束的委托；同一委托对话累计轮数上限 5 轮（含首轮）。`,
+  description: `Ask follow-up questions or request revisions on a finished delegation. The same sub-agent keeps its original task context, so prefer this over re-delegating when a result is wrong, incomplete, or misses an acceptance criterion.
+
+delegation_id: the delegationId returned by delegate_to_employee / followup_delegation.
+instruction: what was wrong or missing, and what the corrected result should be.
+
+Limits: only finished delegations can be followed up; a delegation conversation is capped at 5 rounds including the first.`,
   parameters: {
     type: 'object',
     properties: {
-      delegation_id: { type: 'string', description: '目标委托 id（delegate_to_employee / followup_delegation 返回结果中的 delegationId）' },
-      instruction: { type: 'string', description: '追问内容：指出上一轮结果的问题（错误/缺失细节）与期望的修正结果' },
+      delegation_id: { type: 'string', description: 'Target delegationId returned by delegate_to_employee / followup_delegation' },
+      instruction: { type: 'string', description: 'What was wrong or missing, and the expected corrected result' },
     },
     required: ['delegation_id', 'instruction'],
   },
@@ -80,6 +79,17 @@ async function handleFollowup(args: Record<string, any>): Promise<any> {
 
   if (!outcome) {
     return { success: false, error: '追问执行异常', ...base }
+  }
+
+  // 同步等待窗口内未结束：子任务仍在执行（不是失败），完成后会向本会话投递通知
+  if (outcome.pending) {
+    return {
+      success: true,
+      pending: true,
+      output: `${launched.targetEmployeeName} 仍在按追问要求继续执行（已超出同步等待窗口，尚未结束，未失败也未取消）。\n` +
+        '不要向用户报告失败。可稍后用 get_subagent_status 查看进度，或等完成通知（read_run_notifications）后再次追问。',
+      ...base,
+    }
   }
 
   if (outcome.success) {

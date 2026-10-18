@@ -35,19 +35,19 @@ export const webSearchTool: ToolDefinition = {
   name: 'web_search',
   title: '网络搜索',
   description:
-    '在互联网上搜索信息。支持 Google、Bing、百度、DuckDuckGo 四种搜索引擎。使用设置中配置的默认引擎，也可通过 engine 参数指定。当首选引擎不可用时自动尝试其他引擎。返回标题、链接和内容摘要。',
+    'Search the web and return titles, links and content snippets. A preferred engine is configured in settings; other engines are tried automatically when it is unavailable or returns nothing.',
   parameters: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: '搜索关键词' },
+      query: { type: 'string', description: 'Search query' },
       engine: {
         type: 'string',
-        description: '搜索引擎名称，可选值: google、bing、baidu、duckduckgo。不填则使用设置中的默认值',
+        description: 'Search engine: google, bing, baidu or duckduckgo. Defaults to the configured engine',
         enum: SUPPORTED_ENGINES
       },
       count: {
         type: 'number',
-        description: '返回结果数量（1-10，不填则使用设置中的默认值）',
+        description: 'Number of results (1-10). Defaults to the configured value',
         minimum: 1,
         maximum: 10
       }

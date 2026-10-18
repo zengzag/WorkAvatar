@@ -67,12 +67,12 @@ export function applyDelegationEnums(
       const target = props.target_employee_id
       if (target && targets.length > 0) {
         target.enum = targets.map(t => t.id)
-        target.description = `三选一：已有数字员工 id，可选：${targets.map(t => `${t.name}(id=${t.id})`).join('、')}`
+        target.description = `Executor option 1 of 3: existing employee id. Available: ${targets.map(t => `${t.name} (id=${t.id})`).join(', ')}`
       }
       const profile = props.subagent_profile_id
       if (profile && profiles.length > 0) {
         profile.enum = profiles.map(p => p.id)
-        profile.description = `三选一：子智能体模板 id，可选：${profiles.map(p => `${p.name}(id=${p.id})`).join('、')}`
+        profile.description = `Executor option 3 of 3: reusable sub-agent profile id. Available: ${profiles.map(p => `${p.name} (id=${p.id})`).join(', ')}`
       }
       for (const key of Object.keys(props)) visit(props[key])
     }

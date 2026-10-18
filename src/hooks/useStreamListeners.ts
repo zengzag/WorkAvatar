@@ -381,19 +381,22 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             // delegate 业务成功判断：优先从 rawResult.success（delegate.tool 返回的业务结果）
             // 顶层 success 是"工具调用是否成功"（基于 isError），不代表委派业务成功
             const isSuccess = rawResult?.success !== undefined ? !!rawResult.success : (success !== undefined ? success : true)
+            // pending：同步等待窗口内子任务未结束（仍在后台执行），不是失败——保持运行态与展开，
+            // 终态由后续 run 事件（result/cancelled）确认
+            const isPending = rawResult?.pending === true
             const targetName = rawResult?.targetEmployeeName || segs[delIdx].targetEmployeeName
             segs[delIdx] = {
               ...segs[delIdx],
               delegationId: delId || segs[delIdx].delegationId,
               targetEmployeeName: targetName,
-              delegationStatus: isSuccess ? 'completed' : 'failed',
+              delegationStatus: isPending ? 'streaming' : (isSuccess ? 'completed' : 'failed'),
               resultSummary: typeof result === 'string' ? result : (rawResult?.output || rawResult?.error),
               toolResult: result,
               isToolComplete: true,
-              toolError: isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined)),
+              toolError: isPending ? undefined : (isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined))),
               delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
-              completedAt: Date.now(),
-              collapsed: true,
+              completedAt: isPending ? undefined : Date.now(),
+              collapsed: !isPending,
             }
             return { ...m, segments: segs }
           }
