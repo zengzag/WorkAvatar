@@ -105,13 +105,16 @@ const MAX_OCR_LONG_SIDE = 2000
 /** 单张图片耗时超过该阈值时打 warn 日志，便于定位异常大图 */
 const SLOW_RECOGNIZE_WARN_MS = 15_000
 
+/** PP-OCRv6_tiny 识别头输出类别数（CTC + NRTR 双头），字典不足时补齐到该长度 */
+const RECOGNITION_OUTPUT_CLASSES = 6906
+
 // ── PaddleOCR 初始化 ──────────────────────────────────────────
 
 async function initialize(): Promise<void> {
-  const modelDir = path.join(initData.resourcesDir, 'paddleocr', 'ppocr_v5_mobile')
-  const detPath = path.join(modelDir, 'PP-OCRv5_mobile_det_infer.onnx')
-  const recPath = path.join(modelDir, 'PP-OCRv5_mobile_rec_infer.onnx')
-  const dictPath = path.join(modelDir, 'ppocrv5_dict.txt')
+  const modelDir = path.join(initData.resourcesDir, 'paddleocr', 'ppocr_v6_tiny')
+  const detPath = path.join(modelDir, 'PP-OCRv6_tiny_det_infer.onnx')
+  const recPath = path.join(modelDir, 'PP-OCRv6_tiny_rec_infer.onnx')
+  const dictPath = path.join(modelDir, 'ppocrv6_tiny_dict.txt')
 
   if (!fs.existsSync(detPath) || !fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
     throw new Error(`PaddleOCR model files missing: ${modelDir}`)
@@ -129,15 +132,15 @@ async function initialize(): Promise<void> {
   const recBuffer = toArrayBuffer(await fs.promises.readFile(recPath))
   const dictText = await fs.promises.readFile(dictPath, 'utf-8')
   let charactersDictionary = dictText.split(/\r?\n/).filter(line => line.length > 0)
-  if (charactersDictionary.length < 18385) {
-    const padding = 18385 - charactersDictionary.length
+  if (charactersDictionary.length < RECOGNITION_OUTPUT_CLASSES) {
+    const padding = RECOGNITION_OUTPUT_CLASSES - charactersDictionary.length
     charactersDictionary = charactersDictionary.concat(new Array(padding).fill(''))
     logger.info(`Padded PaddleOCR dictionary with ${padding} empty entries (total ${charactersDictionary.length})`)
   }
 
   paddleocr = await (PaddleOcrService as unknown as PaddleOcrCtor).createInstance({
     ort: ort.default ?? ort,
-    modelPreset: 'PP-OCRv5_mobile',
+    modelPreset: 'PP-OCRv6_tiny',
     detection: { modelBuffer: detBuffer },
     recognition: {
       modelBuffer: recBuffer,
@@ -145,7 +148,7 @@ async function initialize(): Promise<void> {
     },
   })
 
-  logger.info('PaddleOCR v5 mobile engine initialized in Worker')
+  logger.info('PaddleOCR v6 tiny engine initialized in Worker')
 }
 
 // ── OCR 识别 ────────────────────────────────────────────────────

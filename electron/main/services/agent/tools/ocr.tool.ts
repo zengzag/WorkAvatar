@@ -16,7 +16,7 @@ export const ocrImageTool: ToolDefinition = {
   name: 'ocr_image',
   title: '图片识别',
   summary: '对图片进行 OCR 文字识别，提取图片中的文字内容。',
-  description: '对本地图片做 OCR 文字识别，提取图片中的文字。支持 png/jpg/jpeg/bmp/tiff/webp 格式。返回识别文本、整体置信度与逐文字块（含坐标）。',
+  description: '对本地图片做 OCR 文字识别，提取图片中的文字。支持 png/jpg/jpeg/bmp/tiff/webp 格式。',
   parameters: {
     type: 'object',
     properties: {
@@ -45,11 +45,7 @@ export const ocrImageTool: ToolDefinition = {
         return { success: true, output: '未识别到文字内容' }
       }
 
-      const blockLines = (result.blocks || []).map((b, i) => `${i + 1}. ${b.text}（置信度 ${Math.round(b.confidence * 100)}%）`)
-      return {
-        success: true,
-        output: `识别结果（引擎: ${result.engine}，置信度: ${Math.round(result.confidence * 100)}%）\n\n${result.text}${blockLines.length ? `\n\n文字块：\n${blockLines.join('\n')}` : ''}`,
-      }
+      return { success: true, output: result.text }
     } catch (error: any) {
       return { success: false, error: `图片识别失败: ${error?.message || error}` }
     }

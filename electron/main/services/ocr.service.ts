@@ -9,7 +9,7 @@ import mainUiI18n from './ui-i18n.service'
 const logger = createLogger('OCR')
 
 /**
- * OCR 服务：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，运行在独立子进程中。
+ * OCR 服务：基于 PaddleOCR v6 tiny + onnxruntime-node 本地推理，运行在独立子进程中。
  *
  * 必须独立进程（而非 Worker 线程）运行，两点原因：
  *   1. 隔离 onnxruntime-native 原生崩溃，避免拖垮主进程
@@ -143,9 +143,9 @@ class OCRService {
 
   private async doInitialize(): Promise<void> {
     const modelDir = this.getPaddleOcrModelDir()
-    const detPath = path.join(modelDir, 'PP-OCRv5_mobile_det_infer.onnx')
-    const recPath = path.join(modelDir, 'PP-OCRv5_mobile_rec_infer.onnx')
-    const dictPath = path.join(modelDir, 'ppocrv5_dict.txt')
+    const detPath = path.join(modelDir, 'PP-OCRv6_tiny_det_infer.onnx')
+    const recPath = path.join(modelDir, 'PP-OCRv6_tiny_rec_infer.onnx')
+    const dictPath = path.join(modelDir, 'ppocrv6_tiny_dict.txt')
 
     if (!fs.existsSync(detPath) || !fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
       const msg = mainUiI18n.t('ocrModelMissing')
@@ -156,7 +156,7 @@ class OCRService {
 
     try {
       await this.spawnAndInitWorker()
-      logger.info('PaddleOCR v5 mobile engine initialized (Worker)')
+      logger.info('PaddleOCR v6 tiny engine initialized (Worker)')
     } catch (err) {
       const msg = mainUiI18n.t('ocrWorkerInitFailed')
       logger.error(msg, err)
@@ -167,7 +167,7 @@ class OCRService {
 
   private getPaddleOcrModelDir(): string {
     const resourcesDir = PathService.getInstance().getResourcesDir()
-    return path.join(resourcesDir, 'paddleocr', 'ppocr_v5_mobile')
+    return path.join(resourcesDir, 'paddleocr', 'ppocr_v6_tiny')
   }
 
   // ── Worker 生命周期 ──────────────────────────────────────────

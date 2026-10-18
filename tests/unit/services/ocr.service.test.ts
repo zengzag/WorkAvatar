@@ -115,11 +115,11 @@ afterEach(() => {
 
 /** 放置模型三件套，使初始化通过 */
 function seedModels(): string {
-  const dir = path.join(state.resourcesDir, 'paddleocr', 'ppocr_v5_mobile')
+  const dir = path.join(state.resourcesDir, 'paddleocr', 'ppocr_v6_tiny')
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'PP-OCRv5_mobile_det_infer.onnx'), 'x')
-  fs.writeFileSync(path.join(dir, 'PP-OCRv5_mobile_rec_infer.onnx'), 'x')
-  fs.writeFileSync(path.join(dir, 'ppocrv5_dict.txt'), 'x')
+  fs.writeFileSync(path.join(dir, 'PP-OCRv6_tiny_det_infer.onnx'), 'x')
+  fs.writeFileSync(path.join(dir, 'PP-OCRv6_tiny_rec_infer.onnx'), 'x')
+  fs.writeFileSync(path.join(dir, 'ppocrv6_tiny_dict.txt'), 'x')
   return dir
 }
 
