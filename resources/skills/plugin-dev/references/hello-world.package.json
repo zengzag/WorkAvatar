@@ -1,6 +1,6 @@
 {
   "name": "workavatar-plugin-hello-world",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "WorkAvatar 最小示例插件（兼作第三方开发模板，可独立构建打包）。依赖声明约定：dependencies=打包进 dist 的运行时依赖；nativeDependencies=宿主借用原生模块（不打包，仅限 plugin-sdk/host-native-dependencies.json 白名单，构建脚本会校验）；devDependencies=共享库（__WA_HOST__ 注入）+ 构建工具",
   "type": "module",
@@ -11,20 +11,20 @@
   },
   "dependencies": {},
   "nativeDependencies": {
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
-    "@ant-design/icons": "^6.2.2",
-    "@types/node": "^25.6.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "adm-zip": "^0.5.17",
-    "antd": "^6.3.7",
+    "@ant-design/icons": "^6.3.4",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "adm-zip": "^0.6.1",
+    "antd": "^6.6.6",
     "esbuild": "^0.28.0",
-    "i18next": "^26.1.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "react-i18next": "^17.0.7",
-    "typescript": "^6.0.3"
+    "i18next": "^26.5.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-i18next": "^17.1.0",
+    "typescript": "^7.0.2"
   }
 }

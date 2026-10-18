@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import * as ts from 'typescript'
+// TypeScript 7 起 npm 包只提供原生编译器（tsc），不再导出经典 JS 编译器 API（ts.createSourceFile）。
+// 本用例需要读源码 AST，故改用 typescript-legacy（npm alias 指向 typescript@6，仅测试使用）
+import * as ts from 'typescript-legacy'
 import zhCN from '../../../src/i18n/locales/zh-CN'
 import enUS from '../../../src/i18n/locales/en-US'
 

@@ -127,12 +127,15 @@ describe('tool-display / getToolDisplayName（依赖后端目录）', () => {
   })
 
   it('loadToolDisplayNames 幂等：重复调用不重复拉取', async () => {
+    // vitest 5 起默认 clearMocks，模块加载期（import 时自动拉取）的调用记录已被清空，
+    // 故以调用前基线做差，断言「再调用不产生新请求」
+    const before = listBuiltin.mock.calls.length
     const first = loadToolDisplayNames()
     const second = loadToolDisplayNames()
     expect(first).toBe(second)
     await first
     await first
-    expect(listBuiltin).toHaveBeenCalledTimes(1)
+    expect(listBuiltin.mock.calls.length).toBe(before)
   })
 })
 

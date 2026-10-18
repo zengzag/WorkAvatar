@@ -16,7 +16,6 @@ const nativeExternals = [
   'word-extractor',
   'xlsx',
   'unpdf',
-  'pdfjs-dist',
   '@node-rs/jieba',
   '@node-rs/jieba/dict',
   'worker_threads',
@@ -226,8 +225,9 @@ export default defineConfig({
         }
       },
       {
-        // OCR Worker：将 PaddleOCR / onnxruntime-native 运行在独立 Worker 线程中，
-        // onnxruntime 原生崩溃不会杀死主进程
+        // OCR Worker：将 PaddleOCR / onnxruntime-native 运行在独立子进程中
+        // （child_process.fork + ELECTRON_RUN_AS_NODE），
+        // 既隔离原生崩溃，也隔离与语音插件 sherpa-onnx 的 onnxruntime.dll 同名冲突
         entry: 'electron/main/workers/ocr-worker.ts',
         vite: {
           build: {
