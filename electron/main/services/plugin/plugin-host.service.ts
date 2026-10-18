@@ -33,6 +33,7 @@ import type {
 } from '../../../../plugin-sdk/src'
 import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugin-sdk/src'
 import { toToolMiddleware } from './middleware-adapter'
+import { resolveDialogDefaultPath, rememberDialogPath } from '../dialog-path'
 import type { ToolMiddleware } from '../agent/tools/tool-middleware'
 import type { RegisteredEmployee } from '../employee-registry.service'
 import {
@@ -1771,10 +1772,12 @@ class PluginHostService {
     if (zipPaths.length === 0) {
       const res = await dialog.showOpenDialog({
         title: '导入 WorkAvatar 插件',
+        defaultPath: resolveDialogDefaultPath(),
         properties: ['openFile', 'multiSelections'],
         filters: [{ name: 'WorkAvatar 插件包', extensions: [PLUGIN_PACKAGE_EXT] }],
       })
       if (res.canceled || res.filePaths.length === 0) return { ok: false, message: 'cancelled' }
+      rememberDialogPath(res.filePaths[0])
       zipPaths = res.filePaths
       this.pendingImportZips = zipPaths
     }

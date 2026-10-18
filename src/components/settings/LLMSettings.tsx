@@ -77,7 +77,7 @@ export const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   vertex: { baseURL: '' },
   bedrock: { baseURL: '' },
   xai: { baseURL: 'https://api.x.ai/v1' },
-  'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1' },
+  'opencode-go': { baseURL: 'https://opencode.ai/inference/go/v1' },
 }
 
 // 解析 provider 的 models_json 字符串，统一处理异常与 category 默认值

@@ -207,24 +207,16 @@ describe('isMemoryEnabled', () => {
   })
 })
 
-describe('全局委托开关（delegation_enabled）', () => {
+describe('委托工具注册（默认开启 / 极简模式关闭）', () => {
   const registeredToolIds = () => {
     const agent = agentControl.instances.at(-1)!
     return agent.registerTools.mock.calls.flat().flatMap((list: any[]) => (list || []).map((t: any) => t.id))
   }
 
-  it('默认（未设置）：注册委托类工具', async () => {
+  it('员工未配置：注册委托类工具', async () => {
     await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
     expect(registeredToolIds()).toContain('delegate')
     expect(registeredToolIds()).toContain('launch_agents')
-  })
-
-  it('全局关闭：不注册任何委托类工具（提示词随之不含委托段）', async () => {
-    dbState.db.prepare("INSERT INTO settings (key, value) VALUES ('delegation_enabled','0')").run()
-    await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
-    expect(registeredToolIds()).not.toContain('delegate')
-    expect(registeredToolIds()).not.toContain('launch_agents')
-    expect(registeredToolIds()).not.toContain('followup')
   })
 
   it('极简模式：不注册任何委托类工具（不传工具、不注入能力段）', async () => {
@@ -256,8 +248,8 @@ describe('委托目标解析（targetIds 白名单 / 不限制）', () => {
     expect(delegationTargetIds()).toEqual(['e3'])
   })
 
-  it('全局关闭时不解析任何委托目标', async () => {
-    dbState.db.prepare("INSERT INTO settings (key, value) VALUES ('delegation_enabled','0')").run()
+  it('员工显式关闭委托：不解析任何委托目标', async () => {
+    dbState.db.prepare("UPDATE employees SET delegation_json = ? WHERE id = 'e1'").run(JSON.stringify({ enabled: false, targetIds: [], acceptDelegation: true }))
     await EmployeeAgentService.getInstance().chatStream(baseParams(), noopCallbacks())
     expect(delegationTargetIds()).toEqual([])
   })

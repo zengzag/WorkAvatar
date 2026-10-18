@@ -106,9 +106,6 @@ export interface EmployeeDelegationConfig {
   acceptDelegation: boolean
 }
 
-/** 全局委托开关的 settings KV 键：值 '0'/'false' 关闭；未设置视为开启 */
-export const SETTING_DELEGATION_ENABLED = 'delegation_enabled'
-
 /**
  * 解析 delegation_json，容错缺失/非法 JSON，返回默认配置。
  * 缺省即开启委托能力（可派发临时子智能体/子智能体模板）；

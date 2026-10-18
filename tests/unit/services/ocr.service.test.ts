@@ -11,10 +11,10 @@ import Module from 'module'
 
 const state = vi.hoisted(() => ({
   resourcesDir: '',
-  workers: [] as any[],
+  children: [] as any[],
 }))
 
-const { FakeWorker } = vi.hoisted(() => {
+const { FakeChild } = vi.hoisted(() => {
   class TinyEmitter {
     private handlers: Record<string, Array<(...args: any[]) => void>> = {}
     on(ev: string, cb: (...args: any[]) => void): this {
@@ -31,14 +31,14 @@ const { FakeWorker } = vi.hoisted(() => {
     }
   }
 
-  class FakeWorker extends TinyEmitter {
+  class FakeChild extends TinyEmitter {
     posted: any[] = []
-    terminated = false
-    terminate = vi.fn(async () => {
-      if (this.terminated) return 0
-      this.terminated = true
+    killed = false
+    kill = vi.fn(() => {
+      if (this.killed) return true
+      this.killed = true
       queueMicrotask(() => this.emit('exit', 1))
-      return 1
+      return true
     })
 
     constructor() {
@@ -46,7 +46,7 @@ const { FakeWorker } = vi.hoisted(() => {
       queueMicrotask(() => this.emit('message', { type: 'ready' }))
     }
 
-    postMessage(msg: any): void {
+    send(msg: any): void {
       this.posted.push(msg)
       if (msg.type === 'init') {
         queueMicrotask(() =>
@@ -65,10 +65,16 @@ const { FakeWorker } = vi.hoisted(() => {
       }
     }
   }
-  return { FakeWorker }
+  return { FakeChild }
 })
 
-vi.mock('worker_threads', () => ({ Worker: FakeWorker }))
+vi.mock('child_process', () => ({
+  fork: () => {
+    const child = new FakeChild()
+    state.children.push(child)
+    return child
+  },
+}))
 
 vi.mock('../../../electron/main/services/path.service', () => ({
   default: {
@@ -97,7 +103,7 @@ import OCRService from '../../../electron/main/services/ocr.service'
 
 beforeEach(() => {
   state.resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-ocr-'))
-  state.workers.length = 0
+  state.children.length = 0
   ;(OCRService as any).instance = undefined
   dialogMock.showErrorBox.mockClear()
 })
@@ -171,9 +177,9 @@ describe('OCRService / recognize', () => {
 
     const svc = OCRService.getInstance()
     await svc.initialize()
-    const worker = (svc as any).ocrWorker as FakeWorker
-    const origPost = worker.postMessage.bind(worker)
-    worker.postMessage = (msg: any) => {
+    const worker = (svc as any).ocrWorker as FakeChild
+    const origPost = worker.send.bind(worker)
+    worker.send = (msg: any) => {
       if (msg.type === 'recognize') {
         queueMicrotask(() =>
           worker.emit('message', { type: 'error', id: msg.id, error: '识别失败' })
@@ -195,7 +201,7 @@ describe('OCRService / Worker 异常', () => {
     const svc = OCRService.getInstance()
     await svc.initialize()
     const worker = (svc as any).ocrWorker as any
-    worker.postMessage = vi.fn() // 识别请求不回复
+    worker.send = vi.fn() // 识别请求不回复
 
     const promise = svc.recognize(image)
     await vi.waitFor(
@@ -221,7 +227,7 @@ describe('OCRService / Worker 异常', () => {
       await svc.initialize()
 
       // Worker 对识别消息不回复，模拟原生推理卡死
-      ;(svc as any).ocrWorker.postMessage = vi.fn()
+      ;(svc as any).ocrWorker.send = vi.fn()
       const promise = svc.recognize(image)
       for (let i = 0; i < 6; i++) await Promise.resolve()
       expect((svc as any).pendingRequests.size).toBe(1)

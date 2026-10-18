@@ -2,10 +2,10 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue)
-![Electron](https://img.shields.io/badge/Electron-35-green)
+![Version](https://img.shields.io/badge/version-1.6.0-blue)
+![Electron](https://img.shields.io/badge/Electron-44-green)
 ![React](https://img.shields.io/badge/React-19-blue)
-![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)
+![TypeScript](https://img.shields.io/badge/TypeScript-7-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 [English](README.md) | **简体中文**
@@ -45,7 +45,7 @@ WorkAvatar 是一款以**数字员工智能体**为核心的桌面应用。每�
 
 **文件安全** — 所有文件操作统一走权限检查。员工在授权工作区内自由读写，工作区外或敏感文件（如 `.env`、私钥、`.git`）需要确认，并提供变更 diff 预览。每次写盘和删除都有快照，任何改动都可以回滚。
 
-**子任务委托** — 员工可以把工作拆成子任务交给其他员工，并行或顺序执行，最多两层（主任务→子任务→子子任务）。每个子任务在独立工作区运行，只把结果摘要返回，不污染主员工上下文。用户员工默认开启委托（内置/插件员工是专家执行者，不扮演主管），并内置 `explore`（只读检索）与 `general`（全能力执行）两个子智能体角色。可在「设置 → 通用」中全局关闭；关闭后不注册任何委托工具，提示词中也不再出现委托说明。
+**子任务委托** — 员工可以把工作拆成子任务交给其他员工，并行或顺序执行，最多两层（主任务→子任务→子子任务）。每个子任务在独立工作区运行，只把结果摘要返回，不污染主员工上下文。委托默认开启，可在「数字员工设置 → 委托」中按员工单独开关（内置/插件员工是专家执行者，不扮演主管），并内置 `explore`（只读检索）与 `general`（全能力执行）两个子智能体角色。
 
 **记忆与技能** — 跨任务记忆让员工记住之前的偏好和教训；Skills 以 Markdown 格式定义专项能力，员工可按需加载。应用内置知识搜索助手和插件开发助手，各插件也可以提供自己的员工。
 
@@ -149,8 +149,8 @@ WorkAvatar 从一开始就是插件化的。笔记、日历、语音识别、自
 
 | 分类 | 技术 |
 |------|------|
-| 运行时 | Electron 35 |
-| 前端 | React 19 + TypeScript 6 + Ant Design 6 |
+| 运行时 | Electron 44 |
+| 前端 | React 19 + TypeScript 7 + Ant Design 6 |
 | 构建 | Vite 8 |
 | 本地数据库 | SQLite（FTS5 全文检索 + sqlite-vec 向量） |
 | 文档解析 | PDF、Word、Excel、PPT、HTML、OCR（PaddleOCR） |
@@ -161,7 +161,7 @@ WorkAvatar 从一开始就是插件化的。笔记、日历、语音识别、自
 
 ### 构建源码
 
-**要求：** Windows 10/11 或 macOS、Node.js 20+、npm 10+
+**要求：** Windows 10/11 或 macOS、Node.js 24+、npm 11+
 
 ```bash
 # 拉取插件子模块
@@ -175,6 +175,9 @@ npm run dev
 # 生产构建
 npm run build
 ```
+
+> Electron 42 起不再在 `npm install` 时下载二进制，首次运行 `npm run dev`（或 `npx install-electron`）时才按需下载。
+> 网络受限时可保留仓库内 `.npmrc` 的 `electron_mirror`（npmmirror 镜像），或自行设置环境变量 `ELECTRON_MIRROR`。
 
 ### 许可证
 

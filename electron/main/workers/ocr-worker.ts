@@ -1,18 +1,23 @@
 /**
- * OCR Worker — 将 PaddleOCR / onnxruntime-native 运行在独立 Worker 线程中。
+ * OCR Worker —— 将 PaddleOCR / onnxruntime-native 运行在独立子进程中
+ * （由 OCRService 通过 child_process.fork + ELECTRON_RUN_AS_NODE 启动）。
  *
- * 目的：onnxruntime-native 在初始化或推理时可能触发原生崩溃（segfault），
- * 在主线程中这会直接杀死整个 Electron 进程。Worker 线程崩溃不会影响主进程，
- * 主线程检测到 Worker 退出后记录日志并弹窗提示用户。
+ * 目的：
+ *   1. onnxruntime-native 在初始化或推理时可能触发原生崩溃（segfault），
+ *      在主线程中这会直接杀死整个 Electron 进程；独立进程崩溃不影响主进程，
+ *      主线程检测到子进程退出后记录日志并弹窗提示用户。
+ *   2. 隔离 onnxruntime.dll：语音插件借用的 sherpa-onnx 自带同名 onnxruntime.dll，
+ *      同一进程内 Windows 只会加载其中一份，后加载方会以
+ *      "The operating system cannot run %1" 失败。独立进程彻底规避该冲突。
  *
  * 消息协议：
- *   主线程 → Worker:
+ *   主进程 → Worker:
  *     { type: 'init', id }                   初始化 PaddleOCR 引擎
  *     { type: 'recognize', id, imagePath }   识别图片
  *     { type: 'terminate', id }              销毁引擎
  *     { type: 'ping', id }                   健康检查
  *
- *   Worker → 主线程:
+ *   Worker → 主进程:
  *     { type: 'ready' }                      Worker 初始化完成
  *     { type: 'fatal', error }               Worker 初始化失败
  *     { type: 'result', id, result? }        操作成功
@@ -20,22 +25,43 @@
  *     { type: 'pong', id }                   健康检查响应
  */
 
-import { parentPort, workerData } from 'worker_threads'
 import fs from 'fs'
 import path from 'path'
-import { createLogger } from '../services/logger'
+import { createLogger, LoggerBackend } from '../services/logger'
 
-const logger = createLogger('OCR-Worker')
-
-// ── Worker 初始化 ──────────────────────────────────────────────
+// ── 进程初始化 ──────────────────────────────────────────────
 
 interface WorkerInitData {
   dataDir: string
   isDev: boolean
   resourcesDir: string
+  logFilePath: string | null
 }
 
-const initData = workerData as WorkerInitData
+/** 启动参数由主进程以 JSON 形式通过 argv 传入 */
+function readInitData(): WorkerInitData {
+  try {
+    return JSON.parse(process.argv[2] || '{}')
+  } catch {
+    return { dataDir: '', isDev: false, resourcesDir: '', logFilePath: null }
+  }
+}
+
+const initData = readInitData()
+
+// 复用主进程日志文件，避免多进程日志碎片
+LoggerBackend.getInstance().init(initData.dataDir, initData.logFilePath ?? undefined)
+
+const logger = createLogger('OCR-Worker')
+
+/** 向主进程发送消息（父进程已退出时静默忽略） */
+function post(msg: unknown): void {
+  try {
+    process.send?.(msg)
+  } catch {
+    // 父进程已退出
+  }
+}
 
 // ── PaddleOCR 类型 ─────────────────────────────────────────────
 
@@ -238,9 +264,9 @@ async function handleMessage(msg: WorkerMessage): Promise<void> {
     case 'init': {
       try {
         await initialize()
-        parentPort?.postMessage({ type: 'result', id: msg.id, result: { initialized: true } })
+        post({ type: 'result', id: msg.id, result: { initialized: true } })
       } catch (err: any) {
-        parentPort?.postMessage({ type: 'error', id: msg.id, error: err?.message || String(err) })
+        post({ type: 'error', id: msg.id, error: err?.message || String(err) })
       }
       break
     }
@@ -248,23 +274,23 @@ async function handleMessage(msg: WorkerMessage): Promise<void> {
       try {
         const result = await recognize(msg.imagePath)
         // 将 OCRResult 序列化（Uint8Array 等不可直接传输的字段已在 recognize 中转为普通对象）
-        parentPort?.postMessage({ type: 'result', id: msg.id, result })
+        post({ type: 'result', id: msg.id, result })
       } catch (err: any) {
-        parentPort?.postMessage({ type: 'error', id: msg.id, error: err?.message || String(err) })
+        post({ type: 'error', id: msg.id, error: err?.message || String(err) })
       }
       break
     }
     case 'terminate': {
       try {
         await terminatePaddleOcr()
-        parentPort?.postMessage({ type: 'result', id: msg.id, result: { terminated: true } })
+        post({ type: 'result', id: msg.id, result: { terminated: true } })
       } catch (err: any) {
-        parentPort?.postMessage({ type: 'error', id: msg.id, error: err?.message || String(err) })
+        post({ type: 'error', id: msg.id, error: err?.message || String(err) })
       }
       break
     }
     case 'ping': {
-      parentPort?.postMessage({ type: 'pong', id: msg.id })
+      post({ type: 'pong', id: msg.id })
       break
     }
   }
@@ -274,18 +300,19 @@ async function handleMessage(msg: WorkerMessage): Promise<void> {
 // 并发进入会互相争抢 CPU，甚至让原生推理卡死（表现为主线程侧请求超时）。
 let messageChain: Promise<void> = Promise.resolve()
 
-parentPort?.on('message', (msg: WorkerMessage) => {
+process.on('message', (msg: WorkerMessage) => {
   messageChain = messageChain.then(async () => {
     try {
       await handleMessage(msg)
     } catch (err) {
       logger.error('Unhandled error in message handler:', err)
-      try {
-        parentPort?.postMessage({ type: 'error', id: msg.id, error: 'Internal worker error' })
-      } catch { /* Worker may be exiting */ }
+      post({ type: 'error', id: msg.id, error: 'Internal worker error' })
     }
   })
 })
 
-// 通知主线程 Worker 已就绪
-parentPort?.postMessage({ type: 'ready' })
+// 父进程退出后 IPC 通道断开：立即退出，避免残留孤儿进程
+process.on('disconnect', () => process.exit(0))
+
+// 通知主进程 Worker 已就绪
+post({ type: 'ready' })

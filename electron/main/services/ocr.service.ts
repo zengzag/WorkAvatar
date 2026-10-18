@@ -1,24 +1,37 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { Worker } from 'worker_threads'
-import { createLogger } from './logger'
+import { fork, type ChildProcess } from 'child_process'
+import { createLogger, LoggerBackend } from './logger'
 import PathService from './path.service'
 import mainUiI18n from './ui-i18n.service'
 
 const logger = createLogger('OCR')
 
 /**
- * OCR 服务：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，运行在独立 Worker 线程中。
+ * OCR 服务：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，运行在独立子进程中。
  *
- * Worker 线程用于隔离 onnxruntime-native 原生崩溃，避免拖垮主进程。
- * 任何失败（Worker 启动失败、初始化失败、识别失败、Worker 崩溃）都会：
+ * 必须独立进程（而非 Worker 线程）运行，两点原因：
+ *   1. 隔离 onnxruntime-native 原生崩溃，避免拖垮主进程
+ *   2. 隔离 onnxruntime.dll：语音插件借用的 sherpa-onnx 自带同名 onnxruntime.dll，
+ *      同一进程内 Windows 只会加载其中一份，后加载方会以
+ *      "The operating system cannot run %1" 失败（仅当语音识别先于 OCR 使用时出现）
+ *
+ * 任何失败（子进程启动失败、初始化失败、识别失败、子进程崩溃）都会：
  *   1. 写入错误日志
  *   2. 弹窗提示用户
  *   3. 抛出错误由调用方处理
  */
 interface OCROptions {
   language?: string
+}
+
+/** 传给 OCR 子进程的启动参数（经 argv JSON 传递） */
+interface OcrWorkerConfig {
+  dataDir: string
+  isDev: boolean
+  resourcesDir: string
+  logFilePath: string | null
 }
 
 interface OCRBlock {
@@ -98,7 +111,7 @@ class OCRService {
   private static instance: OCRService
   private initPromise: Promise<void> | null = null
 
-  private ocrWorker: Worker | null = null
+  private ocrWorker: ChildProcess | null = null
   private workerReady = false
   private pendingRequests = new Map<string, {
     resolve: (value: any) => void
@@ -163,13 +176,28 @@ class OCRService {
     const workerPath = path.join(__dirname, 'ocr-worker.js')
     const pathService = PathService.getInstance()
 
-    this.ocrWorker = new Worker(workerPath, {
-      workerData: {
-        dataDir: pathService.getDataDir(),
-        isDev: pathService.getIsDev(),
-        resourcesDir: pathService.getResourcesDir(),
-      },
+    const workerConfig: OcrWorkerConfig = {
+      dataDir: pathService.getDataDir(),
+      isDev: pathService.getIsDev(),
+      resourcesDir: pathService.getResourcesDir(),
+      // 子进程复用主进程日志文件，避免多进程日志碎片
+      logFilePath: LoggerBackend.getInstance().getLogFilePath(),
+    }
+
+    // 以 Electron 二进制充当 Node 运行时启动独立进程（生产环境无独立 node，
+    // 且 app.asar 内的脚本依赖 Electron 的 asar 支持）
+    const child = fork(workerPath, [JSON.stringify(workerConfig)], {
+      execPath: process.execPath,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      // 不继承 --inspect 等参数，避免子进程抢占父进程的调试端口
+      execArgv: [],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     })
+    this.ocrWorker = child
+
+    // 子进程日志文件由其自身写入，这里只把输出转到父进程控制台（dev 可见）
+    child.stdout?.on('data', (chunk: Buffer) => process.stdout.write(chunk))
+    child.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk))
 
     this.ocrWorker.on('message', (msg: WorkerInMessage) => {
       this.handleWorkerMessage(msg)
@@ -192,6 +220,8 @@ class OCRService {
       const timeout = setTimeout(() => {
         this.ocrWorker!.off('message', readyHandler)
         reject(new Error('OCR Worker startup timeout'))
+        // 启动超时的子进程必须回收，否则会常驻占用内存
+        this.resetStuckWorker()
       }, 30_000)
 
       const readyHandler = (msg: WorkerInMessage) => {
@@ -246,7 +276,7 @@ class OCRService {
 
     // 清理 Worker 引用
     if (this.ocrWorker) {
-      try { this.ocrWorker.terminate() } catch { /* ignore */ }
+      try { this.ocrWorker.kill() } catch { /* ignore */ }
       this.ocrWorker = null
     }
 
@@ -280,7 +310,7 @@ class OCRService {
     }
     this.pendingRequests.clear()
 
-    worker.terminate().catch(() => { /* ignore */ })
+    worker.kill()
     logger.warn('OCR Worker 已因请求超时被重建')
   }
 
@@ -317,7 +347,7 @@ class OCRService {
       })
 
       try {
-        this.ocrWorker!.postMessage(msg)
+        this.ocrWorker!.send(msg)
       } catch (err) {
         this.pendingRequests.delete(id)
         clearTimeout(timeout)
@@ -377,7 +407,7 @@ class OCRService {
       try {
         const msg: WorkerTerminateMessage = { type: 'terminate', id: this.nextId() }
         await this.sendToWorker(msg, 5_000).catch(() => { /* Worker may already be dead */ })
-        await this.ocrWorker.terminate()
+        this.ocrWorker.kill()
       } catch (err) {
         logger.debug('OCR Worker terminate error:', err)
       }

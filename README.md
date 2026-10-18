@@ -2,10 +2,10 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue)
-![Electron](https://img.shields.io/badge/Electron-35-green)
+![Version](https://img.shields.io/badge/version-1.6.0-blue)
+![Electron](https://img.shields.io/badge/Electron-44-green)
 ![React](https://img.shields.io/badge/React-19-blue)
-![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)
+![TypeScript](https://img.shields.io/badge/TypeScript-7-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **English** | [简体中文](README.zh-CN.md)
@@ -45,7 +45,7 @@ Describe a task, and the employee plans the steps and invokes tools on its own. 
 
 **File safety** — all file operations go through a unified permission gate. Employees read and write freely inside an authorized workspace; anything outside the workspace or sensitive files (`.env`, private keys, `.git`) requires confirmation with a diff preview of the change. Every write and delete creates a snapshot, so any change can be rolled back.
 
-**Sub-task delegation** — employees can split work into sub-tasks and hand them to other employees, in parallel or sequentially, up to two levels deep (main task → sub-task → sub-sub-task). Each sub-task runs in its own workspace and returns only a result summary, keeping the supervisor's context clean. Delegation is enabled by default for user employees (built-in and plugin employees act as specialist executors, not supervisors) and ships with two built-in sub-agent roles — `explore` (read-only research) and `general` (full-capability worker). It can be switched off globally under Settings → General; when off, no delegation tools are registered and prompts contain no delegation text.
+**Sub-task delegation** — employees can split work into sub-tasks and hand them to other employees, in parallel or sequentially, up to two levels deep (main task → sub-task → sub-sub-task). Each sub-task runs in its own workspace and returns only a result summary, keeping the supervisor's context clean. Delegation is on by default and can be toggled per employee in the employee's Delegation settings (built-in and plugin employees act as specialist executors, not supervisors) and ships with two built-in sub-agent roles — `explore` (read-only research) and `general` (full-capability worker).
 
 **Memory & Skills** — cross-task memory lets employees remember your preferences and prior lessons. Skills are Markdown-defined packages of specialized capabilities that employees load on demand. The application ships with a Knowledge Search Assistant and a Plugin Development Assistant; plugins can add their own employees.
 
@@ -149,8 +149,8 @@ The plugin protocol, API documentation, and example project ship with the reposi
 
 | Category | Technology |
 |------|------|
-| Runtime | Electron 35 |
-| Frontend | React 19 + TypeScript 6 + Ant Design 6 |
+| Runtime | Electron 44 |
+| Frontend | React 19 + TypeScript 7 + Ant Design 6 |
 | Build | Vite 8 |
 | Local database | SQLite (FTS5 full-text + sqlite-vec vector) |
 | Document parsing | PDF, Word, Excel, PowerPoint, HTML, OCR (PaddleOCR) |
@@ -161,7 +161,7 @@ The plugin protocol, API documentation, and example project ship with the reposi
 
 ### Build from Source
 
-**Requirements:** Windows 10/11 or macOS, Node.js 20+, npm 10+
+**Requirements:** Windows 10/11 or macOS, Node.js 24+, npm 11+
 
 ```bash
 # Fetch the plugins submodule
@@ -175,6 +175,10 @@ npm run dev
 # Production build
 npm run build
 ```
+
+> Since Electron 42 the binary is no longer downloaded by `npm install`; it is fetched on demand the first time you run
+> `npm run dev` (or `npx install-electron`). On restricted networks keep the repo `.npmrc` `electron_mirror` (npmmirror)
+> or set the `ELECTRON_MIRROR` environment variable instead.
 
 ### License
 

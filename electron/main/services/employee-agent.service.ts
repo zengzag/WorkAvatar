@@ -23,7 +23,7 @@ import { createMemorySearchTool } from './agent/tools/memory-search.tool'
 import { MEMORY_BOUND_TOOL_IDS } from './employee-memory-types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
-import { parseEmployeeDelegation, SETTING_DELEGATION_ENABLED } from '../../shared/types'
+import { parseEmployeeDelegation } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
@@ -234,16 +234,15 @@ class EmployeeAgentService {
       ? this.memoryService.buildInjectionMemoryPrompt(employeeId)
       : undefined
 
-    // 委托能力：默认开启（全局开关 delegation_enabled + 员工 delegation_json 双重控制）。
+    // 委托能力：由员工级 delegation_json 单独控制（默认开启）。
     // targetIds 仅约束「委托给已有员工」；未选择目标时仍可派发临时子智能体/子智能体模板。
-    // 关闭条件：全局开关关闭 / 员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）
+    // 关闭条件：员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）
     //          / 内置与插件员工（专家执行者定位，默认不扮演主管；其委托设置本身也不可编辑）
     const delegation = parseEmployeeDelegation(emp.delegation_json)
     const isSubAgentId = emp.id.startsWith('inline:')
     const isRegisteredId = emp.id.startsWith('builtin:') || emp.id.startsWith('plugin:')
     const delegationEnabled = delegation.enabled
       && !minimalMode
-      && this.isDelegationGloballyEnabled()
       && !isSubAgentId
       && !isRegisteredId
     const delegationTargets = delegationEnabled
@@ -576,18 +575,6 @@ class EmployeeAgentService {
       }
     }
     return modeMap
-  }
-
-  /** 全局委托开关（settings KV delegation_enabled；未设置视为开启） */
-  private isDelegationGloballyEnabled(): boolean {
-    try {
-      const row = this.db.getDb()
-        .prepare('SELECT value FROM settings WHERE key = ?')
-        .get(SETTING_DELEGATION_ENABLED) as { value?: string } | undefined
-      return row?.value !== '0' && row?.value !== 'false'
-    } catch {
-      return true
-    }
   }
 
   /** 按员工工具模式过滤并应用 onDemand 标志（off 移除，on_demand 标记按需，on 常驻） */

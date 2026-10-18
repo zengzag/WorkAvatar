@@ -505,6 +505,15 @@ class DatabaseService {
       logger.info('迁移：llm_providers 增加 api_format 列')
     }
 
+    // OpenCode Go 网关换址（opencode.ai/zen/go → opencode.ai/inference/go）：旧地址已失效，就地改写。
+    // 仅精确匹配官方旧地址，用户自填的自定义端点保持不变
+    const migratedOpencodeBase = this.db.prepare(
+      "UPDATE llm_providers SET base_url = ? WHERE provider_type = 'opencode-go' AND base_url IN (?, ?)"
+    ).run('https://opencode.ai/inference/go/v1', 'https://opencode.ai/zen/go/v1', 'https://opencode.ai/zen/go')
+    if (migratedOpencodeBase.changes > 0) {
+      logger.info(`迁移：OpenCode Go 供应商地址更新 ${migratedOpencodeBase.changes} 条`)
+    }
+
     // 依赖迁移补齐的 scope 列：旧库 employee_memories 无此列，必须在迁移之后创建
     this.db.exec(
       'CREATE INDEX IF NOT EXISTS idx_employee_memories_scope ON employee_memories(scope, deleted_at)'
