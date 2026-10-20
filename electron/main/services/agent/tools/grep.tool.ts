@@ -53,7 +53,7 @@ export const grepTool: ToolDefinition = {
   },
   source: 'builtin',
   permission: 'safe',
-  onDemand: true,
+  onDemand: false,
 }
 
 async function grepFiles(args: any) {

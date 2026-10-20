@@ -9,7 +9,7 @@ import { filesEditTool } from '../../../electron/main/services/agent/tools/files
 import { envProbeTool } from '../../../electron/main/services/agent/tools/env-probe.tool'
 
 /**
- * 编程基础工具（file_list / grep / env_probe）与常驻文件修改工具 files_edit 行为覆盖。
+ * 编程基础工具（file_list / grep / files_edit 常驻，env_probe 按需）行为覆盖。
  * 相对路径按工作区解析，故统一用 interactionContext 注入工作区。
  */
 
@@ -113,9 +113,9 @@ describe('agent/tools/file-list', () => {
     })
   })
 
-  it('工具元信息：按需、只读、无必填参数', () => {
+  it('工具元信息：常驻、只读、无必填参数', () => {
     expect(fileListTool.id).toBe('file_list')
-    expect(fileListTool.onDemand).toBe(true)
+    expect(fileListTool.onDemand).toBe(false)
     expect(fileListTool.permission).toBe('safe')
     expect(fileListTool.parameters.required).toEqual([])
   })
@@ -208,8 +208,8 @@ describe('agent/tools/grep', () => {
     })
   })
 
-  it('工具元信息：按需、只读、pattern 必填', () => {
-    expect(grepTool.onDemand).toBe(true)
+  it('工具元信息：常驻、只读、pattern 必填', () => {
+    expect(grepTool.onDemand).toBe(false)
     expect(grepTool.permission).toBe('safe')
     expect(grepTool.parameters.required).toEqual(['pattern'])
   })

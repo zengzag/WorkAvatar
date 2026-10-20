@@ -6,7 +6,7 @@ import * as path from 'path'
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'])
 
 /**
- * 图片 OCR 识别工具（按需）。
+ * 图片 OCR 识别工具（常驻）。
  *
  * 底层 OCRService.recognize 将 PaddleOCR 推理运行在独立 Worker 线程中，
  * 因此本工具 handler 不会阻塞主进程。
@@ -51,5 +51,5 @@ export const ocrImageTool: ToolDefinition = {
     }
   },
   source: 'builtin',
-  onDemand: true,
+  onDemand: false,
 }

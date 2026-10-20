@@ -45,7 +45,7 @@ export const fileListTool: ToolDefinition = {
   },
   source: 'builtin',
   permission: 'safe',
-  onDemand: true,
+  onDemand: false,
 }
 
 async function listFiles(args: any) {
