@@ -5,11 +5,11 @@ import * as path from 'path'
 import { interactionContext } from '../../../electron/main/services/unified-interaction.service'
 import { fileListTool } from '../../../electron/main/services/agent/tools/file-list.tool'
 import { grepTool } from '../../../electron/main/services/agent/tools/grep.tool'
-import { applyPatchTool } from '../../../electron/main/services/agent/tools/apply-patch.tool'
+import { filesEditTool } from '../../../electron/main/services/agent/tools/files-edit.tool'
 import { envProbeTool } from '../../../electron/main/services/agent/tools/env-probe.tool'
 
 /**
- * 编程基础工具（file_list / grep / apply_patch / env_probe）行为覆盖。
+ * 编程基础工具（file_list / grep / env_probe）与常驻文件修改工具 files_edit 行为覆盖。
  * 相对路径按工作区解析，故统一用 interactionContext 注入工作区。
  */
 
@@ -28,7 +28,7 @@ function withWorkspace<T>(ws: string, sessionId: string, fn: () => Promise<T> | 
 
 const list = (args: any): Promise<ToolResult> => fileListTool.handler!(args) as Promise<ToolResult>
 const grep = (args: any): Promise<ToolResult> => grepTool.handler!(args) as Promise<ToolResult>
-const patch = (args: any): Promise<ToolResult> => applyPatchTool.handler!(args) as Promise<ToolResult>
+const patch = (args: any): Promise<ToolResult> => filesEditTool.handler!(args) as Promise<ToolResult>
 
 function seed(root: string, rel: string, content: string): string {
   const target = path.join(root, rel)
@@ -215,7 +215,7 @@ describe('agent/tools/grep', () => {
   })
 })
 
-describe('agent/tools/apply-patch', () => {
+describe('agent/tools/files-edit', () => {
   let ws: string
 
   beforeEach(() => { ws = makeTemp('wa-ap-') })
@@ -262,6 +262,20 @@ describe('agent/tools/apply-patch', () => {
       expect(res.success, res.error).toBe(true)
     })
     expect(fs.readFileSync(target, 'utf-8')).toBe('hello')
+  })
+
+  it('插入与删除通过替换完成（原 file_edit insert/delete 的等价写法）', async () => {
+    const a = seed(ws, 'a.txt', 'line1\nANCHOR\nline3\nREMOVE\n')
+    await withWorkspace(ws, 'ap-3b', async () => {
+      const res = await patch({
+        changes: [{ path: a, edits: [
+          { old_string: 'ANCHOR\n', new_string: 'ANCHOR\nINSERTED\n' },
+          { old_string: 'REMOVE\n', new_string: '' },
+        ] }],
+      })
+      expect(res.success, res.error).toBe(true)
+    })
+    expect(fs.readFileSync(a, 'utf-8')).toBe('line1\nANCHOR\nINSERTED\nline3\n')
   })
 
   it('原子性：任一改动失败则整体拒绝，已改文件不被写入', async () => {
@@ -352,14 +366,14 @@ describe('agent/tools/apply-patch', () => {
     })
   })
 
-  it('工具元信息：需确认、自授权、不重试、按需、changes 必填', () => {
-    expect(applyPatchTool.id).toBe('apply_patch')
-    expect(applyPatchTool.onDemand).toBe(true)
-    expect(applyPatchTool.permission).toBe('requires_confirmation')
-    expect(applyPatchTool.selfAuthorized).toBe(true)
-    expect(applyPatchTool.noRetry).toBe(true)
-    expect(applyPatchTool.timeoutMs).toBe(305000)
-    expect(applyPatchTool.parameters.required).toEqual(['changes'])
+  it('工具元信息：常驻、需确认、自授权、不重试、changes 必填', () => {
+    expect(filesEditTool.id).toBe('files_edit')
+    expect(filesEditTool.onDemand).toBe(false)
+    expect(filesEditTool.permission).toBe('requires_confirmation')
+    expect(filesEditTool.selfAuthorized).toBe(true)
+    expect(filesEditTool.noRetry).toBe(true)
+    expect(filesEditTool.timeoutMs).toBe(305000)
+    expect(filesEditTool.parameters.required).toEqual(['changes'])
   })
 })
 

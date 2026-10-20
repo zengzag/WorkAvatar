@@ -365,7 +365,7 @@ class WorkspaceManagerService {
 
   /**
    * 计算任务独立目录路径（YYYYMMDD_HHmmss，碰撞时追加序号），但不实际创建目录。
-   * 工作区懒创建：只有真正写入/执行（file_write / shell_exec / javascript_exec 等）时才落盘，
+   * 工作区懒创建：只有真正写入/执行（file_write / file_copy / shell_exec 等）时才落盘，
    * 避免"任务从不使用工作区"却产生大量空目录；工作区路径本身仍会写入 conversations 供授权与展示使用。
    */
   private createTaskWorkspace(employeeWorkspace: string): string {

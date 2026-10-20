@@ -1,7 +1,8 @@
 import type { ToolDefinition } from './types'
 import * as os from 'os'
 import { IS_WINDOWS, runCommandPlatform, truncateOutput } from './exec-shared'
-import { getWorkspacePath } from './fs-tools'
+import { getWorkspacePath } from './fs-shared'
+import { emptyWorkspaceRoot } from '../../sandbox.service'
 
 /** 探测的命令行工具清单（版本探测统一用 --version） */
 const PROBE_CANDIDATES = [
@@ -16,7 +17,8 @@ const MAX_VERSION_CHARS = 120
 
 /**
  * 探测本机环境与可用命令行工具。
- * 命令为固定字面量、不含任何外部输入，因此不经过 shell_exec 的命令策略判定（无注入面）。
+ * 命令为固定字面量、不含任何外部输入，因此不经过 shell_exec 的命令策略判定（无注入面），
+ * 但与 shell_exec 共用同一套文件沙箱（只读探测，可写边界取工作区）。
  */
 export const envProbeTool: ToolDefinition = {
   id: 'env_probe',
@@ -38,18 +40,21 @@ export const envProbeTool: ToolDefinition = {
     const shellDesc = IS_WINDOWS
       ? 'PowerShell（优先 pwsh 7，回退 powershell.exe 5.1）'
       : '/bin/bash'
+    // 无工作区上下文时用空目录当可写边界，避免把应用目录当沙箱（沙箱会改目录 ACL）
+    const sandboxRoot = getWorkspacePath() || emptyWorkspaceRoot()
 
     const lines: string[] = [
       '# 环境探测',
       `- 操作系统: ${os.platform()} ${os.release()} (${os.arch()})`,
       `- Shell: ${shellDesc}`,
-      `- 当前工作目录: ${getWorkspacePath() || process.cwd()}`,
+      `- 当前工作目录: ${sandboxRoot}`,
       `- 路径分隔符: ${IS_WINDOWS ? '\\' : '/'}；换行: ${IS_WINDOWS ? 'CRLF' : 'LF'}`,
       `- 宿主运行时: Node.js ${process.version}（Electron 内置，非系统 Node）`,
     ]
 
     const probe = await runCommandPlatform(buildProbeScript(), {
-      cwd: getWorkspacePath() || process.cwd(),
+      cwd: sandboxRoot,
+      workspaceRoot: sandboxRoot,
       timeoutMs: PROBE_TIMEOUT_MS,
     })
 

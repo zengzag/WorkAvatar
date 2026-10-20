@@ -694,9 +694,9 @@ class SkillRegistryService {
     body += `- 技能根目录（绝对路径）: \`${skill.installPath}\`\n`
     body += `- scripts 目录: \`${path.join(skill.installPath, 'scripts')}\`\n`
     body += '\n**重要环境提示**：\n'
-    body += '- `docx`/`pptxgenjs`/`xlsx`/`adm-zip` 已内置在 javascript_exec 沙箱中，无需 npm install，直接 require 即可\n'
+    body += '- 技能脚本所需依赖请优先用工作区内的本地安装（`npm install --prefix .` 等），避免写入全局目录\n'
     body += '- 技能文档中提到的 soffice.py/pandoc/pdftoppm 等外部工具不一定存在，执行前请先用 env_probe 探测环境\n'
-    body += '- 若外部工具不存在，可降级使用纯 JS/Python 方案（如 docx 文件是 ZIP 包，可用 adm-zip 解包校验 XML）\n'
+    body += '- 若外部工具不存在，可降级使用纯 Python/JS 脚本方案（如 docx 文件是 ZIP 包，可解包校验 XML）\n'
     body += '- 脚本路径：直接使用下面提供的绝对路径调用 file_read 读取内容，或用 shell_exec 执行\n'
 
     // 追加 references 路径提示，引导 agent 用 file_read 按需读取（第 3 层渐进披露）

@@ -105,7 +105,6 @@ vi.mock('../../../electron/main/services/agent/tools', () => ({
   allBuiltinTools: [{ id: 'builtin_1', name: 'b', description: '', parameters: {}, handler: vi.fn() }],
   createKMSTools: vi.fn(() => [{ id: 'kms_search' }]),
   createKMSCollectionTools: vi.fn(() => [{ id: 'kms_list_collections' }]),
-  javascriptExecTool: { id: 'javascript_exec' },
   delegateTool: { id: 'delegate' },
   followupTool: { id: 'followup' },
   launchAgentsTool: { id: 'launch_agents' },

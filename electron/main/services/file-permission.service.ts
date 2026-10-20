@@ -3,7 +3,7 @@ import { normalizePath, isWithinPath, commonParentDir, isFsRoot } from './path-n
 import UnifiedInteractionService, { interactionContext } from './unified-interaction.service'
 import PathService from './path.service'
 import mainUiI18n from './ui-i18n.service'
-import type { ScriptDisclosure, DiffDisclosure } from '../../shared/types'
+import type { DiffDisclosure } from '../../shared/types'
 
 /**
  * 文件权限管理服务（统一门面）：
@@ -12,10 +12,9 @@ import type { ScriptDisclosure, DiffDisclosure } from '../../shared/types'
  * - 批量确认：多个区外路径按公共父目录归并，单次弹窗完成授权
  * - 任务级高权限（"本轮任务不再提醒"，登记在 UnifiedInteractionService）：本轮任务后续区外操作直接放行
  *
- * 所有需要文件权限判定的工具（file_write/file_edit/file_delete/shell_exec/javascript_exec）
+ * 所有需要文件权限判定的工具（file_write/files_edit/file_copy/file_delete）
  * 统一通过 authorizeFileOperation 走本服务，不再各自实现边界判定与弹窗。
- * shell_exec / javascript_exec 属于"脚本触发"，传入 options.script 后按脚本视角构造文案
- * （不再按单个文件/文件夹措辞），并把脚本原文交给渲染端以代码块展示。
+ * 终端命令的越界写入由 sandbox.service.ts 在系统层强制，不经过这里。
  */
 
 export interface AuthorizationResult {
@@ -26,55 +25,12 @@ export interface AuthorizationResult {
 /** 弹窗展示的路径数上限，超出折叠 */
 const MAX_DISPLAY_PATHS = 15
 
-/** 脚本原文在弹窗代码块中的展示上限，超出截断并提示查看工具调用参数 */
-const MAX_SCRIPT_DISCLOSURE_CHARS = 20000
-
-/** 脚本触发的确认弹窗标题（文件工具仍按 `确认${operation}工作区外文件`） */
-export const SCRIPT_CONFIRM_TITLE = '确认执行脚本'
-
 /** 敏感目录段（凭据/版本库/云凭证等）：位于工作区内也需确认 */
 const SENSITIVE_DIR_SEGMENTS = new Set(['.git', '.ssh', '.aws', '.gnupg', '.kube', '.docker'])
 
 /** 敏感文件名（凭据/密钥/环境变量等），模板类 .env.example/.sample 等不视为敏感 */
 const SENSITIVE_FILE_RE = /^(\.env(\..+)?|\.git-credentials|\.npmrc|\.netrc|\.htpasswd|id_(rsa|dsa|ecdsa|ed25519)|credentials(\.json)?|.*\.(pem|key|p12|pfx|keystore|jks))$/i
 const ENV_TEMPLATE_RE = /\.(example|sample|template|dist)$/i
-
-/** 调用方传入的脚本信息（服务内统一按上限截断） */
-export interface ScriptConfirmInput {
-  /** 脚本语言标识（powershell / bash / javascript），仅用于代码块标注 */
-  language: string
-  /** 原始脚本内容 */
-  content: string
-}
-
-/** 按展示上限截断脚本原文，得到下发给渲染端的展示对象 */
-export function toScriptDisclosure(input: ScriptConfirmInput): ScriptDisclosure {
-  const text = input.content.trim()
-  if (text.length <= MAX_SCRIPT_DISCLOSURE_CHARS) {
-    return { language: input.language, content: text, truncated: false }
-  }
-  return {
-    language: input.language,
-    content: text.slice(0, MAX_SCRIPT_DISCLOSURE_CHARS),
-    truncated: true,
-  }
-}
-
-/**
- * 脚本触发的确认文案：以"即将执行脚本"为视角，疑似受影响的路径列在正文，
- * 脚本原文由渲染端在正文下方以代码块（可滚动）展示。
- * paths 为空表示目标含变量引用等无法静态解析，无法判定是否在工作区内。
- */
-export function buildScriptConfirmMessage(paths: string[], dirScope?: string): string {
-  const scope = paths.length > 0
-    ? `工作区外的以下路径（共 ${paths.length} 个）：\n\n${formatPathList(paths)}`
-    : '文件，但目标路径含变量引用或无法静态解析，无法判定是否位于工作区内'
-  const tail = dirScope
-    ? '是否允许执行？选择"始终允许此文件夹"可一并授权以上路径所在目录的全部后续操作。'
-    : '是否允许执行？此操作不可撤销，请确认脚本内容后决定。'
-  // 末尾一行是渲染端代码块的引导语（脚本原文由 interaction.script 字段单独下发）
-  return `即将执行脚本，疑似会修改或删除${scope}\n\n${tail}\n\n原始脚本内容如下：`
-}
 
 /** 路径列表文本（超出展示上限时折叠为一行统计），文件工具与脚本触发共用 */
 function formatPathList(paths: string[]): string {
@@ -193,8 +149,6 @@ class FilePermissionService {
    * - 区外未授权路径合并为一次弹窗批量确认；用户可选"始终允许此文件夹"（授权公共父目录子树）
    * - options.scopeDir：显式指定"始终允许此文件夹"的授权目录（用于目标本身就是目录的场景，
    *   如 cwd 在区外时授权 cwd 自身；不传则取目标路径的公共父目录）
-   * - options.script：脚本触发（shell_exec/javascript_exec）的调用方传入，弹窗改按脚本视角
-   *   措辞并展示脚本原文；不传则按文件工具视角输出
    * - options.irreversible：不可逆操作（如 file_delete）传入，确认不可被"始终允许/本轮不再提醒"绕过
    * - options.diff：文件改动预览（unified diff），随确认弹窗下发
    * - 无交互上下文（后台任务）时默认拒绝，防止绕过工作区边界
@@ -202,11 +156,10 @@ class FilePermissionService {
   async authorizeFileOperation(
     operation: string,
     targetPaths: string[],
-    options?: { scopeDir?: string; script?: ScriptConfirmInput; irreversible?: boolean; diff?: DiffDisclosure },
+    options?: { scopeDir?: string; irreversible?: boolean; diff?: DiffDisclosure },
   ): Promise<AuthorizationResult> {
     const root = this.getWorkspacePath()
     const rootNorm = root ? normalizePath(root) : null
-    const script = options?.script
 
     const outside: string[] = []
     const sensitive: string[] = []
@@ -227,9 +180,7 @@ class FilePermissionService {
 
     const ctx = interactionContext.getStore()
     if (!ctx) {
-      const what = script
-        ? (sensitive.length > 0 ? '脚本修改敏感文件' : '脚本写入工作区外文件')
-        : (sensitive.length > 0 ? `${operation}敏感文件` : `${operation}工作区外文件`)
+      const what = sensitive.length > 0 ? `${operation}敏感文件` : `${operation}工作区外文件`
       return { allowed: false, error: `${what}需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝` }
     }
     // 高权限模式：单条消息级（ctx.highPermission）或本轮任务级（用户在确认弹窗选择"本轮任务不再提醒"）。
@@ -248,10 +199,8 @@ class FilePermissionService {
     if (dirScope && this.isDirScopeTooBroad(dirScope)) {
       dirScope = undefined
     }
-    const message = this.buildConfirmMessage(operation, outside, sensitive, script, dirScope)
-    const title = script
-      ? SCRIPT_CONFIRM_TITLE
-      : (outside.length > 0 ? `确认${operation}工作区外文件` : mainUiI18n.t('sensitiveFileTitle'))
+    const message = this.buildConfirmMessage(operation, outside, sensitive)
+    const title = outside.length > 0 ? `确认${operation}工作区外文件` : mainUiI18n.t('sensitiveFileTitle')
 
     try {
       const response = await UnifiedInteractionService.getInstance().request({
@@ -262,14 +211,11 @@ class FilePermissionService {
         source: `security:fs_outside_workspace:${operation}`,
         dirScope,
         forced,
-        script: script ? toScriptDisclosure(script) : undefined,
         diff: options?.diff,
       })
 
       if (response.cancelled || response.confirmed !== true) {
-        const subject = script
-          ? '脚本的执行'
-          : (outside.length > 0 ? `${operation}工作区外文件的操作` : `${operation}敏感文件的操作`)
+        const subject = outside.length > 0 ? `${operation}工作区外文件的操作` : `${operation}敏感文件的操作`
         const reason = response.timedOut
           ? `用户在5分钟内未响应确认，可能不在电脑旁，${subject}已取消`
           : `用户取消了${subject}`
@@ -284,7 +230,7 @@ class FilePermissionService {
       }
       return { allowed: true }
     } catch {
-      return { allowed: false, error: script ? '脚本执行确认失败，操作已取消' : `${operation}确认失败，操作已取消` }
+      return { allowed: false, error: `${operation}确认失败，操作已取消` }
     }
   }
 
@@ -327,17 +273,7 @@ class FilePermissionService {
     operation: string,
     paths: string[],
     sensitive: string[],
-    script?: ScriptConfirmInput,
-    dirScope?: string,
   ): string {
-    // 脚本触发：沿用脚本视角文案（正文末行为渲染端代码块引导语），敏感路径作为附加段落
-    if (script) {
-      const intro = paths.length > 0
-        ? buildScriptConfirmMessage(paths, dirScope)
-        : '即将执行脚本，会写入或修改敏感文件，是否允许？\n\n原始脚本内容如下：'
-      return sensitive.length > 0 ? `${intro}\n\n${this.buildSensitiveSection(sensitive)}` : intro
-    }
-
     const parts: string[] = []
     if (paths.length > 0) {
       parts.push(`即将${operation}工作区外的路径（共 ${paths.length} 个）：\n\n${formatPathList(paths)}\n\n是否允许？可选择"始终允许此文件夹"授权以上路径所在目录的全部后续操作。`)

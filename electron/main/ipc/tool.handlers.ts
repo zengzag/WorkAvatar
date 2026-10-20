@@ -10,7 +10,7 @@ import type {
 import type DatabaseService from '../services/database.service'
 import type SkillRegistryService from '../services/skill-registry.service'
 import EmployeeRegistryService from '../services/employee-registry.service'
-import { allBuiltinTools, createKMSTools, createKMSCollectionTools, javascriptExecTool, shellExecTool } from '../services/agent/tools'
+import { allBuiltinTools, createKMSTools, createKMSCollectionTools, shellExecTool } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
 import EmployeeAgentService from '../services/employee-agent.service'
@@ -41,16 +41,16 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     id: 'file_operations',
     name: 'file_operations',
     title: '文件操作',
-    description: '文件读取、写入、编辑、批量修改、内容检索、删除，以及成品文件展示与图片识别等核心文件操作',
+    description: '文件读取、写入、精确修改、内容检索、复制、删除，以及成品文件展示与图片识别等核心文件操作',
     icon: 'file',
     toolIds: [
       'file_read',
       'file_write',
-      'file_edit',
+      'files_edit',
+      'file_copy',
       'file_delete',
       'file_list',
       'grep',
-      'apply_patch',
       'report_generated_files',
       'ocr_image',
       'read_image',
@@ -79,7 +79,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'web_fetch',
     ],
   },
-  { id: 'scripting', name: 'scripting', title: '脚本执行', description: 'Shell命令、JavaScript代码执行与环境探测，处理数据、调用语言生态、操作系统命令', icon: 'code', toolIds: ['shell_exec', 'shell_output', 'shell_kill', 'javascript_exec', 'env_probe'], },
+  { id: 'scripting', name: 'scripting', title: '脚本执行', description: 'Shell命令执行与环境探测，处理数据、调用语言生态、操作系统命令', icon: 'code', toolIds: ['shell_exec', 'shell_output', 'shell_kill', 'env_probe'], },
   {
     id: 'conversation_memory',
     name: 'conversation_memory',
@@ -167,7 +167,7 @@ function getUnifiedBuiltinToolCatalog() {
     onDemand: t.onDemand ?? false,
   }))
 
-  // shell_exec + javascript_exec 工具（category 覆盖 agent 里的默认 'agent'）
+  // shell_exec 工具（category 覆盖 agent 里的默认 'agent'）
   const scriptingTools = [
     {
       id: shellExecTool.id,
@@ -177,15 +177,7 @@ function getUnifiedBuiltinToolCatalog() {
       category: 'scripting' as const,
       onDemand: shellExecTool.onDemand ?? false,
     },
-    {
-      id: javascriptExecTool.id,
-      name: javascriptExecTool.name,
-      title: javascriptExecTool.title,
-      description: javascriptExecTool.description,
-      category: 'scripting' as const,
-      onDemand: javascriptExecTool.onDemand ?? false,
-    },
-    ]
+  ]
 
   // 用 Map 去重：后出现的覆盖先出现的，确保 scriptingTools 的 category='scripting' 覆盖 agentTools 里的 'agent'
   const idToTool = new Map<string, { id: string; name: string; title: string; description: string; category: string; onDemand: boolean }>()

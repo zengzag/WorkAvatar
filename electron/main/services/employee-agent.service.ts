@@ -10,7 +10,7 @@ import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import { PROMPT_FORMAT_MARKER } from './agent/business/prompts'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import {
   listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool, cancelSubagentTool,
   readRunNotificationsTool, taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
@@ -371,10 +371,6 @@ class EmployeeAgentService {
     agent.registerTools(this.applyToolModes(createKMSTools(collectionIdsRef), toolModes))
     agent.registerTools(this.applyToolModes(createKMSCollectionTools(collectionIdsRef), toolModes))
 
-    if (toolModes.get('javascript_exec') !== 'off') {
-      agent.registerTools([{ ...javascriptExecTool, onDemand: toolModes.get('javascript_exec') === 'on_demand' }])
-    }
-
     // run_skill_script 工具：受全局开关 skills_enable_script_execution 控制（默认禁用）
     const scriptExecRow = this.db.getDb().prepare("SELECT value FROM settings WHERE key = 'skills_enable_script_execution'").get() as { value: string } | undefined
     if (scriptExecRow?.value === '1' || scriptExecRow?.value === 'true') {
@@ -533,7 +529,6 @@ class EmployeeAgentService {
     // KMS / 脚本工具（工厂函数创建，默认按需）
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
-      'javascript_exec',
     ]
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')

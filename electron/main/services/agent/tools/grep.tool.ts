@@ -2,7 +2,7 @@ import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import { expandGlobPattern, isIgnoredDirName } from './glob-engine'
-import { getWorkspacePath, resolveToolPath } from './fs-tools'
+import { getWorkspacePath, resolveToolPath } from './fs-shared'
 import { relativeDisplayPath } from './utils'
 
 const DEFAULT_MAX_RESULTS = 200

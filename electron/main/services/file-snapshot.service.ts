@@ -45,7 +45,7 @@ export interface RevertResult {
 
 /**
  * 工作区文件改动快照：每次文件写入/编辑/删除前记录变更前状态，
- * 供 UI 撤销单个改动或整轮任务的改动（由 file_write/file_edit/file_delete 埋点）。
+ * 供 UI 撤销单个改动或整轮任务的改动（由 file_write/files_edit/file_delete 埋点）。
  *
  * 仅登记内容、不参与权限判定；回滚直接写回原内容或移入回收站，不做三方合并。
  */

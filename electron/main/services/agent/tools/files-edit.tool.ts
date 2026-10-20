@@ -5,7 +5,7 @@ import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
 import { MAX_SNAPSHOT_FILE_BYTES } from '../../file-snapshot.service'
 import { buildUnifiedDiff } from './text-diff'
-import { diffSuffix, readEditableText, readFileState, recordSnapshot, resolveToolPath } from './fs-tools'
+import { diffSuffix, readEditableText, readFileState, recordSnapshot, resolveToolPath } from './fs-shared'
 import type { DiffDisclosure } from '../../../../shared/types'
 
 const MAX_CHANGES = 50
@@ -22,50 +22,51 @@ interface PatchPlan {
 }
 
 /**
- * 一次原子修改多个文件：全部改动先在内存中计算完成，合并成一次授权确认（弹窗展示合并 diff），
+ * 文件精确修改（单个或多个）：全部改动先在内存中计算完成，合并成一次授权确认（弹窗展示合并 diff），
  * 授权通过后才逐个落盘。任一改动无法应用（未匹配/不唯一/二进制）时整体拒绝，不产生半成品。
  */
-export const applyPatchTool: ToolDefinition = {
-  id: 'apply_patch',
-  name: 'apply_patch',
-  title: '批量修改文件',
-  summary: '一次修改多个文件（精确替换或整文件写入），合并为一次确认，失败则整体不落盘。',
-  description: `一次性修改多个文件，把多次改动合并为**一次授权确认**（弹窗中展示所有文件的合并 diff），避免逐文件弹窗；任一改动无法应用时整体拒绝，不会留下半成品。
+export const filesEditTool: ToolDefinition = {
+  id: 'files_edit',
+  name: 'files_edit',
+  title: '修改文件',
+  summary: '精确修改一个或多个文件（替换或整文件写入），合并为一次确认，失败则整体不落盘。',
+  description: `Edit existing files in place with exact text replacements, or write whole file contents, in one atomic call.
 
-使用场景：跨文件重命名符号、同步修改多处引用、批量调整配置——凡是"一个任务要动多个文件"就该用本工具，而不是反复调用 file_edit。
+Use this for targeted changes instead of rewriting a file with file_write. All changes are planned and shown as one combined diff behind a single confirmation; if any change cannot be applied, nothing is written.
 
-changes 每项二选一：
-- { path, edits: [{ old_string, new_string, replace_all? }] }：对已存在文件按顺序做精确字符串替换。old_string 必须与文件内容精确一致（含缩进与换行），默认要求唯一匹配，多处匹配时补充上下文或用 replace_all=true。同一文件的多处改动合并到一个 edits 数组，不要拆成多项。
-- { path, content }：整文件写入（新建或覆盖），自动创建父目录。
+Each item in changes[] is one file:
+- { path, edits: [{ old_string, new_string, replace_all? }] }: exact replacements applied in order. old_string must match the file exactly (including indentation and newlines) and be unique unless replace_all=true. To insert, include an anchor line in old_string and repeat it plus the new content in new_string. To delete text, set new_string to "".
+- { path, content }: write the whole file (create or overwrite); parent directories are created.
 
-约束：
-- 不接受删除文件；删除一律使用 file_delete。
-- 二进制或非 UTF-8 文件拒绝编辑/覆盖（写回会静默损坏），改用 file_write 或 shell 命令处理。
-- 一次最多 ${MAX_CHANGES} 个文件；工作区外文件需在弹窗中确认。`,
+Constraints:
+- edits require an existing file; to create one use content or file_write.
+- Binary or non-UTF-8 files are refused (writing back would corrupt them).
+- At most ${MAX_CHANGES} files per call; files outside the workspace need confirmation.
+- Deleting files is not supported — use file_delete.`,
   parameters: {
     type: 'object',
     properties: {
       changes: {
         type: 'array',
-        description: `要修改的文件列表（最多 ${MAX_CHANGES} 项），每项提供 edits 或 content 之一`,
+        description: `Files to modify (at most ${MAX_CHANGES}); each item provides either edits or content`,
         items: {
           type: 'object',
           properties: {
-            path: { type: 'string', description: '文件路径（绝对路径，或相对当前工作目录）' },
+            path: { type: 'string', description: 'File path (absolute, or relative to the workspace)' },
             edits: {
               type: 'array',
-              description: '按顺序应用的精确替换列表（文件必须已存在）',
+              description: 'Exact replacements applied in order (the file must already exist)',
               items: {
                 type: 'object',
                 properties: {
-                  old_string: { type: 'string', description: '要查找的精确文本（含缩进与换行）' },
-                  new_string: { type: 'string', description: '替换为的文本' },
-                  replace_all: { type: 'boolean', description: '是否替换全部匹配（默认false，仅替换唯一匹配）' },
+                  old_string: { type: 'string', description: 'Exact text to find (including indentation and newlines)' },
+                  new_string: { type: 'string', description: 'Replacement text; empty string deletes the match' },
+                  replace_all: { type: 'boolean', description: 'Replace every occurrence (default false, unique match only)' },
                 },
                 required: ['old_string', 'new_string'],
               },
             },
-            content: { type: 'string', description: '整文件写入内容（新建或覆盖）；与 edits 二选一' },
+            content: { type: 'string', description: 'Whole-file content (create or overwrite); mutually exclusive with edits' },
           },
           required: ['path'],
         },
@@ -85,9 +86,7 @@ changes 每项二选一：
   selfAuthorized: true,
   noRetry: true,
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
-  // 默认按需（与 file_list/grep/env_probe 一致）：多文件批量改动属高频但可发现的场景，
-  // 省下的常驻 schema 开销（约 645 tokens）对所有员工都生效
-  onDemand: true,
+  onDemand: false,
 }
 
 async function applyPatch(args: any) {
@@ -150,7 +149,7 @@ async function applyPatch(args: any) {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(p.resolved, p.after, 'utf-8')
       const restorable = Buffer.byteLength(p.before, 'utf-8') <= MAX_SNAPSHOT_FILE_BYTES
-      recordSnapshot('apply_patch', p.existed ? 'edit' : 'write', p.resolved, {
+      recordSnapshot('files_edit', p.existed ? 'edit' : 'write', p.resolved, {
         exists: p.existed,
         content: restorable ? p.before : '',
         restorable,

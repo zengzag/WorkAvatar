@@ -2,6 +2,13 @@ import { spawn, execSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import SandboxService, {
+  isSandboxDenial,
+  isSandboxRunnerFailure,
+  type ConfinedLaunch,
+  type SandboxFacts,
+  type SandboxMode,
+} from '../../sandbox.service'
 export const IS_WINDOWS = process.platform === 'win32'
 
 /** 强制所有输出用 UTF-8 解码，配合启动时设置 chcp 65001 + [Console]::OutputEncoding */
@@ -235,6 +242,30 @@ export function cleanupShellLaunch(spec: { tempFile?: string }): void {
   cleanupTempFile(spec.tempFile)
 }
 
+export interface RunCommandOptions {
+  cwd: string
+  timeoutMs: number
+  stdinContent?: string
+  extraEnv?: Record<string, string>
+  /** 可写边界（工作区）；缺省回退到 cwd */
+  workspaceRoot?: string
+  /** 沙箱模式，默认 workspace-write */
+  sandboxMode?: SandboxMode
+}
+
+export interface RunCommandResult {
+  stdout: string
+  stderr: string
+  code: number | null
+  signal: NodeJS.Signals | null
+  /** 沙箱执行事实（未启用沙箱时为空） */
+  sandbox?: SandboxFacts
+  /** 沙箱运行器自身故障：命令没有真正执行 */
+  sandboxRunnerFailed?: boolean
+  /** 沙箱不可用导致命令未执行 */
+  sandboxError?: string
+}
+
 /**
  * 跨平台执行命令（前台，等待结束并聚合全部输出）：
  * - Windows 统一用 PowerShell（自动检测 pwsh.exe 优先，回退 powershell.exe，自动设置 UTF-8 + 正确退出码传递）
@@ -244,31 +275,44 @@ export function cleanupShellLaunch(spec: { tempFile?: string }): void {
  * - 超时时使用 taskkill /T /F 彻底杀死进程树（Windows），避免孤儿进程残留
  * - 严格分离 stdout / stderr
  * - 所有输出强制 UTF-8 解码
+ * - 默认套用文件沙箱（可读全部、只可写工作区 + 私有临时目录），拒绝由内核判定
  *
  * 需要长跑/后台执行时改用 BackgroundShellService（main/services/background-shell.service.ts）。
  */
 export function runCommandPlatform(
   command: string,
-  opts: {
-    cwd: string
-    timeoutMs: number
-    stdinContent?: string
-    extraEnv?: Record<string, string>
-  }
-): Promise<{
-  stdout: string
-  stderr: string
-  code: number | null
-  signal: NodeJS.Signals | null
-}> {
+  opts: RunCommandOptions
+): Promise<RunCommandResult> {
   return new Promise((resolve) => {
     // 1) heredoc 解析 + 2) 选择 shell（与后台任务共用同一份启动逻辑）
     const spec = resolveShellLaunch(command, opts.stdinContent)
     const actualStdin = spec.stdinContent
 
+    // 3) 套沙箱：拿不到可用后端时直接拒绝执行，绝不静默降级
+    let confined: ConfinedLaunch
+    try {
+      confined = SandboxService.getInstance().confine({
+        program: spec.shell,
+        args: spec.shellArgs,
+        cwd: opts.cwd,
+        workspaceRoot: opts.workspaceRoot || opts.cwd,
+        mode: opts.sandboxMode ?? 'workspace-write',
+      })
+    } catch (err: any) {
+      cleanupShellLaunch(spec)
+      resolve({
+        stdout: '',
+        stderr: String(err?.message || err),
+        code: -1,
+        signal: null,
+        sandboxError: String(err?.message || err),
+      })
+      return
+    }
+
     let child: ReturnType<typeof spawn>
     try {
-      child = spawn(spec.shell, spec.shellArgs, {
+      child = spawn(confined.program, confined.args, {
         cwd: opts.cwd,
         // Unix 下 detached:true 使 shell 成为独立进程组长，超时才能用 kill(-pid) 杀整棵进程树；
         // 不影响正常等待 close 事件。Windows 的进程树杀灭走 taskkill /T（见超时分支）。
@@ -278,11 +322,12 @@ export function runCommandPlatform(
         stdio: [actualStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,
-        env: buildChildEnv(opts.extraEnv),
+        env: { ...buildChildEnv(opts.extraEnv), ...confined.env },
       })
     } catch (err: any) {
-      // 清理临时文件
+      // 清理临时文件与沙箱临时目录
       cleanupShellLaunch(spec)
+      confined.cleanup()
       resolve({ stdout: '', stderr: String(err?.message || err), code: -1, signal: null })
       return
     }
@@ -300,28 +345,42 @@ export function runCommandPlatform(
     const stderrBufs: Buffer[] = []
     let settled = false
     let killTimer: NodeJS.Timeout | undefined
+    let cleanedUp = false
+    const cleanupOnce = () => {
+      if (cleanedUp) return
+      cleanedUp = true
+      cleanupShellLaunch(spec)
+      confined.cleanup()
+    }
 
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null, extra?: Partial<RunCommandResult>) => {
       if (settled) return
       settled = true
       // 及时清掉超时定时器，避免事件循环被无谓挂到 timeoutMs+500
       if (killTimer) clearTimeout(killTimer)
       const stdout = decodeOutputBuffer(Buffer.concat(stdoutBufs))
       const stderr = decodeOutputBuffer(Buffer.concat(stderrBufs))
-      // 清理临时文件
-      cleanupShellLaunch(spec)
-      resolve({ stdout, stderr, code, signal })
+      cleanupOnce()
+      const runnerFailed = isSandboxRunnerFailure(stderr)
+      // 运行器故障的输出里也可能带「拒绝访问」，此时命令根本没跑，必须与策略拒绝区分开
+      const sandbox: SandboxFacts | undefined = confined!.facts.backend === 'none'
+        ? undefined
+        : { ...confined!.facts, denied: !runnerFailed && isSandboxDenial(stderr) }
+      resolve({
+        stdout,
+        stderr,
+        code,
+        signal,
+        sandbox,
+        sandboxRunnerFailed: sandbox ? runnerFailed : undefined,
+        ...extra,
+      })
     }
 
     child.stdout?.on('data', (d: Buffer) => { stdoutBufs.push(d) })
     child.stderr?.on('data', (d: Buffer) => { stderrBufs.push(d) })
     child.on('error', (err) => {
-      if (!settled) {
-        settled = true
-        if (killTimer) clearTimeout(killTimer)
-        cleanupShellLaunch(spec)
-        resolve({ stdout: '', stderr: err.message, code: -1, signal: null })
-      }
+      finish(-1, null, { stderr: err.message })
     })
     child.on('close', (code, signal) => finish(code, signal))
 

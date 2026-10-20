@@ -7,6 +7,13 @@ import {
   killProcessTree,
   resolveShellLaunch,
 } from './agent/tools/exec-shared'
+import SandboxService, {
+  isSandboxDenial,
+  isSandboxRunnerFailure,
+  type ConfinedLaunch,
+  type SandboxBackend,
+  type SandboxMode,
+} from './sandbox.service'
 import { createLogger } from './logger'
 
 const logger = createLogger('BackgroundShell')
@@ -43,6 +50,11 @@ interface BackgroundShellTask {
   waiters: Array<() => void>
   launchTempFile?: string
   killRequested?: boolean
+  sandboxMode: SandboxMode
+  sandboxBackend: SandboxBackend
+  sandboxDenied: boolean
+  sandboxRunnerFailed: boolean
+  sandboxCleanup: () => void
 }
 
 export interface BackgroundShellSnapshot {
@@ -59,6 +71,11 @@ export interface BackgroundShellSnapshot {
   bufferStart: number
   /** 属主键（conversationId 优先，降级 sessionId）：按会话过滤与回收用 */
   ownerKey: string
+  /** 沙箱执行事实 */
+  sandboxMode: SandboxMode
+  sandboxBackend: SandboxBackend
+  sandboxDenied: boolean
+  sandboxRunnerFailed: boolean
 }
 
 export interface BackgroundShellReadResult {
@@ -110,6 +127,9 @@ class BackgroundShellService {
     stdinContent?: string
     cwd: string
     ownerKey: string
+    /** 可写边界；缺省回退到 cwd */
+    workspaceRoot?: string
+    sandboxMode?: SandboxMode
   }): { ok: true; snapshot: BackgroundShellSnapshot } | { ok: false; error: string } {
     const running = this.countRunning(params.ownerKey)
     if (running >= MAX_RUNNING_PER_OWNER) {
@@ -120,19 +140,34 @@ class BackgroundShellService {
     }
 
     const spec = resolveShellLaunch(params.command, params.stdinContent)
+    let confined: ConfinedLaunch
+    try {
+      confined = SandboxService.getInstance().confine({
+        program: spec.shell,
+        args: spec.shellArgs,
+        cwd: params.cwd,
+        workspaceRoot: params.workspaceRoot || params.cwd,
+        mode: params.sandboxMode ?? 'workspace-write',
+      })
+    } catch (error: any) {
+      cleanupShellLaunch(spec)
+      return { ok: false, error: `沙箱不可用，后台任务未启动: ${error?.message || error}` }
+    }
+
     let child: ChildProcess
     try {
-      child = spawn(spec.shell, spec.shellArgs, {
+      child = spawn(confined.program, confined.args, {
         cwd: params.cwd,
         // Unix 下 detached 让 shell 成为独立进程组长，终止时可用 kill(-pid) 清掉整棵树
         detached: !IS_WINDOWS,
         stdio: [spec.stdinContent ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,
-        env: buildChildEnv(),
+        env: { ...buildChildEnv(), ...confined.env },
       })
     } catch (error: any) {
       cleanupShellLaunch(spec)
+      confined.cleanup()
       return { ok: false, error: `后台任务启动失败: ${error?.message || error}` }
     }
 
@@ -153,6 +188,11 @@ class BackgroundShellService {
       buffer: '',
       waiters: [],
       launchTempFile: spec.tempFile,
+      sandboxMode: confined.facts.mode,
+      sandboxBackend: confined.facts.backend,
+      sandboxDenied: false,
+      sandboxRunnerFailed: false,
+      sandboxCleanup: confined.cleanup,
     }
     this.tasks.set(id, task)
 
@@ -240,6 +280,8 @@ class BackgroundShellService {
         this.kill(task.id)
         killed++
       }
+      task.sandboxCleanup()
+      task.sandboxCleanup = () => {}
       this.tasks.delete(task.id)
       removed++
     }
@@ -250,9 +292,12 @@ class BackgroundShellService {
   /** 应用退出时终止全部任务 */
   disposeAll(): void {
     for (const task of this.tasks.values()) {
-      if (task.status !== 'running') continue
-      task.killRequested = true
-      killProcessTree(task.pid, (signal) => task.child.kill(signal))
+      if (task.status === 'running') {
+        task.killRequested = true
+        killProcessTree(task.pid, (signal) => task.child.kill(signal))
+      }
+      task.sandboxCleanup()
+      task.sandboxCleanup = () => {}
     }
     this.tasks.clear()
     this.notifyChange()
@@ -262,6 +307,14 @@ class BackgroundShellService {
     if (!text) return
     task.totalChars += text.length
     task.buffer += text
+    // 沙箱拒绝只提示一次：后台任务不适合中断重跑，把事实写进输出供后续读取
+    if (task.sandboxBackend !== 'none' && !task.sandboxDenied
+      && isSandboxDenial(text) && !isSandboxRunnerFailure(task.buffer)) {
+      task.sandboxDenied = true
+      const marker = '\n[沙箱] 检测到越权文件操作已被系统拒绝（仅允许写入工作区与私有临时目录）。\n'
+      task.totalChars += marker.length
+      task.buffer += marker
+    }
     if (task.buffer.length > MAX_BUFFER_CHARS) {
       const drop = task.buffer.length - MAX_BUFFER_CHARS
       task.buffer = task.buffer.slice(drop)
@@ -277,8 +330,13 @@ class BackgroundShellService {
     task.signal = signal
     task.endedAt = Date.now()
     if (errorMessage) this.append(task, `\n[进程错误] ${errorMessage}\n`)
+    if (task.sandboxBackend !== 'none' && isSandboxRunnerFailure(task.buffer)) {
+      task.sandboxRunnerFailed = true
+    }
     cleanupShellLaunch({ tempFile: task.launchTempFile })
     task.launchTempFile = undefined
+    task.sandboxCleanup()
+    task.sandboxCleanup = () => {}
     this.wake(task)
     this.notifyChange()
   }
@@ -320,6 +378,10 @@ class BackgroundShellService {
       totalChars: task.totalChars,
       bufferStart: task.bufferStart,
       ownerKey: task.ownerKey,
+      sandboxMode: task.sandboxMode,
+      sandboxBackend: task.sandboxBackend,
+      sandboxDenied: task.sandboxDenied,
+      sandboxRunnerFailed: task.sandboxRunnerFailed,
     }
   }
 

@@ -3,43 +3,37 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
-import FileSnapshotService, { MAX_SNAPSHOT_FILE_BYTES, type FileChangeKind } from '../../file-snapshot.service'
+import FileSnapshotService from '../../file-snapshot.service'
 import { moveToTrash } from '../../common-utils'
 import { isFsRoot, isWithinPath, normalizePath } from '../../path-normalize'
 import { buildUnifiedDiff } from './text-diff'
 import { expandGlobPattern, isGlobPattern } from './glob-engine'
 import { isIrreversibleTool } from './tool-permission'
-import type { DiffDisclosure } from '../../../../shared/types'
+import { diffSuffix, getWorkspacePath, readFileState, recordSnapshot, resolveToolPath } from './fs-shared'
+import { filesEditTool } from './files-edit.tool'
 
 /**
- * 文件操作工具（仅保留核心读写编辑与成品声明/删除）：
+ * 文件操作工具（核心读写与成品声明/复制/删除）：
  *
  * 常驻工具（加入 LLM tools 数组，对话全程不变）：
  *   file_read    读取文件内容
  *   file_write   写入文件（覆盖/追加）
- *   file_edit    编辑文件部分内容（replace/insert/delete 三种模式）
+ *   files_edit   精确修改单个或多个文件（替换/整文件写入，合并为一次确认）
+ *   file_copy    复制文件/目录（可复制到工作区外，需授权）
  *   file_delete  删除文件/目录（移入回收站）
  *   report_generated_files  声明需要展示给用户的成品文件
  *
  * 说明：列目录与按内容/通配检索由编程工具 file_list / grep 提供（见 file-list.tool.ts、grep.tool.ts）；
- * 创建/移动/复制/重命名/查看信息等其余文件操作仍由 shell_exec 覆盖。
- * 删除是唯一例外——shell_exec / javascript_exec 中的删除一律被拒绝，必须走 file_delete
+ * 创建/移动/重命名/查看信息等其余文件操作仍由 shell_exec 覆盖。
+ * 删除是唯一例外——shell_exec 中的删除一律被拒绝，必须走 file_delete
  * （路径可静态判定、移入回收站可恢复、操作可审计）。
  *
- * 工作区边界判定、授权缓存与区外确认统一由 FilePermissionService 负责。
+ * 工作区边界判定、授权缓存与区外确认统一由 FilePermissionService 负责；
+ * 路径解析与改动快照等共用能力见 fs-shared.ts。
  */
 
 const filePermission = FilePermissionService.getInstance()
-
-/** 当前任务的有效工作区目录：优先任务独立目录，旧对话（无任务目录）回退到员工工作区 */
-export function getWorkspacePath(): string | null {
-  return filePermission.getWorkspacePath()
-}
-
-/** 解析工具入参路径：绝对路径原样；相对路径按工作区解析（无工作区时回退主进程 cwd），不落到应用目录 */
-export function resolveToolPath(raw: string): string {
-  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(getWorkspacePath() || process.cwd(), raw)
-}
+const fileSnapshot = FileSnapshotService.getInstance()
 
 const PARSABLE_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
@@ -51,87 +45,20 @@ const MAX_LENGTH_LIMIT = 50000
 
 // ====== 常驻工具 ======
 
-// ====== 改动快照与 diff 预览（file_write / file_edit / file_delete 共用） ======
-
-const fileSnapshot = FileSnapshotService.getInstance()
-
-/** 读取文件改动前状态：内容超上限/二进制/非 UTF-8 时只登记存在性（不可还原），避免回滚损坏原文件 */
-export function readFileState(filePath: string): { exists: boolean; content: string; restorable: boolean } {
-  try {
-    const stat = fs.statSync(filePath)
-    if (!stat.isFile()) return { exists: true, content: '', restorable: false }
-    if (stat.size > MAX_SNAPSHOT_FILE_BYTES) return { exists: true, content: '', restorable: false }
-    const buf = fs.readFileSync(filePath)
-    // NUL 字节 → 二进制文件；无效 UTF-8（如 GBK）→ 无法无损还原，均不做快照内容记录
-    if (buf.includes(0)) return { exists: true, content: '', restorable: false }
-    try {
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
-      return { exists: true, content: text, restorable: true }
-    } catch {
-      return { exists: true, content: '', restorable: false }
-    }
-  } catch {
-    return { exists: false, content: '', restorable: true }
-  }
-}
-
-/** 授权通过后登记快照（被拒绝的操作不产生回滚记录） */
-export function recordSnapshot(
-  toolName: string,
-  changeKind: FileChangeKind,
-  filePath: string,
-  before: { exists: boolean; content: string; restorable: boolean },
-): void {
-  fileSnapshot.recordChange({
-    toolName,
-    changeKind,
-    path: filePath,
-    existed: before.exists,
-    beforeContent: before.restorable ? before.content : null,
-    restorable: before.restorable,
-  })
-}
-
-/** 工具结果中的 diff 展示块（无改动时返回空串；截断提示由 buildUnifiedDiff 内嵌，不重复追加） */
-export function diffSuffix(diff: DiffDisclosure): string {
-  if (!diff.content) return ''
-  return `\n\n\`\`\`diff\n${diff.content}\n\`\`\``
-}
-
-/**
- * 读取可编辑的 UTF-8 文本文件（file_edit / apply_patch 共用）。
- * 二进制与非 UTF-8（如 GBK）显式拒绝——写回会静默损坏原文件。
- */
-export function readEditableText(
-  filePath: string,
-  resolved: string,
-): { ok: true; content: string } | { ok: false; error: string } {
-  if (!fs.existsSync(resolved)) return { ok: false, error: `文件不存在: ${filePath}` }
-  if (!fs.statSync(resolved).isFile()) return { ok: false, error: `路径不是文件: ${filePath}` }
-  const buf = fs.readFileSync(resolved)
-  if (buf.includes(0)) return { ok: false, error: `文件是二进制文件，无法进行文本编辑: ${filePath}` }
-  try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
-    return { ok: true, content: text.replace(/\r\n/g, '\n') }
-  } catch {
-    return { ok: false, error: `文件不是有效的 UTF-8 文本，无法进行文本编辑（请用 shell 命令处理编码转换后重试）: ${filePath}` }
-  }
-}
-
 // ====== file_read：读取文件内容 ======
 
 export const fileReadTool: ToolDefinition = {
   id: 'file_read',
   name: 'file_read',
   title: '读取文件',
-  description: `Read a local file. Text files are returned as-is, line-numbered by default; page through large files with offset/max_length. Set parse=true to extract text from PDF/DOCX/XLSX/PPTX or run OCR on an image instead of reading raw bytes.`,
+  description: `Read a local file. Text files are returned as-is, line-numbered by default; page through large files with offset/max_length. Set parse=true to extract text from PDF/DOCX/XLSX/PPTX instead of reading raw bytes; for text inside an image use ocr_image.`,
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string', description: 'Absolute file path' },
       offset: { type: 'number', description: 'Start character offset (default 0)', minimum: 0 },
       max_length: { type: 'number', description: `Max characters to return (default ${DEFAULT_MAX_LENGTH}, max ${MAX_LENGTH_LIMIT})`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
-      parse: { type: 'boolean', description: 'Extract text from PDF/DOCX/XLSX/PPTX/images (default false)' },
+      parse: { type: 'boolean', description: 'Extract text from PDF/DOCX/XLSX/PPTX (default false)' },
       show_line_numbers: { type: 'boolean', description: 'Prefix each line with its number (default true)' },
     },
     required: ['path'],
@@ -177,75 +104,18 @@ export const fileWriteTool: ToolDefinition = {
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
-// ====== file_edit：编辑文件部分内容（replace/insert/delete） ======
-
-export const fileEditTool: ToolDefinition = {
-  id: 'file_edit',
-  name: 'file_edit',
-  title: '编辑文件',
-  summary: '对文件部分内容做精确修改（替换/插入/删除），避免全量重写。replace 精确字符串替换；insert 按行号或锚点插入；delete 按行范围或锚点删除。',
-  description: `Make a targeted change to an existing file instead of rewriting it whole.
-
-replace needs old_string to match the file exactly and uniquely — add surrounding context, or set replace_all=true. insert and delete locate their target by an anchor string or by line number.
-
-The file must already exist: use file_write to create it, or apply_patch to change several files in one step.`,
-  parameters: {
-    type: 'object',
-    properties: {
-      operation: {
-        type: 'string',
-        enum: ['replace', 'insert', 'delete'],
-        description: 'replace / insert / delete',
-      },
-      path: { type: 'string', description: 'Absolute file path (must already exist)' },
-      old_string: { type: 'string', description: 'replace/delete: exact text to find; must match uniquely unless replace_all=true' },
-      new_string: { type: 'string', description: 'replace: replacement text (empty string deletes the match)' },
-      replace_all: { type: 'boolean', description: 'replace: replace every occurrence (default false)' },
-      content: { type: 'string', description: 'insert: content to insert' },
-      after_string: { type: 'string', description: 'insert: insert right after this string (takes precedence over line)' },
-      line: { type: 'number', description: 'insert: insert before this line (1-based; 0 or omitted appends at end)', minimum: 0 },
-      start_line: { type: 'number', description: 'delete: first line to remove (1-based, inclusive)', minimum: 1 },
-      end_line: { type: 'number', description: 'delete: last line to remove (1-based, inclusive)', minimum: 1 },
-    },
-    required: ['operation', 'path'],
-  },
-  handler: async (args: any) => {
-    try {
-      const op = String(args.operation || '')
-      switch (op) {
-        case 'replace':
-          return editReplace(args)
-        case 'insert':
-          return editInsert(args)
-        case 'delete':
-          return editDelete(args)
-        default:
-          return { success: false, error: `不支持的 operation: ${op}（可用 replace/insert/delete）` }
-      }
-    } catch (error: any) {
-      return { success: false, error: `文件编辑失败: ${error.message || error}` }
-    }
-  },
-  source: 'builtin',
-  permission: 'requires_confirmation',
-  selfAuthorized: true,
-  noRetry: true,
-  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
-}
-
 // ====== file_delete：删除文件/目录（移入回收站，支持批量与通配符） ======
 
 export const fileDeleteTool: ToolDefinition = {
   id: 'file_delete',
   name: 'file_delete',
   title: '删除文件/文件夹',
-  summary: '删除文件或文件夹（移入回收站，可恢复），支持一次传多个路径与 * ? ** 通配符批量删除。删除一律使用本工具，禁止用 shell 命令或脚本删除。',
+  summary: '删除文件或文件夹（移入回收站，可恢复），支持一次传多个路径与 * ? ** 通配符批量删除。',
   description: `Delete files or directories by moving them to the system trash (recoverable).
 
 - path or paths: several targets may be passed at once; each may contain the wildcards * ? ** and every real match is deleted.
 - recursive=true is required to delete a non-empty directory; without it you get an error rather than a silent delete.
 - Drive roots, filesystem roots, and the workspace root (or any ancestor of it) are refused.
-- Deletion must always go through file_delete: rm / del / Remove-Item and script-based deletion are rejected by policy.
 - Targets outside the workspace need confirmation. Deletion is irreversible, so the confirmation cannot be covered by "always allow".`,
   parameters: {
     type: 'object',
@@ -275,6 +145,44 @@ export const fileDeleteTool: ToolDefinition = {
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
+// ====== file_copy：复制文件/目录（可复制到工作区外，需授权） ======
+
+export const fileCopyTool: ToolDefinition = {
+  id: 'file_copy',
+  name: 'file_copy',
+  title: '复制文件/文件夹',
+  summary: '复制文件或目录到目标位置（目录递归复制）。用于把工作区里的成品交付到用户指定目录（工作区外会弹一次授权）。',
+  description: `Copy a file or a directory to a destination — use it to deliver a finished artifact from the workspace to the user's folder.
+
+- source / destination: absolute, or relative to the workspace.
+- source may be a file or a directory; directories are copied recursively.
+- If destination is an existing directory, the source is copied into it keeping its own name.
+- overwrite=true replaces an existing target (an existing directory is moved to the trash first); default false reports the conflict instead.
+- The destination may be outside the workspace: the user is asked once and can allow the whole folder for later copies.
+- A directory cannot be copied into itself or one of its subdirectories.`,
+  parameters: {
+    type: 'object',
+    properties: {
+      source: { type: 'string', description: 'File or directory to copy (absolute path, or relative to the workspace)' },
+      destination: { type: 'string', description: 'Target path, or an existing directory to copy into (absolute, or relative to the workspace)' },
+      overwrite: { type: 'boolean', description: 'Replace the target when it already exists (default false)' },
+    },
+    required: ['source', 'destination'],
+  },
+  handler: async (args: any) => {
+    try {
+      return await copyFile(args)
+    } catch (error: any) {
+      return { success: false, error: `复制失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  permission: 'requires_confirmation',
+  selfAuthorized: true,
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
+}
+
 // ====== report_generated_files：声明需要展示给用户的成品文件 ======
 
 /** 可预览文件扩展名白名单（与前端 GeneratedFilesBar 展示范围一致） */
@@ -291,10 +199,10 @@ export const reportGeneratedFilesTool: ToolDefinition = {
   id: 'report_generated_files',
   name: 'report_generated_files',
   title: '展示生成文件',
-  summary: '任务中创建或修改了用户关心的成品文档时，调用此工具声明文件路径，前端会在消息下方展示可预览卡片。',
+  summary: '声明本次任务的成品文件路径，前端会在消息下方展示可预览卡片。',
   description: `Declare the deliverable files this task produced (Word / Excel / PowerPoint / PDF / images) so the user gets preview cards.
 
-Call it once before your final reply, passing the absolute path of every deliverable. Declare only what the user will consume — not temporary files, configs, scripts or intermediate artifacts. Paths that do not exist, are not files, or have an extension outside the preview whitelist are silently dropped.`,
+Paths that do not exist, are not files, or have an extension outside the preview whitelist are silently dropped.`,
   parameters: {
     type: 'object',
     properties: {
@@ -356,11 +264,12 @@ Call it once before your final reply, passing the absolute path of every deliver
   noRetry: true,
 }
 
-/** 常驻文件工具：读/写/编辑/删除/成品声明，对话全程加入 LLM tools 数组 */
+/** 常驻文件工具：读取/写入/精确修改/复制/删除/成品声明，对话全程加入 LLM tools 数组 */
 export const residentFileTools: ToolDefinition[] = [
   fileReadTool,
   fileWriteTool,
-  fileEditTool,
+  filesEditTool,
+  fileCopyTool,
   fileDeleteTool,
   reportGeneratedFilesTool,
 ]
@@ -486,6 +395,82 @@ async function writeFile(args: any) {
   return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符${diffSuffix(diff)}` }
 }
 
+// ====== file_copy 实现 ======
+
+async function copyFile(args: any) {
+  const rawSource = String(args.source || '').trim()
+  const rawDestination = String(args.destination || '').trim()
+  if (!rawSource) return { success: false, error: 'source 不能为空' }
+  if (!rawDestination) return { success: false, error: 'destination 不能为空' }
+
+  const source = resolveToolPath(rawSource)
+  if (!fs.existsSync(source)) return { success: false, error: `源路径不存在: ${source}` }
+  const sourceStat = fs.statSync(source)
+  const sourceIsDir = sourceStat.isDirectory()
+  if (!sourceIsDir && !sourceStat.isFile()) {
+    return { success: false, error: `源路径既不是文件也不是目录: ${source}` }
+  }
+
+  // 目标为已存在的目录时，按源名复制进去（文件或目录均适用）
+  let destination = resolveToolPath(rawDestination)
+  try {
+    if (fs.existsSync(destination) && fs.statSync(destination).isDirectory()) {
+      destination = path.join(destination, path.basename(source))
+    }
+  } catch { /* 目标不可访问时按字面路径处理 */ }
+
+  const sourceNorm = normalizePath(source)
+  const destinationNorm = normalizePath(destination)
+  if (!sourceNorm || !destinationNorm) return { success: false, error: '路径无效' }
+  if (sourceNorm === destinationNorm) return { success: false, error: '源与目标路径相同' }
+  // 目录不能复制到自身或子目录内（cpSync 会递归到新目录，导致无限增长）
+  if (sourceIsDir && isWithinPath(destinationNorm, sourceNorm)) {
+    return { success: false, error: '不能把目录复制到其自身或子目录内' }
+  }
+
+  const overwrite = args.overwrite === true
+  const targetExists = fs.existsSync(destination)
+  if (!overwrite && targetExists) {
+    return { success: false, error: `目标已存在: ${destination}（如需覆盖请传 overwrite=true）` }
+  }
+
+  const targetWasDir = targetExists && fs.statSync(destination).isDirectory()
+  const before = targetExists && !targetWasDir
+    ? readFileState(destination)
+    : { exists: false, content: '', restorable: false }
+  const confirm = await filePermission.authorizeFileOperation('复制到', [destination])
+  if (!confirm.allowed) return { success: false, error: confirm.error }
+
+  fs.mkdirSync(path.dirname(destination), { recursive: true })
+  if (targetExists) {
+    if (targetWasDir) {
+      // 目录整体替换：旧目录移入回收站（目录内容不可快照还原），再复制新目录
+      await moveToTrash(destination)
+      fileSnapshot.recordChange({
+        toolName: 'file_copy', changeKind: 'write', path: destination, existed: true, beforeContent: null, restorable: false,
+      })
+    } else {
+      fs.rmSync(destination, { force: true })
+    }
+  }
+
+  if (sourceIsDir) {
+    fs.cpSync(source, destination, { recursive: true, force: true })
+  } else {
+    fs.copyFileSync(source, destination)
+  }
+  // 覆盖已有文件时登记可回滚快照（目录替换已在上方登记）
+  if (!targetWasDir) recordSnapshot('file_copy', 'write', destination, before)
+
+  if (sourceIsDir) {
+    return { success: true, output: `已复制目录 ${source} → ${destination}` }
+  }
+  const size = sourceStat.size >= 1024
+    ? `${(sourceStat.size / 1024).toFixed(1)} KB`
+    : `${sourceStat.size} B`
+  return { success: true, output: `已复制 ${source} → ${destination}（${size}）` }
+}
+
 // ====== file_delete 实现 ======
 
 async function deleteFile(args: any) {
@@ -589,191 +574,5 @@ async function deleteFile(args: any) {
   }
 }
 
-// ====== file_edit 各操作实现 ======
 
-/** 读取目标文件内容并校验，返回 { content, resolved } 或错误对象（授权在计算改动后统一进行） */
-async function loadEditTarget(args: any): Promise<{ content: string; resolved: string } | { success: false; error: string }> {
-  const filePath = String(args.path || '').trim()
-  if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = resolveToolPath(filePath)
-  if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
-
-  const read = readEditableText(filePath, resolved)
-  if (!read.ok) return { success: false, error: read.error }
-  return { content: read.content, resolved }
-}
-
-/**
- * 编辑收尾：按改动生成 diff → 权限确认（弹窗内展示 diff）→ 落盘 → 登记快照。
- * 授权发生在计算改动之后，使确认弹窗能展示真实 diff。
- */
-async function commitEdit(
-  resolved: string,
-  before: string,
-  after: string,
-): Promise<{ ok: true; diff: DiffDisclosure } | { ok: false; error: string }> {
-  const diff = buildUnifiedDiff(before, after)
-  const confirm = await filePermission.authorizeFileOperation('编辑', [resolved], { diff })
-  if (!confirm.allowed) return { ok: false, error: confirm.error || '编辑操作已取消' }
-
-  fs.writeFileSync(resolved, after, 'utf-8')
-  // 写盘成功后登记快照（写失败时不产生"从未发生"的回滚记录）；按字节而非字符数判断上限
-  const restorable = Buffer.byteLength(before, 'utf-8') <= MAX_SNAPSHOT_FILE_BYTES
-  fileSnapshot.recordChange({
-    toolName: 'file_edit',
-    changeKind: 'edit',
-    path: resolved,
-    existed: true,
-    beforeContent: restorable ? before : null,
-    restorable,
-  })
-  return { ok: true, diff }
-}
-
-/** replace: 精确字符串替换 */
-async function editReplace(args: any) {
-  const oldString = String(args.old_string ?? '')
-  const newString = String(args.new_string ?? '')
-  if (!oldString) return { success: false, error: 'old_string 不能为空' }
-  if (oldString === newString) return { success: false, error: 'old_string 与 new_string 相同，无需替换' }
-
-  const target = await loadEditTarget(args)
-  if (!('content' in target)) return target
-
-  const replaceAll = args.replace_all === true
-  const occurrences = target.content.split(oldString).length - 1
-
-  if (occurrences === 0) {
-    return { success: false, error: `未找到匹配文本。请检查 old_string 是否精确匹配文件内容（含缩进/空格/换行）` }
-  }
-  if (!replaceAll && occurrences > 1) {
-    return {
-      success: false,
-      error: `old_string 在文件中匹配 ${occurrences} 处，不唯一。请提供更多上下文使匹配唯一，或设置 replace_all=true 替换全部`,
-    }
-  }
-
-  // 使用 split/join 和 slice 避免正则/ `$` 特殊字符问题（String.replace 的 replacement 会解释 $& 等）
-  const newContent = replaceAll
-    ? target.content.split(oldString).join(newString)
-    : (() => {
-        const idx = target.content.indexOf(oldString)
-        return target.content.slice(0, idx) + newString + target.content.slice(idx + oldString.length)
-      })()
-
-  const commit = await commitEdit(target.resolved, target.content, newContent)
-  if (!commit.ok) return { success: false, error: commit.error }
-
-  const count = replaceAll ? occurrences : 1
-  return {
-    success: true,
-    output: `✓ replace: 替换 ${count} 处（${oldString.length} 字符 → ${newString.length} 字符）\n文件: ${target.resolved}${diffSuffix(commit.diff)}`,
-  }
-}
-
-/** insert: 插入内容 */
-async function editInsert(args: any) {
-  const content = String(args.content ?? '')
-  if (!content) return { success: false, error: 'content 不能为空' }
-
-  const target = await loadEditTarget(args)
-  if (!('content' in target)) return target
-
-  const afterString = args.after_string != null ? String(args.after_string) : ''
-  const hasAfterString = afterString !== ''
-  const lineNum = args.line != null ? Number(args.line) : null
-
-  let newContent: string
-  let positionDesc: string
-
-  if (hasAfterString) {
-    const idx = target.content.indexOf(afterString)
-    if (idx === -1) {
-      return { success: false, error: `after_string 未在文件中找到，无法定位插入位置` }
-    }
-    const insertPos = idx + afterString.length
-    newContent = target.content.slice(0, insertPos) + content + target.content.slice(insertPos)
-    positionDesc = `在指定文本后`
-  } else if (lineNum != null && lineNum > 0) {
-    const lines = target.content.split('\n')
-    if (lineNum > lines.length + 1) {
-      return { success: false, error: `line ${lineNum} 超出文件总行数 ${lines.length}（可插入范围 1~${lines.length + 1}）` }
-    }
-    const insertIdx = lineNum - 1
-    lines.splice(insertIdx, 0, content)
-    newContent = lines.join('\n')
-    positionDesc = `在第 ${lineNum} 行前`
-  } else {
-    // 追加到末尾
-    newContent = target.content.endsWith('\n') || target.content === ''
-      ? target.content + content
-      : target.content + '\n' + content
-    positionDesc = `在文件末尾`
-  }
-
-  const commit = await commitEdit(target.resolved, target.content, newContent)
-  if (!commit.ok) return { success: false, error: commit.error }
-
-  const insertLines = content.split('\n').length
-  return {
-    success: true,
-    output: `✓ insert: ${positionDesc}插入 ${insertLines} 行内容\n文件: ${target.resolved}${diffSuffix(commit.diff)}`,
-  }
-}
-
-/** delete: 删除内容 */
-async function editDelete(args: any) {
-  const target = await loadEditTarget(args)
-  if (!('content' in target)) return target
-
-  const oldString = args.old_string != null ? String(args.old_string) : ''
-  const hasOldString = oldString !== ''
-  const startLine = args.start_line != null ? Number(args.start_line) : null
-  const endLine = args.end_line != null ? Number(args.end_line) : null
-
-  let newContent: string
-  let desc: string
-
-  if (hasOldString) {
-    const occurrences = target.content.split(oldString).length - 1
-    if (occurrences === 0) {
-      return { success: false, error: `old_string 未在文件中找到` }
-    }
-    if (occurrences > 1) {
-      return {
-        success: false,
-        error: `old_string 在文件中匹配 ${occurrences} 处，不唯一。请提供更多上下文使匹配唯一`,
-      }
-    }
-    const delIdx = target.content.indexOf(oldString)
-    newContent = target.content.slice(0, delIdx) + target.content.slice(delIdx + oldString.length)
-    desc = `删除指定文本（${oldString.length} 字符）`
-  } else if (startLine != null && endLine != null) {
-    if (startLine < 1 || endLine < 1) {
-      return { success: false, error: 'start_line 和 end_line 必须 ≥ 1' }
-    }
-    if (startLine > endLine) {
-      return { success: false, error: `start_line(${startLine}) 不能大于 end_line(${endLine})` }
-    }
-    const lines = target.content.split('\n')
-    if (startLine > lines.length) {
-      return { success: false, error: `start_line ${startLine} 超出文件总行数 ${lines.length}` }
-    }
-    const actualEnd = Math.min(endLine, lines.length)
-    const deletedCount = actualEnd - startLine + 1
-    lines.splice(startLine - 1, deletedCount)
-    newContent = lines.join('\n')
-    desc = `删除第 ${startLine}-${actualEnd} 行（共 ${deletedCount} 行）`
-  } else {
-    return { success: false, error: '请提供 old_string 或 start_line+end_line 来指定删除范围' }
-  }
-
-  const commit = await commitEdit(target.resolved, target.content, newContent)
-  if (!commit.ok) return { success: false, error: commit.error }
-
-  return {
-    success: true,
-    output: `✓ delete: ${desc}\n文件: ${target.resolved}${diffSuffix(commit.diff)}`,
-  }
-}
