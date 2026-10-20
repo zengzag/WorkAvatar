@@ -371,6 +371,8 @@ const ChatInput: React.FC<{
   conversationId?: string | null
   getInitialDraft?: () => string
   onDraftChange?: (value: string) => void
+  /** 草稿恢复键：由 null 变为具体值时（如新任务模式员工首次确定）重新恢复草稿 */
+  draftRestoreKey?: string | null
   availableSkills?: AvailableSkill[]
   centerMode?: boolean
   showEmployeeSelector?: boolean
@@ -385,7 +387,7 @@ const ChatInput: React.FC<{
   isCompacting?: boolean
   /** 隐藏高级工具栏（高权限/模型对比/资料库/极简模式/技能下拉），用于轻量对话视图 */
   hideToolbar?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -489,15 +491,18 @@ const ChatInput: React.FC<{
     emitDraftChange()
   }, [token, removeFileById, emitDraftChange])
 
-  // 仅在 conversationId 变化（切换对话 / 首次挂载）时恢复草稿；
+  // 仅在 conversationId / 草稿恢复键变化（切换对话、首次挂载、新任务员工首次确定）时恢复草稿；
   // restoreDraft / getInitialDraft 通过 ref 读取最新实现，避免其引用变化（如主题 token 变化）触发覆盖。
-  // 新任务模式下切换数字员工时 conversationId 不变（始终为 null），编辑器内容原样保留。
+  const prevDraftRestoreKeyRef = useRef<string | null | undefined>(undefined)
   useEffect(() => {
     const getDraft = getInitialDraftRef.current
-    if (getDraft) {
-      restoreDraftRef.current(getDraft())
-    }
-  }, [conversationId])
+    if (!getDraft) return
+    const prevKey = prevDraftRestoreKeyRef.current
+    prevDraftRestoreKeyRef.current = draftRestoreKey ?? null
+    // 新任务模式下员工之间切换：保留当前编辑内容，不被目标员工的旧草稿覆盖
+    if (prevKey && draftRestoreKey && prevKey !== draftRestoreKey) return
+    restoreDraftRef.current(getDraft())
+  }, [conversationId, draftRestoreKey])
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -981,7 +986,7 @@ const ChatInput: React.FC<{
   }, [providers, modelSearchText])
 
   const modelPickerContent = useMemo(() => (
-    <div style={{ width: 320, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 192, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
         prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -1002,8 +1007,8 @@ const ChatInput: React.FC<{
           return (
             <div key={provider.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextSecondary }}>
-                <RobotOutlined style={{ fontSize: 11 }} />
-                <span>{provider.name}</span>
+                <RobotOutlined style={{ fontSize: 11, flexShrink: 0 }} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.name}</span>
                 {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
                 {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
               </div>
@@ -1152,7 +1157,7 @@ const ChatInput: React.FC<{
   }, [providers, defaultModelSearch])
 
   const defaultModelPickerContent = useMemo(() => (
-    <div style={{ width: 300, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 180, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
         prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -1170,8 +1175,8 @@ const ChatInput: React.FC<{
           return (
             <div key={provider.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextSecondary }}>
-                <RobotOutlined style={{ fontSize: 11 }} />
-                <span>{provider.name}</span>
+                <RobotOutlined style={{ fontSize: 11, flexShrink: 0 }} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.name}</span>
                 {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
                 {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
               </div>

@@ -470,6 +470,20 @@ const Tasks: React.FC = () => {
     }
   }, [newTaskDraftKey])
 
+  // 新任务草稿 getter：直接读 localStorage，保证 ChatInput 重新挂载/员工首次确定时
+  // 恢复的是新任务草稿，而不是上一个任务残留的编辑内容
+  const getNewTaskDraft = useCallback(() => {
+    if (!newTaskDraftKey) return ''
+    try {
+      const raw = localStorage.getItem(newTaskDraftKey)
+      if (!raw) return ''
+      const data = JSON.parse(raw)
+      return typeof data.content === 'string' ? data.content : ''
+    } catch {
+      return ''
+    }
+  }, [newTaskDraftKey])
+
   // 保存新任务草稿到 localStorage
   const saveNewTaskDraft = useCallback((patch: Partial<{
     content: string
@@ -889,7 +903,8 @@ const Tasks: React.FC = () => {
                 onMinimalModeChange={handleToggleMinimalMode}
                 canToggleMinimalMode={true}
                 conversationId={activeConversationId}
-                getInitialDraft={getInputDraft}
+                getInitialDraft={getNewTaskDraft}
+                draftRestoreKey={newTaskDraftKey}
                 onDraftChange={handleDraftChangeWithCache}
                 availableSkills={availableSkills}
                 centerMode={true}

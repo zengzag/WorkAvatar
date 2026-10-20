@@ -320,6 +320,12 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   height: 100% !important;
 }
 
+/* 插件贡献的消息快捷操作图标：统一到 12px，与相邻 antd 图标视觉一致 */
+.dm-plugin-action-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* 工具调用折叠框：容器较窄时隐藏次要信息（工具名括号/耗时/输出字符数），
    只保留工具名 + 状态标签，保证折叠态单行显示不换行撑高 */
 @container (max-width: 360px) {

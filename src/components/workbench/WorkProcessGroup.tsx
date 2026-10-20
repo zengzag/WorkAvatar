@@ -123,6 +123,9 @@ const WorkProcessGroupInner: React.FC<{
             borderLeft: `2px solid ${token.colorBorderSecondary}`,
             display: 'flex',
             flexDirection: 'column',
+            maxHeight: 420,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
           }}
         >
           {children}

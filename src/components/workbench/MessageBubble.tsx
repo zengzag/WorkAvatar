@@ -64,7 +64,7 @@ const ModelSwitchPopover: React.FC<{
   }, [providers, searchText])
 
   const content = (
-    <div style={{ width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 168, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
         prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -82,8 +82,8 @@ const ModelSwitchPopover: React.FC<{
           return (
             <div key={provider.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextTertiary }}>
-                <RobotOutlined style={{ fontSize: 10 }} />
-                <span>{provider.name}</span>
+                <RobotOutlined style={{ fontSize: 10, flexShrink: 0 }} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.name}</span>
                 {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
                 {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
               </div>
@@ -97,6 +97,9 @@ const ModelSwitchPopover: React.FC<{
                     cursor: 'pointer',
                     fontSize: 12,
                     color: token.colorText,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
                     transition: 'background 0.15s',
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.background = token.colorBgTextHover }}
@@ -646,7 +649,7 @@ const MessageBubble: React.FC<{
                       key={`${action.pluginId}:${action.id}`}
                       type="text"
                       size="small"
-                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(action.icon) }} style={{ display: 'inline-flex' }} /> : undefined}
+                      icon={action.icon ? <span className="dm-plugin-action-icon" dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(action.icon) }} style={{ display: 'inline-flex' }} /> : undefined}
                       title={t(action.title, { ns: action.pluginId, defaultValue: action.title })}
                       onClick={() => runMessageAction(action)}
                     />

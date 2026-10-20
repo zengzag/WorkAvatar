@@ -17,8 +17,6 @@ import PreviewLine from './PreviewLine'
 
 const { Text } = Typography
 
-const TRUNCATE_THRESHOLD = 500
-
 function highlightJson(
   json: string,
   colors: {
@@ -133,7 +131,6 @@ const ToolCallSegmentInner: React.FC<{
   const { token } = theme.useToken()
   const { message } = App.useApp()
   const { t } = useTranslation()
-  const [resultExpanded, setResultExpanded] = useState(false)
   const { containerRef: argsScrollRef, onScroll: argsOnScroll } = useAutoFollowScroll<HTMLPreElement>()
   const { containerRef: progressScrollRef, onScroll: progressOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const isArgsStreaming = !!seg.isToolArgsStreaming
@@ -153,11 +150,6 @@ const ToolCallSegmentInner: React.FC<{
         ? (typeof seg.toolArgs === 'string' ? seg.toolArgs : JSON.stringify(seg.toolArgs, null, 2))
         // 取消/失败时 toolArgs 可能为空（JSON 不完整无法解析），回退到 raw 展示已生成部分
         : (seg.toolArgsRaw || ''))
-
-  const isResultLong = resultStr.length > TRUNCATE_THRESHOLD
-  const displayResult = isResultLong && !resultExpanded
-    ? resultStr.slice(0, TRUNCATE_THRESHOLD)
-    : resultStr
 
   // 折叠态预览：仅输出进行中（参数流式/执行中）显示，完成后不显示
   const lastProgress = seg.toolProgress && seg.toolProgress.length > 0
@@ -335,7 +327,7 @@ const ToolCallSegmentInner: React.FC<{
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
-                  maxHeight: 150,
+                  maxHeight: 120,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
@@ -356,7 +348,7 @@ const ToolCallSegmentInner: React.FC<{
                   borderRadius: 6,
                   fontSize: 11,
                   lineHeight: 1.6,
-                  maxHeight: 150,
+                  maxHeight: 120,
                   overflow: 'auto',
                   border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
@@ -431,29 +423,14 @@ const ToolCallSegmentInner: React.FC<{
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
-                  maxHeight: resultExpanded ? 600 : 220,
+                  maxHeight: 190,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
                   border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
-                  {renderHighlighted(displayResult)}
+                  {renderHighlighted(resultStr)}
                 </pre>
-                {isResultLong && (
-                  <div
-                    onClick={(e) => { e.stopPropagation(); setResultExpanded(v => !v) }}
-                    style={{
-                      textAlign: 'center',
-                      padding: '4px 0',
-                      cursor: 'pointer',
-                      color: token.colorPrimary,
-                      fontSize: 11,
-                      userSelect: 'none',
-                    }}
-                  >
-                    {resultExpanded ? t('workbench.showLess') : t('workbench.showMore')}
-                  </div>
-                )}
               </div>
             )}
           </div>
