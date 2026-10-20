@@ -38,7 +38,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
     return Array.from(map.values())
   }, [segments])
 
-  // 探测文件是否仍存在：消息过程中"先创建后被删除"的文件不展示
+  // 探测文件是否仍存在：已删除的文件仍展示，但标记为"已删除"且不可打开
   useEffect(() => {
     if (generatedFiles.length === 0) {
       setMissingPaths(new Set())
@@ -61,11 +61,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
     return () => { cancelled = true }
   }, [generatedFiles])
 
-  const visibleFiles = missingPaths.size === 0
-    ? generatedFiles
-    : generatedFiles.filter(f => !missingPaths.has(f.path))
-
-  if (visibleFiles.length === 0) return null
+  if (generatedFiles.length === 0) return null
 
   const openWithSystem = async (filePath: string) => {
     const res = await window.electronAPI.kms.openFile(filePath)
@@ -81,13 +77,14 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
         marginTop: 4,
         marginLeft: 2,
       }}>
-        {visibleFiles.map((file, index) => {
+        {generatedFiles.map((file, index) => {
           const IconComp = getFileIcon(file.ext)
           const iconColor = getFileColor(file.ext)
+          const isDeleted = missingPaths.has(file.path)
           return (
             <div
               key={`${file.path}-${index}`}
-              onClick={() => setPreviewFile(file)}
+              onClick={isDeleted ? undefined : () => setPreviewFile(file)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -95,18 +92,20 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
                 padding: '6px 12px',
                 borderRadius: 8,
                 background: token.colorBgTextHover,
-                border: `1px solid ${token.colorBorderSecondary}`,
-                cursor: 'pointer',
+                border: `1px solid ${isDeleted ? token.colorErrorBorder : token.colorBorderSecondary}`,
+                cursor: isDeleted ? 'not-allowed' : 'pointer',
+                opacity: isDeleted ? 0.75 : 1,
                 transition: 'all 0.2s',
                 maxWidth: 280,
                 overflow: 'hidden',
               }}
               onMouseEnter={(e) => {
+                if (isDeleted) return
                 e.currentTarget.style.borderColor = token.colorPrimary
                 e.currentTarget.style.background = token.colorPrimaryBg
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = token.colorBorderSecondary
+                e.currentTarget.style.borderColor = isDeleted ? token.colorErrorBorder : token.colorBorderSecondary
                 e.currentTarget.style.background = token.colorBgTextHover
               }}
             >
@@ -123,6 +122,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
+                  textDecoration: isDeleted ? 'line-through' : undefined,
                 }}>
                   {file.name}
                 </div>
@@ -134,27 +134,41 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
                   {file.ext} · {formatFileSize(file.size)}
                 </div>
               </div>
-              <Tooltip title={t('workbench.previewFile')}>
-                <EyeOutlined style={{ color: token.colorPrimary, fontSize: 14, flexShrink: 0 }} />
-              </Tooltip>
-              <Tooltip title={t('workbench.openWithSystem')}>
-                <ExportOutlined
-                  style={{ color: token.colorTextTertiary, fontSize: 14, flexShrink: 0 }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    openWithSystem(file.path)
-                  }}
-                />
-              </Tooltip>
-              <Tooltip title={t('workbench.openInExplorer')}>
-                <FolderOpenOutlined
-                  style={{ color: token.colorTextTertiary, fontSize: 14, flexShrink: 0 }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    window.electronAPI.kms.openFileDir(file.path)
-                  }}
-                />
-              </Tooltip>
+              {isDeleted ? (
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: token.colorError,
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {t('workbench.fileDeleted')}
+                </span>
+              ) : (
+                <>
+                  <Tooltip title={t('workbench.previewFile')}>
+                    <EyeOutlined style={{ color: token.colorPrimary, fontSize: 14, flexShrink: 0 }} />
+                  </Tooltip>
+                  <Tooltip title={t('workbench.openWithSystem')}>
+                    <ExportOutlined
+                      style={{ color: token.colorTextTertiary, fontSize: 14, flexShrink: 0 }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openWithSystem(file.path)
+                      }}
+                    />
+                  </Tooltip>
+                  <Tooltip title={t('workbench.openInExplorer')}>
+                    <FolderOpenOutlined
+                      style={{ color: token.colorTextTertiary, fontSize: 14, flexShrink: 0 }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.electronAPI.kms.openFileDir(file.path)
+                      }}
+                    />
+                  </Tooltip>
+                </>
+              )}
             </div>
           )
         })}

@@ -439,6 +439,7 @@ export default {
     fileNotFoundDesc: 'The file may have been moved or deleted: {{path}}',
     fileNotFoundOpenDir: 'Open Containing Folder',
     fileNotFoundRetry: 'Recheck',
+    fileDeleted: 'Deleted',
     editInWordEditor: 'Edit document',
   },
   globalSearch: {

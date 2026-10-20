@@ -439,6 +439,7 @@ export default {
     fileNotFoundDesc: '文件可能已被移动或删除：{{path}}',
     fileNotFoundOpenDir: '打开所在目录',
     fileNotFoundRetry: '重新检测',
+    fileDeleted: '已删除',
     editInWordEditor: '编辑文档',
   },
   globalSearch: {
