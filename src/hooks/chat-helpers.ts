@@ -6,7 +6,12 @@ import {
   COMPACTED_CHECKPOINT_CLOSE,
 } from '../../electron/shared/checkpoint-format'
 
-export const MESSAGES_CACHE_MAX_SIZE = 60
+/**
+ * 单个员工内存中保留的会话消息上限。
+ * 单条会话的 messages_json 可达数 MB（工具结果/文件内容），解析后体积更大；
+ * 缓存过多会让渲染进程随使用时长持续膨胀，这里只保留最近切换的几个会话。
+ */
+export const MESSAGES_CACHE_MAX_SIZE = 8
 export const MIN_LOADING_DISPLAY_MS = 120
 export const CONVERSATION_PAGE_SIZE = 20
 export const SCROLL_BOTTOM_THRESHOLD_PX = 10

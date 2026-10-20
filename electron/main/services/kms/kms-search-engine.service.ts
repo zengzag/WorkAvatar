@@ -30,8 +30,8 @@ export type { SourceType, HighlightRange, SearchResult, SearchOptions, Embedding
 
 const logger = createLogger('KMSSearchEngine')
 
-/** embedding 缓存字节上限：256MB（覆盖约 8 万条 768 维向量） */
-const EMBEDDING_CACHE_MAX_BYTES = 256 * 1024 * 1024
+/** embedding 缓存字节上限：64MB（覆盖约 2 万条 768 维向量，未命中时回源 DB，内存优先） */
+const EMBEDDING_CACHE_MAX_BYTES = 64 * 1024 * 1024
 
 /**
  * RRF（Reciprocal Rank Fusion）常数

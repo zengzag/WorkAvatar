@@ -92,6 +92,9 @@ class WorkerCrashedError extends Error {
 
 class KMSIndexWorkerClientService {
   private static instance: KMSIndexWorkerClientService
+  /** 索引 Worker 空闲多久后回收：Worker 内持有 SQLite 连接/分词器/OCR 子进程，空闲时常驻占用较大 */
+  private static readonly IDLE_TERMINATE_MS = 10 * 60 * 1000
+  private static readonly IDLE_CHECK_INTERVAL_MS = 60 * 1000
   private worker: Worker | null = null
   private workerReady: boolean = false
   private workerFailed: boolean = false
@@ -101,6 +104,8 @@ class KMSIndexWorkerClientService {
   private pendingTasks: Map<string, PendingTask> = new Map()
   private taskIdCounter = 0
   private progressCallback: ProgressCallback | null = null
+  private lastActivityAt = 0
+  private idleTimer: NodeJS.Timeout | null = null
 
   private constructor() {}
 
@@ -143,6 +148,7 @@ class KMSIndexWorkerClientService {
 
     try {
       const worker = await this.ensureWorker()
+      this.lastActivityAt = Date.now()
       const id = this.nextTaskId()
       // autoIndexCheck 包含爬虫+解析+LLM+embedding，可能很慢，给 30 分钟
       // 其他批量索引任务给 30 分钟
@@ -261,12 +267,40 @@ class KMSIndexWorkerClientService {
   }
 
   /**
+   * 空闲回收定时器：Worker 长时间无任务时销毁，释放其 SQLite 页缓存、分词器与 OCR 子进程内存。
+   * 下次索引任务会重新拉起 Worker（启动成本远低于长期驻留的内存成本）。
+   */
+  private startIdleTimer(): void {
+    if (this.idleTimer) return
+    this.idleTimer = setInterval(() => {
+      if (!this.worker || !this.workerReady) {
+        this.stopIdleTimer()
+        return
+      }
+      if (this.pendingTasks.size > 0) return
+      if (Date.now() - this.lastActivityAt < KMSIndexWorkerClientService.IDLE_TERMINATE_MS) return
+      logger.info('KMS 索引 Worker 空闲超时，回收以释放内存')
+      void this.terminate().catch((err: any) => {
+        logger.warn('Idle terminate index worker failed:', err?.message || err)
+      })
+    }, KMSIndexWorkerClientService.IDLE_CHECK_INTERVAL_MS)
+    this.idleTimer.unref?.()
+  }
+
+  private stopIdleTimer(): void {
+    if (!this.idleTimer) return
+    clearInterval(this.idleTimer)
+    this.idleTimer = null
+  }
+
+  /**
    * 主动销毁 Worker（用于应用退出或数据目录切换）
    *
    * 必须先拒绝所有 pending 任务，否则调用方 await 的 Promise 会永久挂起。
    * 应用退出场景下，未拒绝的 pending 会导致退出流程卡住。
    */
   async terminate(): Promise<void> {
+    this.stopIdleTimer()
     // 先拒绝所有待处理任务，避免调用方永久 await
     for (const pending of this.pendingTasks.values()) {
       pending.reject(new Error('Worker terminated'))
@@ -385,6 +419,8 @@ class KMSIndexWorkerClientService {
         if (msg.type === 'ready') {
           clearTimeout(initTimeout)
           this.workerReady = true
+          this.lastActivityAt = Date.now()
+          this.startIdleTimer()
           logger.info('KMS index worker ready')
           // 移除初始化监听器，挂上正式消息处理器
           worker.off('message', onMessage)
@@ -410,6 +446,7 @@ class KMSIndexWorkerClientService {
   }
 
   private markWorkerFailed(): void {
+    this.stopIdleTimer()
     // 失败次数计数：短时间连续失败 ≥2 次才长期降级（原生模块缺失等永久性问题）；
     // 单次失败（瞬态）允许下次 ensureWorker 重试，避免 Worker 永久降级直到重启应用
     const now = Date.now()
@@ -433,6 +470,7 @@ class KMSIndexWorkerClientService {
   }
 
   private handleWorkerMessage(msg: WorkerResponse): void {
+    this.lastActivityAt = Date.now()
     if (msg.type === 'progress') {
       // 转发进度到全局回调（由 KMSService 注入）
       if (this.progressCallback) {
@@ -482,6 +520,7 @@ class KMSIndexWorkerClientService {
   }
 
   private handleWorkerExit(code: number): void {
+    this.stopIdleTimer()
     if (code !== 0) {
       logger.warn(`Worker exited with code ${code}`)
     }
@@ -505,6 +544,7 @@ class KMSIndexWorkerClientService {
    * 清空 Worker 状态后，下一次任务会重新拉起一个干净的 Worker，继续处理剩余文件。
    */
   private handleWorkerCrash(reason: string): void {
+    this.stopIdleTimer()
     for (const pending of this.pendingTasks.values()) {
       pending.reject(new WorkerCrashedError(reason))
     }

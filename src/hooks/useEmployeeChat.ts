@@ -139,6 +139,43 @@ const parseConvCollectionIds = (conv: any): string[] => {
 // 组件重挂载时优先从此缓存恢复，避免 DB 查询竞争条件导致显示 0/0
 const _persistentContextStats = new Map<string, any>()
 
+/** 同时保留缓存的员工数上限：最近用过的员工仍可秒开，更早的员工重新走 IPC 加载 */
+const MESSAGES_CACHE_MAX_EMPLOYEES = 3
+/** 员工缓存 LRU 顺序（最近访问在末尾） */
+const _employeeCacheOrder: string[] = []
+/** 当前窗口正在展示的员工：后台任务不得淘汰其缓存，否则后续发送会写进已脱离的缓存对象 */
+let _visibleEmployeeId: string | null = null
+
+/** 该员工是否有流式会话：有则不能淘汰其消息缓存，否则 onDone 会用不完整消息覆盖 DB */
+const hasActiveStream = (employeeId: string): boolean => {
+  for (const s of _persistentStreamStates.values()) {
+    if (s.isStreaming && _conversationOwner.get(s.conversationId) === employeeId) return true
+  }
+  return false
+}
+
+/** 员工缓存超过上限时淘汰最久未使用且无流式任务的员工（连同其轻量元数据） */
+const pruneEmployeeCaches = (keepEmployeeId: string): void => {
+  // 先清掉顺序表中已不存在的 ID，避免名单与缓存不一致导致反复空转
+  for (let i = _employeeCacheOrder.length - 1; i >= 0; i--) {
+    if (!_persistentMessagesByEmployee.has(_employeeCacheOrder[i])) {
+      _employeeCacheOrder.splice(i, 1)
+    }
+  }
+  while (_persistentMessagesByEmployee.size > MESSAGES_CACHE_MAX_EMPLOYEES) {
+    const idx = _employeeCacheOrder.findIndex(id =>
+      id !== keepEmployeeId &&
+      id !== _visibleEmployeeId &&
+      !hasActiveStream(id)
+    )
+    if (idx === -1) break
+    const [evicted] = _employeeCacheOrder.splice(idx, 1)
+    _persistentMessagesByEmployee.delete(evicted)
+    _persistentEmployeeData.delete(evicted)
+    _persistentConvList.delete(evicted)
+  }
+}
+
 // 获取或创建指定员工的消息缓存
 const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, MessageWithThought[]> => {
   let cache = _persistentMessagesByEmployee.get(employeeId)
@@ -146,6 +183,10 @@ const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, 
     cache = createPersistentMessagesCache()
     _persistentMessagesByEmployee.set(employeeId, cache)
   }
+  const idx = _employeeCacheOrder.indexOf(employeeId)
+  if (idx !== -1) _employeeCacheOrder.splice(idx, 1)
+  _employeeCacheOrder.push(employeeId)
+  pruneEmployeeCaches(employeeId)
   return cache
 }
 
@@ -435,6 +476,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
   useEffect(() => {
     if (id) {
+      _visibleEmployeeId = id
       // 切换 conversationMessagesRef 指向当前员工的消息缓存
       // 旧员工的缓存保留在 _persistentMessagesByEmployee 中，切回时直接命中
       conversationMessagesRef.current = getOrCreateEmployeeMessagesCache(id)
@@ -476,6 +518,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           localStorage.setItem(activeConvIdStorageKey, activeConversationIdRef.current)
         }
       }
+      if (_visibleEmployeeId === id) _visibleEmployeeId = null
     }
   }, [id])
 

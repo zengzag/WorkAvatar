@@ -107,6 +107,10 @@ type WorkerInMessage = WorkerResultMessage | WorkerErrorMessage | WorkerReadyMes
 
 // ── OCR Service ────────────────────────────────────────────────
 
+/** OCR 引擎（ONNX 模型）常驻约数百 MB，空闲后回收，下次识别再按需拉起 */
+const OCR_IDLE_TERMINATE_MS = 10 * 60 * 1000
+const OCR_IDLE_CHECK_INTERVAL_MS = 60 * 1000
+
 class OCRService {
   private static instance: OCRService
   private initPromise: Promise<void> | null = null
@@ -118,6 +122,12 @@ class OCRService {
     reject: (reason: any) => void
   }>()
   private msgIdCounter = 0
+  /** 排队中的识别任务数（含等待 Worker 初始化的任务） */
+  private activeTasks = 0
+  private lastUsedAt = 0
+  private idleTimer: NodeJS.Timeout | null = null
+  /** 回收中的 Worker：新请求需等回收完成后再重新初始化，避免与终止流程竞争 */
+  private terminatePromise: Promise<void> | null = null
 
   /** 识别任务串行队列：同一时刻只跑一张图，避免并发推理争抢 CPU 拖慢彼此 */
   private taskQueue: Promise<unknown> = Promise.resolve()
@@ -156,6 +166,8 @@ class OCRService {
 
     try {
       await this.spawnAndInitWorker()
+      this.lastUsedAt = Date.now()
+      this.startIdleTimer()
       logger.info('PaddleOCR v6 tiny engine initialized (Worker)')
     } catch (err) {
       const msg = mainUiI18n.t('ocrWorkerInitFailed')
@@ -304,6 +316,7 @@ class OCRService {
     this.ocrWorker = null
     this.workerReady = false
     this.initPromise = null
+    this.stopIdleTimer()
 
     for (const [, pending] of this.pendingRequests) {
       pending.reject(new Error('OCR Worker terminated after request timeout'))
@@ -314,11 +327,41 @@ class OCRService {
     logger.warn('OCR Worker 已因请求超时被重建')
   }
 
+  /** 启动空闲回收定时器：模型内存占用大，长时间不用不应持续常驻 */
+  private startIdleTimer(): void {
+    if (this.idleTimer) return
+    this.idleTimer = setInterval(() => {
+      void this.terminateIfIdle()
+    }, OCR_IDLE_CHECK_INTERVAL_MS)
+    this.idleTimer.unref?.()
+  }
+
+  private stopIdleTimer(): void {
+    if (!this.idleTimer) return
+    clearInterval(this.idleTimer)
+    this.idleTimer = null
+  }
+
+  private async terminateIfIdle(): Promise<void> {
+    if (!this.ocrWorker || !this.workerReady) {
+      this.stopIdleTimer()
+      return
+    }
+    if (this.activeTasks > 0 || this.pendingRequests.size > 0) return
+    if (Date.now() - this.lastUsedAt < OCR_IDLE_TERMINATE_MS) return
+    logger.info('OCR Worker 空闲超时，回收子进程以释放内存')
+    await this.terminate()
+  }
+
   /** 串行执行识别任务：排队等待不计入超时，超时只衡量本次请求真正执行的时间 */
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    this.activeTasks++
     const run = this.taskQueue.then(task, task)
     this.taskQueue = run.catch(() => { /* 单次失败不阻断队列 */ })
-    return run
+    return run.finally(() => {
+      this.activeTasks--
+      this.lastUsedAt = Date.now()
+    })
   }
 
   private sendToWorker<T = WorkerInMessage>(msg: WorkerOutMessage, timeoutMs = 60_000): Promise<T> {
@@ -373,6 +416,9 @@ class OCRService {
       throw new Error(`Image file not found: ${imagePath}`)
     }
 
+    // 空闲回收进行中：等回收结束再重新初始化，避免拿到已销毁的 Worker
+    if (this.terminatePromise) await this.terminatePromise
+
     return this.enqueue(async () => {
       // 确保 PaddleOCR 已尝试初始化（Worker 超时被重建后，这里会重新拉起）
       await this.initialize()
@@ -403,18 +449,30 @@ class OCRService {
   }
 
   async terminate(): Promise<void> {
-    if (this.ocrWorker) {
-      try {
-        const msg: WorkerTerminateMessage = { type: 'terminate', id: this.nextId() }
-        await this.sendToWorker(msg, 5_000).catch(() => { /* Worker may already be dead */ })
-        this.ocrWorker.kill()
-      } catch (err) {
-        logger.debug('OCR Worker terminate error:', err)
-      }
-      this.ocrWorker = null
-      this.workerReady = false
+    if (this.terminatePromise) return this.terminatePromise
+    this.terminatePromise = this.doTerminate().finally(() => {
+      this.terminatePromise = null
+    })
+    return this.terminatePromise
+  }
+
+  private async doTerminate(): Promise<void> {
+    this.stopIdleTimer()
+    if (!this.ocrWorker) {
       this.initPromise = null
+      this.workerReady = false
+      return
     }
+    try {
+      const msg: WorkerTerminateMessage = { type: 'terminate', id: this.nextId() }
+      await this.sendToWorker(msg, 5_000).catch(() => { /* Worker may already be dead */ })
+      this.ocrWorker.kill()
+    } catch (err) {
+      logger.debug('OCR Worker terminate error:', err)
+    }
+    this.ocrWorker = null
+    this.workerReady = false
+    this.initPromise = null
   }
 
   isPaddleOcrAvailable(): boolean {

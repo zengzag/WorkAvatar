@@ -78,8 +78,8 @@ const msg = (partial: Partial<MessageWithThought>): MessageWithThought =>
   ({ id: 'm1', role: 'user', content: '', ...partial }) as MessageWithThought
 
 describe('chat-helpers / 常量与缓存工厂', () => {
-  it('常量取值稳定（缓存上限 60）', () => {
-    expect(MESSAGES_CACHE_MAX_SIZE).toBe(60)
+  it('常量取值稳定（缓存上限 8）', () => {
+    expect(MESSAGES_CACHE_MAX_SIZE).toBe(8)
     expect(MIN_LOADING_DISPLAY_MS).toBe(120)
     expect(CONVERSATION_PAGE_SIZE).toBe(20)
     expect(SCROLL_BOTTOM_THRESHOLD_PX).toBe(10)

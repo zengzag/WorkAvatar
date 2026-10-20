@@ -526,6 +526,11 @@ class WorkspaceManagerService {
         const { default: SubAgentRuntime } = require('./agent-runtime/runtime')
         SubAgentRuntime.getInstance().clearRunsByConversations(toDelete)
       } catch { /* ignore */ }
+      // 释放会话级 agent 缓存（含插件删除通道，避免缓存随会话数持续增长）
+      try {
+        const { default: EmployeeAgentService } = require('./employee-agent.service')
+        EmployeeAgentService.getInstance().clearAgentCacheForConversations(toDelete)
+      } catch { /* ignore */ }
     }
 
     // 任务目录处理：空目录直接删除；非空目录保留并上报，由前端决定是否删除

@@ -182,13 +182,14 @@ class KMSDatabaseService {
     conn.pragma('synchronous = NORMAL')
     // 临时表/索引/排序中间结果放内存，避免写 temp.db
     conn.pragma('temp_store = MEMORY')
-    // 页缓存 200MB（默认仅 2MB，对 2GB 库远远不够）
-    conn.pragma('cache_size = -200000')
+    // 页缓存：过大时会按连接数成倍占用常驻内存（主库/向量库各一条，主进程与索引 Worker 都有），
+    // 64MB/32MB 足以覆盖热页，剩余部分交给 OS 页缓存
+    conn.pragma(`cache_size = ${isMainThread ? -65536 : -32768}`)
     // mmap：仅主线程启用（搜索/读取路径），索引 Worker 禁用。
     // Windows 下只要有“第二个连接”持有 mmap，VACUUM 的文件截断就会静默失败（不报错但不收缩），
     // 使重建/清理释放的空间无法回收、库文件只增不减。VACUUM 连接自身的 mmap 无影响，
     // 故关闭 Worker 的 mmap 即可在保留主进程 mmap 读性能的同时让 VACUUM 正常收缩。
-    conn.pragma(`mmap_size = ${isMainThread ? 268435456 : 0}`)
+    conn.pragma(`mmap_size = ${isMainThread ? 134217728 : 0}`)
     // WAL 自动 checkpoint 阈值提高到 8MB（默认 4MB），减少 checkpoint 频率
     conn.pragma('wal_autocheckpoint = 2000')
     // busy_timeout 10s：多线程/进程争用时等待而不是立即抛 SQLITE_BUSY

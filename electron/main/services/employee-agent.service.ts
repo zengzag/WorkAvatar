@@ -36,6 +36,12 @@ import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
 
+/** Agent 缓存上限：每个会话/模型组合一个实例，数量必须收敛，否则长期使用会持续增长 */
+const AGENT_CACHE_MAX = 24
+/** 空闲多久后回收 Agent（释放系统提示词、工具表与 MCP 引用），下次使用再重建 */
+const AGENT_IDLE_TTL_MS = 30 * 60 * 1000
+const AGENT_SWEEP_INTERVAL_MS = 5 * 60 * 1000
+
 interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
@@ -93,6 +99,10 @@ interface CachedAgentEntry {
   memoryEnabled: boolean
   /** 构建常驻记忆块时的记忆数据集版本号，用于按需刷新（见 refreshMemoryPromptIfStale） */
   memoryRevision: number
+  /** 所属会话（清理/回收时按会话精确定位，避免解析含冒号的员工 ID） */
+  conversationId?: string
+  /** 最近一次使用时间（LRU/TTL 回收依据） */
+  lastUsedAt: number
 }
 
 class EmployeeAgentService {
@@ -106,6 +116,7 @@ class EmployeeAgentService {
   private agentCreationInFlight: Map<string, Promise<CachedAgentEntry>> = new Map()
   /** 插件工具/员工/技能集合版本号：插件增删升级时递增，使存量 agent 缓存按工具集失效 */
   private toolEpoch = 0
+  private sweepTimer: NodeJS.Timeout | null = null
   private static instance: EmployeeAgentService
 
   private constructor() {
@@ -114,6 +125,8 @@ class EmployeeAgentService {
     this.skillRegistry = SkillRegistryService.getInstance()
     this.memoryService = EmployeeMemoryService.getInstance()
     this.mcpRegistry = McpRegistryService.getInstance()
+    this.sweepTimer = setInterval(() => this.sweepIdleAgents(), AGENT_SWEEP_INTERVAL_MS)
+    this.sweepTimer.unref?.()
   }
 
   static getInstance(): EmployeeAgentService {
@@ -144,13 +157,11 @@ class EmployeeAgentService {
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
+      existing.lastUsedAt = Date.now()
       // 插件工具集合已变更（bumpToolEpoch）且该 agent 不在运行 → 丢弃旧缓存按新工具集重建
       if (existing.toolEpoch !== this.toolEpoch) {
         if (!existing.agent.isRunning()) {
-          if (existing.mcpRelease) {
-            existing.mcpRelease().catch(() => { /* ignore */ })
-          }
-          this.agentEntries.delete(cacheKey)
+          this.purgeEntry(cacheKey, existing)
           // 重建沿用创建时冻结的极简模式，而不是本次调用参数（会话模式不随单次请求翻转）
           minimalMode = existing.minimalMode
         } else {
@@ -426,8 +437,11 @@ class EmployeeAgentService {
       minimalMode: agent.getMinimalMode(),
       memoryEnabled,
       memoryRevision: this.memoryService.getRevision(),
+      conversationId,
+      lastUsedAt: Date.now(),
     }
     this.agentEntries.set(cacheKey, entry)
+    this.trimAgentCache()
     return entry
   }
 
@@ -863,20 +877,53 @@ class EmployeeAgentService {
   clearAgentCache(employeeId?: string): void {
     // 运行中的 agent 跳过：插件/工具热更新时保留正在生成的任务（不打断流式输出），
     // 其 toolEpoch 已失效，本轮结束后下次访问自动重建（见 getOrCreateAgent）
-    const purge = (key: string, entry: CachedAgentEntry) => {
-      if (entry.agent.isRunning()) return
-      // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
-      if (entry.mcpRelease) {
-        entry.mcpRelease().catch(() => { /* ignore */ })
-      }
-      this.agentEntries.delete(key)
-    }
     if (employeeId) {
       for (const [key, entry] of this.agentEntries.entries()) {
-        if (key.startsWith(`${employeeId}:`)) purge(key, entry)
+        if (key.startsWith(`${employeeId}:`)) this.purgeEntry(key, entry)
       }
     } else {
-      for (const [key, entry] of this.agentEntries.entries()) purge(key, entry)
+      for (const [key, entry] of this.agentEntries.entries()) this.purgeEntry(key, entry)
+    }
+  }
+
+  /** 会话删除时定向释放其 agent（IPC 与插件删除通道共用，避免缓存随会话数增长） */
+  clearAgentCacheForConversations(conversationIds: string[]): void {
+    if (conversationIds.length === 0) return
+    const ids = new Set(conversationIds)
+    for (const [key, entry] of this.agentEntries.entries()) {
+      if (!entry.conversationId || !ids.has(entry.conversationId)) continue
+      this.purgeEntry(key, entry)
+    }
+  }
+
+  private purgeEntry(key: string, entry: CachedAgentEntry): void {
+    if (entry.agent.isRunning()) return
+    // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
+    if (entry.mcpRelease) {
+      entry.mcpRelease().catch(() => { /* ignore */ })
+    }
+    this.agentEntries.delete(key)
+  }
+
+  /** 周期回收：空闲 agent 释放，并把缓存条目数压到上限内（运行中的始终保留） */
+  private sweepIdleAgents(): void {
+    const now = Date.now()
+    for (const [key, entry] of this.agentEntries.entries()) {
+      if (entry.agent.isRunning()) continue
+      if (now - entry.lastUsedAt < AGENT_IDLE_TTL_MS) continue
+      this.purgeEntry(key, entry)
+    }
+    this.trimAgentCache()
+  }
+
+  private trimAgentCache(): void {
+    if (this.agentEntries.size <= AGENT_CACHE_MAX) return
+    const idle = [...this.agentEntries.entries()]
+      .filter(([, entry]) => !entry.agent.isRunning())
+      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)
+    for (const [key, entry] of idle) {
+      if (this.agentEntries.size <= AGENT_CACHE_MAX) break
+      this.purgeEntry(key, entry)
     }
   }
 
