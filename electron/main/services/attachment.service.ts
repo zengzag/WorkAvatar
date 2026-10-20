@@ -111,6 +111,25 @@ export function replaceDataUrlsWithRefs(value: any): { value: any; changed: bool
   return { value, changed: false }
 }
 
+/** 日志用图片描述：不写入 base64 内容，只保留附件文件路径 / HTTP URL / data URL 的 MIME 与大小 */
+export function describeImageForLog(source?: string | null): string {
+  if (!source) return '[image]'
+  if (source.startsWith('wa-attachment://')) {
+    try {
+      const filePath = AttachmentService.getInstance().getFilePathFromRef(source)
+      if (filePath) return `[image: ${filePath}]`
+    } catch { /* 日志场景不因路径解析失败中断 */ }
+    return `[image: ${source}]`
+  }
+  const match = /^data:(image\/[a-zA-Z+.-]+);base64,/.exec(source)
+  if (match) {
+    const base64 = source.slice(source.indexOf(',') + 1)
+    const kb = Math.max(1, Math.round(Buffer.byteLength(base64, 'base64') / 1024))
+    return `[image: ${match[1]}, ${kb}KB]`
+  }
+  return `[image: ${source}]`
+}
+
 class AttachmentService {
   private static instance: AttachmentService
   /** 【WA-COMPAT:legacy-base64-migration】旧版本存量 base64 迁移完成标记（settings KV，迁移成功后置位，后续版本稳定后连同本段兼容逻辑一并移除） */

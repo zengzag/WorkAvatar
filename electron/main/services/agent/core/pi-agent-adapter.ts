@@ -40,7 +40,7 @@ import type {
 import { createLogger } from '../../logger'
 import { buildPiModel, normalizeApiFormat, resolvePiApi, resolvePiStreamFn } from '../llm/api-format'
 import { buildPiStreamOptions } from '../llm/pi-stream-options'
-import AttachmentService, { ATTACHMENT_REF_PATTERN } from '../../attachment.service'
+import AttachmentService, { ATTACHMENT_REF_PATTERN, describeImageForLog } from '../../attachment.service'
 import LLMLoggerService from '../../llm-logger.service'
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
@@ -77,6 +77,15 @@ function parseImageDataUrl(url: string): { data: string; mimeType: string } | { 
     return { missing: true }
   }
   return { url }
+}
+
+/** 日志用：ImageContent 对象 → 来源引用（附件引用 / data URL），避免日志写出 base64 内容 */
+const imageSourceByPart = new WeakMap<ImageContent, string>()
+
+function createImagePart(parsed: { data: string; mimeType: string }, source: string): ImageContent {
+  const part: ImageContent = { type: 'image', data: parsed.data, mimeType: parsed.mimeType }
+  imageSourceByPart.set(part, source)
+  return part
 }
 
 /** 构造 streamFn，内部委托给 pi-ai stream（按接口形式分派）。
@@ -152,7 +161,7 @@ function piContextToLogMessages(context: Context): any[] {
       const content = typeof m.content === 'string'
         ? m.content
         : m.content.map(c => c.type === 'image'
-          ? { type: 'image_url', image_url: { url: '[image]' } }
+          ? { type: 'image_url', image_url: { url: describeImageForLog(imageSourceByPart.get(c)) } }
           : c)
       messages.push({ role: 'user', content })
     } else if (m.role === 'assistant') {
@@ -422,7 +431,7 @@ function toPiMessages(
       for (const url of m.images || []) {
         const parsed = parseImageDataUrl(url)
         if ('data' in parsed) {
-          imageParts.push({ type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType })
+          imageParts.push(createImagePart(parsed, url))
         } else if ('missing' in parsed) {
           missingImageCount++
         } else {
@@ -487,7 +496,7 @@ function toPiMessages(
       for (const url of m.images || []) {
         const parsed = parseImageDataUrl(url)
         if ('data' in parsed) {
-          imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+          imageParts.push(createImagePart(parsed, url))
         } else if ('missing' in parsed) {
           missingImageCount++
         }
@@ -581,7 +590,7 @@ function toAgentTool(
       for (const url of result.images || []) {
         const parsed = parseImageDataUrl(url)
         if ('data' in parsed) {
-          imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+          imageParts.push(createImagePart(parsed, url))
         } else if ('missing' in parsed) {
           missingToolImages++
         }

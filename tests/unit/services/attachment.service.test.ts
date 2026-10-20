@@ -141,6 +141,20 @@ describe('attachment.service', () => {
     expect(ref2).toBe(ref)
   })
 
+  it('describeImageForLog：附件引用输出文件路径，data URL 输出 mime+大小，均不含 base64', async () => {
+    vi.resetModules()
+    const mod = await import('../../../electron/main/services/attachment.service')
+    const service = mod.default.getInstance()
+    const ref = service.saveDataUrl(PNG_1PX)!
+
+    const byRef = mod.describeImageForLog(ref)
+    expect(byRef).toBe(`[image: ${service.getFilePathFromRef(ref)!}]`)
+
+    expect(mod.describeImageForLog(PNG_1PX)).toBe('[image: image/png, 1KB]')
+    expect(mod.describeImageForLog('https://example.com/a.png')).toBe('[image: https://example.com/a.png]')
+    expect(mod.describeImageForLog(undefined)).toBe('[image]')
+  })
+
   it('resolve 回环读取 base64 与 mime；文件丢失返回 null 不抛异常', async () => {
     const service = await freshService()
     const ref = service.saveDataUrl(PNG_1PX)!
