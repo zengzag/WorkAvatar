@@ -1033,7 +1033,7 @@ export default {
     generateParams: '生成参数',
     temperatureParam: 'Temperature',
     temperatureParamTooltip: '控制随机性，0=确定性输出，2=高随机性',
-    maxRetry: '最大重试次数',
+    maxRetry: '最大工具调用次数',
     maxRetryTooltip: '工具调用最大循环次数，超过则返回错误',
     topP: 'Top P',
     topPTooltip: '核采样参数，与 temperature 配合使用，通常二选一',

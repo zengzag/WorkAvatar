@@ -1033,7 +1033,7 @@ export default {
     generateParams: 'Generation Parameters',
     temperatureParam: 'Temperature',
     temperatureParamTooltip: 'Controls randomness, 0=deterministic output, 2=high randomness',
-    maxRetry: 'Max Retries',
+    maxRetry: 'Max Tool Calls',
     maxRetryTooltip: 'Maximum tool call loop count, returns error when exceeded',
     topP: 'Top P',
     topPTooltip: 'Nucleus sampling parameter, used with temperature, typically choose one or the other',

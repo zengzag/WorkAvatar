@@ -281,7 +281,7 @@ class GenericChatService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      const maxIterations = config.modelConfig?.max_retry ?? 100
+      const maxIterations = config.modelConfig?.max_retry ?? 400
 
       await agent.runStream(
         {

@@ -276,7 +276,7 @@ describe('generic-chat / chatStream 参数透传', () => {
     await service.chatStream(cfg({ conversationId: 'c-skill2', useSkills: false }), [{ role: 'user', content: 'q' }], cbs as any)
     const args = mockState.created[0].runStream.mock.calls[0][0]
     expect(args.useSkills).toBe(false)
-    expect(args.maxIterations).toBe(100)
+    expect(args.maxIterations).toBe(400)
   })
 
   it('AbortSignal 透传给 agent', async () => {

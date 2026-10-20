@@ -780,7 +780,7 @@ class EmployeeAgentService {
 
   private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {
     const config = await this.llmClient.getProviderConfig(providerId)
-    if (!config?.models_json) return 100
+    if (!config?.models_json) return 400
     try {
       const models: LLMModelConfig[] = JSON.parse(config.models_json)
       const matched = modelId
@@ -792,7 +792,7 @@ class EmployeeAgentService {
     } catch (err: any) {
       logger.warn(`Failed to parse models_json for max_iterations (provider=${providerId}):`, err?.message || err)
     }
-    return 100
+    return 400
   }
 
   private persistSystemPrompt(
