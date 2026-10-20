@@ -15,6 +15,8 @@ import {
   SearchOutlined,
   CompressOutlined,
   ApartmentOutlined,
+  FileTextOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -126,6 +128,116 @@ const ModelSwitchPopover: React.FC<{
 const formatNum = (n: number | undefined | null): string => {
   if (n === undefined || n === null) return ''
   return n.toLocaleString('en-US')
+}
+
+/** 用户消息中的文件路径标记（由输入框文件令牌转换而来） */
+type UserContentPart = { type: 'text'; value: string } | { type: 'path'; value: string }
+
+const PATH_TAG_RE = /<path>([\s\S]*?)<\/path>/g
+
+/** 还原发送时对路径做的 XML 转义（& 需最后处理，避免二次解码） */
+const decodeXmlEntities = (s: string): string =>
+  s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+
+/** 拆分用户消息：<path> 标签转为文件标签，其余保持纯文本 */
+const parseUserContent = (content: string): UserContentPart[] => {
+  const parts: UserContentPart[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  PATH_TAG_RE.lastIndex = 0
+  while ((match = PATH_TAG_RE.exec(content)) !== null) {
+    if (match.index > lastIndex) parts.push({ type: 'text', value: content.slice(lastIndex, match.index) })
+    parts.push({ type: 'path', value: decodeXmlEntities(match[1]) })
+    lastIndex = PATH_TAG_RE.lastIndex
+  }
+  if (lastIndex < content.length) parts.push({ type: 'text', value: content.slice(lastIndex) })
+  return parts
+}
+
+const getBaseName = (path: string): string => {
+  const segments = path.split(/[\\/]/).filter(Boolean)
+  return segments[segments.length - 1] || path
+}
+
+/** 用户消息中的文件标签：点击用系统程序打开，悬停显示"定位到文件夹"入口 */
+const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
+  const { token } = theme.useToken()
+  const { t } = useTranslation()
+  const { message: messageApi } = App.useApp()
+  const [hovered, setHovered] = useState(false)
+  const [revealHovered, setRevealHovered] = useState(false)
+  const name = useMemo(() => getBaseName(path), [path])
+
+  const handleOpen = useCallback(async () => {
+    try {
+      const res = await window.electronAPI?.kms?.openFile(path)
+      if (res?.error) messageApi.error(`${t('workbench.openWithSystemFailed')}: ${res.error}`)
+    } catch (err: any) {
+      messageApi.error(err?.message || t('workbench.openWithSystemFailed'))
+    }
+  }, [path, messageApi, t])
+
+  const handleReveal = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    window.electronAPI?.kms?.openFileDir(path)
+  }, [path])
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title={path}
+      onClick={handleOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpen() } }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setRevealHovered(false) }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 6px',
+        margin: '0 2px',
+        maxWidth: 260,
+        verticalAlign: 'middle',
+        borderRadius: 6,
+        cursor: 'pointer',
+        fontSize: 13,
+        lineHeight: '20px',
+        userSelect: 'none',
+        background: hovered ? token.colorPrimaryBgHover : token.colorPrimaryBg,
+        border: `1px solid ${hovered ? token.colorPrimaryBorderHover : token.colorPrimaryBorder}`,
+        color: token.colorPrimary,
+        transition: 'background 0.15s ease, border-color 0.15s ease',
+      }}
+    >
+      <FileTextOutlined style={{ fontSize: 12, flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      <span
+        role="button"
+        tabIndex={-1}
+        title={t('workbench.openInExplorer')}
+        onClick={handleReveal}
+        onMouseEnter={() => setRevealHovered(true)}
+        onMouseLeave={() => setRevealHovered(false)}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 14,
+          height: 14,
+          flexShrink: 0,
+          borderRadius: 3,
+          cursor: 'pointer',
+          color: revealHovered ? token.colorPrimary : token.colorTextTertiary,
+          background: revealHovered ? token.colorPrimaryBgHover : 'transparent',
+          opacity: hovered ? 1 : 0,
+          transition: 'opacity 0.15s ease, color 0.15s ease, background 0.15s ease',
+        }}
+      >
+        <FolderOpenOutlined style={{ fontSize: 12 }} />
+      </span>
+    </span>
+  )
 }
 
 const ContextUsageInline: React.FC<{
@@ -264,6 +376,12 @@ const MessageBubble: React.FC<{
       : msg
   , [msg, displayContent, displaySegments, displayThought, displayIsError, displayIsStreaming])
 
+  // 用户消息中的 <path> 段落渲染为文件标签，避免原始路径文本夹杂在消息里
+  const userContentParts = useMemo(
+    () => (msg.role === 'user' ? parseUserContent(msg.content) : []),
+    [msg.role, msg.content]
+  )
+
   // 本消息内包含的子任务（delegation 段），用于消息底部的子任务入口图标
   const delegationSegs = useMemo<MessageSegment[]>(() =>
     (displaySegments || []).filter(s => s.type === 'delegation')
@@ -378,7 +496,11 @@ const MessageBubble: React.FC<{
                 wordBreak: 'break-word',
                 lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorText, fontSize: 15 }}>{msg.content}</Text>
+                {userContentParts.map((part, index) => (
+                  part.type === 'text'
+                    ? <Text key={index} style={{ color: token.colorText, fontSize: 15 }}>{part.value}</Text>
+                    : <UserPathChip key={index} path={part.value} />
+                ))}
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     <Image.PreviewGroup items={msg.images}>
