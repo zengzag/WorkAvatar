@@ -51,6 +51,9 @@ const Tasks: React.FC = () => {
   const [loadedCount, setLoadedCount] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  // loadedCount 镜像：供 loadGlobalTasks 读取最新已加载条数，且不进入其依赖（避免刷新函数频繁变化）
+  const loadedCountRef = useRef(0)
+  useEffect(() => { loadedCountRef.current = loadedCount }, [loadedCount])
 
   // 任务模式：'new' = 新任务（居中输入框），'chat' = 对话模式
   const [taskMode, setTaskMode] = useState<'new' | 'chat'>('new')
@@ -99,12 +102,14 @@ const Tasks: React.FC = () => {
         setLoadedCount(arr.length)
         setHasMore(false)
       } else {
-        // 分页模式：加载 PAGE_SIZE 条
-        const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: 0 })
+        // 分页模式：保持当前已加载条数，避免刷新（如选中任务）后列表被截断回 PAGE_SIZE
+        // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"
+        const limit = Math.max(PAGE_SIZE, loadedCountRef.current)
+        const result = await window.electronAPI.conversation.listAll({ limit, offset: 0 })
         const arr = Array.isArray(result) ? result : []
         setGlobalTasks(arr)
         setLoadedCount(arr.length)
-        setHasMore(arr.length === PAGE_SIZE)
+        setHasMore(arr.length === limit)
       }
     } catch {
       setGlobalTasks([])
