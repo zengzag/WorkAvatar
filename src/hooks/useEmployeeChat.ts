@@ -22,7 +22,7 @@ import {
   createPersistentMessagesCache,
   toggleSegmentInTree,
 } from './chat-helpers'
-import { useStreamListeners, getPersistentListenersCleanup, getPersistentEmployeeId, setPersistentEmployeeId } from './useStreamListeners'
+import { useStreamListeners, getPersistentEmployeeId, setPersistentEmployeeId } from './useStreamListeners'
 import { recoverSubSegmentsFromLog } from './run-recovery'
 
 interface UseEmployeeChatParams {
@@ -62,10 +62,41 @@ function stripMessageRuntimeFields(m: MessageWithThought): MessageWithThought {
   return copy
 }
 
+/** 清理从 DB 恢复的残留流式标记：应用/渲染进程被中断时可能留下空的"生成中"消息，
+ *  不清掉气泡会永远停在生成状态。流式中的消息本就不会落库，故对 DB 数据无条件安全。 */
+function clearStaleStreamingState(msgs: MessageWithThought[]): MessageWithThought[] {
+  let changed = false
+  const next = msgs.map(m => {
+    if (m.role !== 'assistant' || !m.isStreaming) return m
+    changed = true
+    const empty = !m.content && (!m.segments || m.segments.length === 0)
+    return {
+      ...m,
+      isStreaming: false,
+      ...(empty ? { isAborted: true } : {}),
+      segments: (m.segments || []).map(s => (
+        s.isStreaming || s.isToolArgsStreaming
+          ? { ...s, isStreaming: false, isToolArgsStreaming: false }
+          : s
+      )),
+    }
+  })
+  return changed ? next : msgs
+}
+
 // 按 employeeId 缓存当前活动对话 ID：主 tab 切换（如 资料库→任务）后，
 // 页面完全卸载再重新挂载，activeConversationId 状态丢失。
 // 有了此缓存，initEmployee 可以直接恢复上次的对话，避免 selectConversation IPC。
 const _persistentActiveConvId = new Map<string, string>()
+
+// 会话归属员工：流事件必须写回所属员工的消息缓存。
+// 渲染进程重建后缓存为空，若按"当前显示员工"兜底，后台任务（尤其完全允许模式的长任务）
+// 的输出会落到别的员工缓存里，界面上表现为 LLM 输出消失。
+const _conversationOwner = new Map<string, string>()
+
+const rememberConversationOwner = (convId: string | null | undefined, employeeId: string | null | undefined) => {
+  if (convId && employeeId) _conversationOwner.set(convId, employeeId)
+}
 
 // 按 conversationId 缓存输入框草稿：切换对话/员工时保留各自草稿，切回时恢复
 const _persistentDrafts = new Map<string, string>()
@@ -221,6 +252,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   // 定位会话所属员工的消息缓存：切走员工后，仍在后台运行（自动续跑）的会话
   // 其流事件要写回原员工缓存，而非当前活动的员工缓存，保证结果不丢失/不串位
   const resolveConvCache = (convId: string): LRUCache<string, MessageWithThought[]> => {
+    // 已知归属直接定向到该员工缓存（必要时创建），避免渲染进程重建后
+    // 因缓存为空而回退到当前显示员工，导致后台任务输出写错位置
+    const owner = _conversationOwner.get(convId)
+    if (owner) return getOrCreateEmployeeMessagesCache(owner)
     for (const cache of _persistentMessagesByEmployee.values()) {
       if (cache.get(convId) !== undefined) return cache
     }
@@ -296,8 +331,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
    * 后端运行中会话重建：renderer 重载/异常导致前端丢失运行跟踪后，
    * 查询后端仍未结束的流式会话，为其重建 streamState 与会话内占位 assistant 消息，
    * 恢复 isStreaming，避免"前端显示完成但后端仍运行 → 重发 already running"的陈旧状态。
+   * 不传 employeeId 时恢复所有员工的活跃会话（后台任务的输出同样不能丢）。
    */
-  async function reconcileRunningStreams(employeeId: string) {
+  async function reconcileRunningStreams(employeeId?: string) {
     let sessions: Array<{ sessionId: string; employeeId?: string; conversationId?: string }> = []
     try {
       sessions = await window.electronAPI.llm.listActiveSessions(employeeId)
@@ -312,6 +348,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         .some(ss => ss.conversationId === s.conversationId && ss.isStreaming)
       if (already) continue
 
+      const ownerId = s.employeeId || employeeId
+      rememberConversationOwner(s.conversationId, ownerId)
+
       const assistantMessageId = `msg_${generateId()}`
       const placeholder: MessageWithThought = {
         id: assistantMessageId,
@@ -321,9 +360,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         isStreaming: true,
         segments: [],
       }
-      // 幂等：从缓存取历史（未加载时从 DB 获取，避免空缓存写回 DB 覆盖既有消息），
-      // 追加占位消息后写回缓存与 DB，保证 onChunk 能匹配到目标消息、不丢内容
-      const cache = resolveConvCache(s.conversationId)
+      // 幂等：从缓存取历史（未加载时从 DB 获取，避免空缓存覆盖既有消息），
+      // 占位消息只写缓存不落库：流式过程中的内容不持久化，若把 isStreaming 占位写进 DB，
+      // 事件再丢失（见下方监听注册）就会留下一条永远"生成中"的空消息
+      const cache = ownerId ? getOrCreateEmployeeMessagesCache(ownerId) : resolveConvCache(s.conversationId)
       let base = cache.get(s.conversationId)
       if (base === undefined) {
         try {
@@ -334,13 +374,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         }
       }
       if (!base.some(m => m.id === assistantMessageId)) {
-        const next = [...base, placeholder]
-        setConvMessages(s.conversationId, next)
-        window.electronAPI.conversation.update({
-          id: s.conversationId,
-          messages_json: JSON.stringify(next),
-          message_count: next.length,
-        }).catch(() => {})
+        setConvMessages(s.conversationId, [...base, placeholder])
       }
 
       streamStatesRef.current.set(s.sessionId, {
@@ -544,6 +578,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentConvList.set(id!, convList)
       setEmployee(result)
       setAllConversations(convList)
+      // 记录会话归属员工：后台运行任务的流事件据此写回正确缓存
+      for (const conv of convList) rememberConversationOwner(conv.id, id!)
 
       // 从 convList 恢复各对话绑定的默认模型（仅本会话未显式设置过的）
       for (const conv of convList) {
@@ -622,8 +658,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
     // 重建后端仍在运行、但前端已丢失跟踪的流式会话（renderer 重载/异常导致）。
     // 必须在 initEmployee 完成对话/消息恢复后再执行，避免与 selectConversation 的加载竞态。
+    // 不传 employeeId：其他员工的后台任务同样需要恢复，否则它们的输出会被整体丢弃。
     if (version === initVersionRef.current) {
-      reconcileRunningStreams(id!).catch(() => {})
+      reconcileRunningStreams().catch(() => {})
     }
   }
 
@@ -673,18 +710,19 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   setupGlobalListenersRef.current = setupGlobalListeners
 
   useEffect(() => {
+    // 无条件注册全局流监听：渲染进程重建后模块级流状态为空，
+    // 若按 hasActiveStream/清理函数是否存在来判断会漏注册，
+    // 导致 reconcile 恢复的后台任务事件全部被丢弃、LLM 输出不可见
+    setupGlobalListenersRef.current()
+
     const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
     if (!savedConvId) return
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === savedConvId && s.isStreaming)
 
-    // 仅更新 ref 和恢复流式监听器，不调用 setMessages/setActiveConversationId
+    // 仅更新 ref，不调用 setMessages/setActiveConversationId
     // initEmployee 是消息恢复的唯一入口，避免双轮渲染
     activeConversationIdRef.current = savedConvId
-
-    if (hasActiveStream || getPersistentListenersCleanup()) {
-      setupGlobalListenersRef.current()
-    }
 
     if (hasActiveStream) {
       setIsStreaming(true)
@@ -728,6 +766,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         minimal_mode: minimalMode,
       })
       const convId = (result as Conversation).id
+      rememberConversationOwner(convId, id)
       setActiveConversationId(convId)
       activeConversationIdRef.current = convId
       setMessages([])
@@ -795,6 +834,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const selectConversation = async (convId: string) => {
     selectConvVersionRef.current++
     const version = selectConvVersionRef.current
+    rememberConversationOwner(convId, id)
     setActiveConversationId(convId)
     activeConversationIdRef.current = convId
 
@@ -918,7 +958,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
 
     // 合并 ensureSegments + patchMissingCompletedAt 为单次遍历
-    const msgs = parsedMsgs.map(m => patchMissingCompletedAt(ensureSegments(m)))
+    // 无活跃流时一并清理残留流式标记（重启/中断后 DB 里可能留下空的"生成中"消息）
+    const msgs = hasActiveStream
+      ? parsedMsgs.map(m => patchMissingCompletedAt(ensureSegments(m)))
+      : clearStaleStreamingState(parsedMsgs.map(m => patchMissingCompletedAt(ensureSegments(m))))
 
     if (msgs.some((m, i) => m !== parsedMsgs[i])) {
       window.electronAPI.conversation.update({
@@ -928,7 +971,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       }).catch(() => {})
     }
 
-    conversationMessagesRef.current.set(convId, msgs)
+    resolveConvCache(convId).set(convId, msgs)
 
     if (version !== selectConvVersionRef.current) {
       setLoadingConversationId(prev => prev === convId ? null : prev)
@@ -1244,9 +1287,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === targetConvId && s.isStreaming)
     if (hasActiveStream) return
 
+    rememberConversationOwner(targetConvId, id)
     setupGlobalListeners()
 
-    const currentMsgs = conversationMessagesRef.current.get(targetConvId) || []
+    const currentMsgs = resolveConvCache(targetConvId).get(targetConvId) || []
 
     if (currentMsgs.length === 0) {
       generateConversationTitle(targetConvId, content).catch(() => {})

@@ -28,8 +28,6 @@ export interface StreamListenerDeps {
 let _persistentListenersCleanup: (() => void) | null = null
 let _persistentEmployeeId: string | null = null
 
-export const getPersistentListenersCleanup = () => _persistentListenersCleanup
-export const setPersistentListenersCleanup = (fn: (() => void) | null) => { _persistentListenersCleanup = fn }
 export const getPersistentEmployeeId = () => _persistentEmployeeId
 export const setPersistentEmployeeId = (id: string | null) => { _persistentEmployeeId = id }
 
@@ -57,6 +55,27 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
 
     const tt = tRef.current
 
+    /**
+     * 目标 assistant 消息可能因渲染进程重建、缓存被替换或会话重新加载而缺失。
+     * 此时补建占位消息，保证后续流式内容仍然可见，而不是被静默丢弃
+     * （表现为"LLM 输出突然不可见"，最后只剩一条空消息）。
+     */
+    const ensureAssistant = (
+      prev: MessageWithThought[],
+      streamState: ConversationStreamState
+    ): MessageWithThought[] => {
+      const id = streamState.assistantMessageId
+      if (!id || prev.some(m => m.id === id)) return prev
+      return [...prev, {
+        id,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+        segments: [],
+      }]
+    }
+
     const chunkCleanup = window.electronAPI.llm.onChunk((data: { sessionId: string; chunk?: string; chunks?: string[] }) => {
       const { sessionId } = data
       const chunk = data.chunks && data.chunks.length > 0 ? data.chunks.join('') : (data.chunk || '')
@@ -65,7 +84,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
@@ -98,7 +117,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
@@ -132,7 +151,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
@@ -192,7 +211,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
@@ -308,7 +327,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           let segs = [...(m.segments || [])]
 
@@ -428,7 +447,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
           let targetIndex = -1
@@ -694,7 +713,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           let segs = [...(m.segments || [])]
 
