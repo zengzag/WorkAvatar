@@ -162,12 +162,14 @@ describe('OCRService / recognize', () => {
   it('recognizeBuffer：写临时文件识别后清理', async () => {
     seedModels()
     const svc = OCRService.getInstance()
+    // 只校验本次调用留下的临时文件：系统临时目录可能残留其它运行/崩溃进程的文件
+    const before = new Set(fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ocr_')))
     const result = await svc.recognizeBuffer(Buffer.from('fake-png'))
     expect(result.text).toBe('识别文本')
 
-    // 临时文件已删除
-    const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ocr_'))
-    expect(tmpFiles).toHaveLength(0)
+    // 本次产生的临时文件已删除
+    const leftover = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ocr_') && !before.has(f))
+    expect(leftover).toHaveLength(0)
   })
 
   it('Worker 返回 error：错误被包装并弹窗', async () => {

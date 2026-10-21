@@ -2,6 +2,7 @@ import type { ToolDefinition } from './types'
 import OCRService from '../../ocr.service'
 import * as fs from 'fs'
 import * as path from 'path'
+import { resolveToolPath } from './fs-shared'
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'])
 
@@ -20,7 +21,7 @@ export const ocrImageTool: ToolDefinition = {
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '图片文件绝对路径' },
+      path: { type: 'string', description: '图片文件路径（绝对路径，或相对工作区）' },
     },
     required: ['path'],
   },
@@ -29,7 +30,7 @@ export const ocrImageTool: ToolDefinition = {
       const imagePath = String(args.path || '').trim()
       if (!imagePath) return { success: false, error: '图片路径不能为空' }
 
-      const resolved = path.resolve(imagePath)
+      const resolved = resolveToolPath(imagePath)
       if (!fs.existsSync(resolved)) return { success: false, error: `图片文件不存在: ${imagePath}` }
 
       const stats = fs.statSync(resolved)

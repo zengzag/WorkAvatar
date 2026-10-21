@@ -2,6 +2,7 @@ import type { ToolDefinition, ToolHandlerContext } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import AttachmentService from '../../attachment.service'
+import { resolveToolPath } from './fs-shared'
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp', 'gif'])
 const MAX_FILE_SIZE = 6 * 1024 * 1024
@@ -21,7 +22,7 @@ export const readImageTool: ToolDefinition = {
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Absolute image file path' },
+      path: { type: 'string', description: 'Image file path (absolute, or relative to the workspace)' },
     },
     required: ['path'],
   },
@@ -30,7 +31,7 @@ export const readImageTool: ToolDefinition = {
       const imagePath = String(args.path || '').trim()
       if (!imagePath) return { success: false, error: '图片路径不能为空' }
 
-      const resolved = path.resolve(imagePath)
+      const resolved = resolveToolPath(imagePath)
       if (!fs.existsSync(resolved)) return { success: false, error: `图片文件不存在: ${imagePath}` }
 
       const stats = fs.statSync(resolved)

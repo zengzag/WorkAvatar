@@ -1,6 +1,7 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { randomUUID } from 'crypto'
 import { fork, type ChildProcess } from 'child_process'
 import { createLogger, LoggerBackend } from './logger'
 import PathService from './path.service'
@@ -435,7 +436,8 @@ class OCRService {
   }
 
   async recognizeBuffer(imageBuffer: Buffer, options?: OCROptions): Promise<OCRResult> {
-    const tempPath = path.join(os.tmpdir(), `ocr_${Date.now()}.png`)
+    // 文件名带随机后缀：同毫秒内的并发识别不会互相覆盖、误删临时文件
+    const tempPath = path.join(os.tmpdir(), `ocr_${Date.now()}_${randomUUID()}.png`)
     try {
       await fs.promises.writeFile(tempPath, imageBuffer)
       return await this.recognize(tempPath, options)
