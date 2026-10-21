@@ -453,8 +453,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
               delegationStatus: isActiveRun ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
               subSegments: recoverSubSegmentsFromLog(log, run.runId),
               isToolComplete: false,
-              // 恢复时仅仍执行中的委托默认展开，已收尾的保持折叠
-              collapsed: !isActiveRun,
+              // 恢复的委托段默认折叠，用户可手动展开
+              collapsed: true,
               timestamp: Date.now(),
             }
           })

@@ -273,8 +273,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: 'streaming',
               subSegments: [],
               isToolComplete: false,
-              // 委托段执行阶段默认展开，收尾时自动折叠（见下方各终态写入点）
-              collapsed: false,
+              // 委托段默认折叠，用户可手动展开查看子任务执行明细
+              collapsed: true,
               timestamp: Date.now(),
             })
             return { ...m, segments: filteredSegs }
@@ -376,8 +376,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                     delegationStatus: 'queued',
                     subSegments: [],
                     isToolComplete: false,
-                    // 委托段执行阶段默认展开，收尾时自动折叠
-                    collapsed: false,
+                    // 委托段默认折叠
+                    collapsed: true,
                     timestamp: Date.now(),
                   })
                 }
@@ -400,7 +400,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             // delegate 业务成功判断：优先从 rawResult.success（delegate.tool 返回的业务结果）
             // 顶层 success 是"工具调用是否成功"（基于 isError），不代表委派业务成功
             const isSuccess = rawResult?.success !== undefined ? !!rawResult.success : (success !== undefined ? success : true)
-            // pending：同步等待窗口内子任务未结束（仍在后台执行），不是失败——保持运行态与展开，
+            // pending：同步等待窗口内子任务未结束（仍在后台执行），不是失败——保持运行态，
             // 终态由后续 run 事件（result/cancelled）确认
             const isPending = rawResult?.pending === true
             const targetName = rawResult?.targetEmployeeName || segs[delIdx].targetEmployeeName
@@ -415,7 +415,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: isPending ? undefined : (isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined))),
               delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
               completedAt: isPending ? undefined : Date.now(),
-              collapsed: !isPending,
+              collapsed: true,
             }
             return { ...m, segments: segs }
           }
@@ -732,8 +732,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: 'queued',
               subSegments: [],
               isToolComplete: false,
-              // 委托段执行阶段默认展开，收尾时自动折叠
-              collapsed: false,
+              // 委托段默认折叠
+              collapsed: true,
               timestamp: Date.now(),
             }
             // 嵌套子任务（父委托段再派发）：挂到发起方委托段的 subSegments 内，随父卡递归渲染
@@ -823,7 +823,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: finalStatus === 'failed' ? (eventData?.error || s.toolError) : s.toolError,
               isToolComplete: true,
               completedAt: Date.now(),
-              collapsed: true,
             }))
             return { ...m, segments: segs }
           }
@@ -836,7 +835,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: eventData?.error || s.toolError,
               isToolComplete: true,
               completedAt: Date.now(),
-              collapsed: true,
             }))
             return { ...m, segments: segs }
           }
@@ -906,7 +904,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolComplete: true,
               toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolCancelled'),
               completedAt,
-              collapsed: true,
             }
           }
           return {
