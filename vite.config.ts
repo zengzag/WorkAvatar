@@ -267,9 +267,6 @@ export default defineConfig({
           if (/[\\/]node_modules[\\/](react-markdown|remark-gfm|remark-math|rehype-katex)[\\/]/.test(id)) {
             return 'react-markdown'
           }
-          if (/[\\/]node_modules[\\/]react-syntax-highlighter[\\/]/.test(id)) {
-            return 'syntax-highlighter'
-          }
           if (/[\\/]node_modules[\\/]katex[\\/]/.test(id)) {
             return 'katex'
           }

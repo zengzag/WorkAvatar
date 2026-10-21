@@ -1,13 +1,12 @@
 import { App, theme, Tooltip } from 'antd'
 import { EyeOutlined, ExportOutlined, FolderOpenOutlined } from '@ant-design/icons'
-import React, { useState, memo, useMemo, Suspense, useEffect } from 'react'
+import React, { useState, memo, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GeneratedFileInfo } from '../../types'
 import type { MessageSegment } from './types'
-import { getFileIcon, getFileColor } from './FileViewerModal'
+import { getFileIcon, getFileColor } from './FilePreview'
 import { pathToAppFileUrl } from '../../utils/file-url'
-
-const FileViewerModal = React.lazy(() => import('./FileViewerModal'))
+import { useTaskPanelStore } from '../../stores/task-panel.store'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -23,7 +22,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
   const { token } = theme.useToken()
   const { message } = App.useApp()
   const { t } = useTranslation()
-  const [previewFile, setPreviewFile] = useState<GeneratedFileInfo | null>(null)
+  const openPreview = useTaskPanelStore((s) => s.openPreview)
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
 
   // 聚合所有 tool_call / delegation 段的 generatedFiles，按路径去重（后写覆盖先写，保留最新 size/mtime）
@@ -69,8 +68,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
   }
 
   return (
-    <>
-      <div style={{
+    <div style={{
         display: 'flex',
         flexWrap: 'wrap',
         gap: 8,
@@ -84,7 +82,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
           return (
             <div
               key={`${file.path}-${index}`}
-              onClick={isDeleted ? undefined : () => setPreviewFile(file)}
+              onClick={isDeleted ? undefined : () => openPreview(file)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -172,15 +170,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
             </div>
           )
         })}
-      </div>
-      <Suspense fallback={null}>
-        <FileViewerModal
-          file={previewFile}
-          open={!!previewFile}
-          onClose={() => setPreviewFile(null)}
-        />
-      </Suspense>
-    </>
+    </div>
   )
 }
 

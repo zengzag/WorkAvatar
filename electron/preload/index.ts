@@ -2,6 +2,11 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
   WorkspaceOpenInExplorerParams,
+  WorkspaceListFilesParams,
+  WorkspaceListFilesResult,
+  TerminalExecParams,
+  TerminalExecResult,
+  TerminalEvent,
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
@@ -76,8 +81,6 @@ import type {
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
-  FileChangeItem,
-  SnapshotRevertResult,
   ShellBgKillResult,
   ShellBgTaskItem,
   SubAgentProfile,
@@ -90,6 +93,20 @@ const electronAPI = {
   workspace: {
     openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
     deleteTaskDir: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_TASK_DIR, path),
+    listFiles: (params: WorkspaceListFilesParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_FILES, params) as Promise<WorkspaceListFilesResult>,
+  },
+
+  // 任务侧边栏终端：命令级执行（非 PTY），cwd 由主进程延续
+  terminal: {
+    exec: (params: TerminalExecParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_EXEC, params) as Promise<TerminalExecResult>,
+    stop: (terminalId: string) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_STOP, { terminalId }),
+    onEvent: (callback: (event: TerminalEvent) => void) => {
+      const handler = (_event: any, payload: TerminalEvent) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.TERMINAL_EVENT, handler)
+      return () => { ipcRenderer.removeListener(IPC_CHANNELS.TERMINAL_EVENT, handler) }
+    },
   },
 
   employee: {
@@ -476,14 +493,6 @@ const electronAPI = {
     /** 关闭/开启"本轮任务不再提醒"高权限模式（conversationId 优先，无 DB 会话时传 sessionId） */
     setTaskHighPermission: (params: { conversationId?: string; sessionId?: string; enabled: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_SET_TASK_PERMISSION, params),
-  },
-
-  // 工作区文件改动快照：列出任务内改动记录与回滚
-  snapshot: {
-    list: (conversationId: string) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_LIST, { conversationId }) as Promise<FileChangeItem[]>,
-    revert: (conversationId: string, ids?: string[]) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_REVERT, { conversationId, ids }) as Promise<SnapshotRevertResult>,
   },
 
   // 后台终端任务：列出当前会话运行中的长跑命令并手动终止（agent 异常中止后的用户侧兜底）

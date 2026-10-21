@@ -9,9 +9,10 @@ import { registerRuntimeEnvHandlers } from './runtime-env.handlers'
 import { registerMcpHandlers } from './mcp.handlers'
 import { registerPluginHandlers } from './plugin.handlers'
 import { registerAttachmentHandlers } from './attachment.handlers'
-import { registerSnapshotHandlers } from './snapshot.handlers'
 import { registerShellBgHandlers } from './shell-bg.handlers'
 import { registerSubagentHandlers } from './subagent.handlers'
+import { registerTerminalHandlers } from './terminal.handlers'
+import TerminalService from '../services/terminal.service'
 import AttachmentService from '../services/attachment.service'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
@@ -47,9 +48,9 @@ export function registerIpcHandlers() {
   registerMcpHandlers()
   registerPluginHandlers()
   registerAttachmentHandlers()
-  registerSnapshotHandlers()
   registerShellBgHandlers()
   registerSubagentHandlers()
+  registerTerminalHandlers()
 
   // 播种内置子智能体模板（explore/general）：幂等刷新，作为开箱即用的委托执行者
   SubAgentProfileService.getInstance().seedBuiltinProfiles()
@@ -66,9 +67,10 @@ export function registerIpcHandlers() {
   // 启动定时记忆精炼服务（空闲对话的记忆提取）
   MemoryRefinementService.getInstance().start()
 
-  // 应用退出前清理所有活跃 MCP client 与前台防休眠 blocker
+  // 应用退出前清理所有活跃 MCP client、任务终端进程与前台防休眠 blocker
   app.on('before-quit', () => {
     McpRegistryService.getInstance().shutdownAll().catch(() => { /* ignore */ })
     PowerSaveService.getInstance().shutdown()
+    TerminalService.getInstance().disposeAll()
   })
 }
