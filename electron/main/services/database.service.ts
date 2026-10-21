@@ -403,25 +403,6 @@ class DatabaseService {
         updated_at INTEGER NOT NULL DEFAULT 0
       );
 
-      -- 工作区文件改动快照：文件写入/编辑/删除前记录变更前状态，供任务内回滚（见 file-snapshot.service）
-      CREATE TABLE IF NOT EXISTS file_snapshots (
-        id TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL DEFAULT '',
-        employee_id TEXT NOT NULL DEFAULT '',
-        tool_name TEXT NOT NULL DEFAULT '',
-        -- 改动类型：write / append / edit / delete
-        change_kind TEXT NOT NULL,
-        path TEXT NOT NULL,
-        -- 改动前文件是否存在（0 表示由本次操作新建，回滚即删除）
-        existed INTEGER NOT NULL DEFAULT 0,
-        -- 是否可在应用内还原（目录、超大文件为 0）
-        restorable INTEGER NOT NULL DEFAULT 1,
-        -- 改动前内容（仅可还原且已读取时记录）
-        before_content TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE INDEX IF NOT EXISTS idx_file_snapshots_conv ON file_snapshots(conversation_id, created_at DESC);
-
       -- 模板任务运行记录：模板与画布由 workflow 插件持有，内核记录运行实例（节点状态与产物）
       CREATE TABLE IF NOT EXISTS workflow_runs (
         run_id TEXT PRIMARY KEY,
@@ -462,6 +443,9 @@ class DatabaseService {
         prefix='2,3'
       );
     `)
+
+    // 文件改动快照功能已移除：清理旧版遗留表（仅存回滚缓存，不再读取）
+    this.db.exec('DROP TABLE IF EXISTS file_snapshots')
 
     // 记忆相关增量迁移（实现见 employee-memory-migrations，便于集成测试覆盖）
     migrateMemorySchema(this.db)

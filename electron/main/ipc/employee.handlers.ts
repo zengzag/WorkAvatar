@@ -37,7 +37,6 @@ import type { MemoryBucket } from '../services/employee-memory-types'
 import EmployeeRegistryService from '../services/employee-registry.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import FilePermissionService from '../services/file-permission.service'
-import FileSnapshotService from '../services/file-snapshot.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
@@ -53,7 +52,6 @@ function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerServ
     for (const cid of allConvIds) {
       UnifiedInteractionService.getInstance().clearAllowedSources(cid)
       FilePermissionService.getInstance().clearAuthorizations(cid)
-      FileSnapshotService.getInstance().clearForConversation(cid)
     }
     // 终止该批会话启动的后台终端任务，避免进程随会话删除成为孤儿
     BackgroundShellService.getInstance().killForOwners(allConvIds)
@@ -185,7 +183,6 @@ export function registerEmployeeHandlers(
       for (const cid of allConvIds) {
         UnifiedInteractionService.getInstance().clearAllowedSources(cid)
         FilePermissionService.getInstance().clearAuthorizations(cid)
-        FileSnapshotService.getInstance().clearForConversation(cid)
       }
       // 终止该会话及其子会话启动的后台终端任务，避免进程成为孤儿
       try { BackgroundShellService.getInstance().killForOwners(allConvIds) } catch { /* ignore */ }
