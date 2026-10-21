@@ -283,12 +283,12 @@ const ContextUsageInline: React.FC<{
       <div style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 5,
+        gap: 4,
         cursor: 'pointer',
       }}>
         <svg
-          width={16}
-          height={16}
+          width={14}
+          height={14}
           viewBox="0 0 16 16"
           style={{ display: 'block', flexShrink: 0 }}
           aria-label={`${t('workbench.contextUsage')}: ${percent}%`}

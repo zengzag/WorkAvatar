@@ -6,6 +6,8 @@ import type {
   ToolMode,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
+  SearchApiSetKeyParams,
+  SearchApiProviderParams,
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type SkillRegistryService from '../services/skill-registry.service'
@@ -13,6 +15,7 @@ import EmployeeRegistryService from '../services/employee-registry.service'
 import { allBuiltinTools, createKMSTools, createKMSCollectionTools, shellExecTool } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
+import { searchApiService } from '../services/search-api.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import { hideMemoryBoundCategories } from '../services/employee-memory-helpers'
 import PluginHostService from '../services/plugin/plugin-host.service'
@@ -454,6 +457,19 @@ export function registerToolHandlers(
 
   safeHandle(IPC_CHANNELS.SEARCH_CLOSE_WINDOW, (params: SearchCloseWindowParams) => {
     internetSearchService.closeSearchWindow(params.engine as any)
+    return { success: true }
+  })
+
+  // 搜索 API 配置：模式/服务商由 settings 保存，API Key 走加密存储且只回传是否已配置
+  safeHandle(IPC_CHANNELS.SEARCH_API_GET_STATUS, () => searchApiService.getStatus())
+
+  safeHandle(IPC_CHANNELS.SEARCH_API_SET_KEY, async (params: SearchApiSetKeyParams) => {
+    await searchApiService.saveApiKey(params?.provider, params?.apiKey)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.SEARCH_API_CLEAR_KEY, async (params: SearchApiProviderParams) => {
+    await searchApiService.clearApiKey(params?.provider)
     return { success: true }
   })
 }

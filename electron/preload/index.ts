@@ -87,6 +87,9 @@ import type {
   SubAgentProfileCreateParams,
   SubAgentProfileUpdateParams,
   SubAgentProfileResult,
+  SearchApiStatus,
+  SearchApiSetKeyParams,
+  SearchApiProviderId,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -320,6 +323,15 @@ const electronAPI = {
     getEngines: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_GET_ENGINES),
     open: (engine: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_OPEN_WINDOW, { engine }),
     close: (engine: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_CLOSE_WINDOW, { engine }),
+  },
+
+  searchApi: {
+    // 搜索后端配置状态（模式、当前服务商、各服务商是否已配置密钥）
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_API_GET_STATUS) as Promise<SearchApiStatus>,
+    // 保存/清除 API Key（主进程加密存储，渲染层不可回读明文）
+    setKey: (params: SearchApiSetKeyParams) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_API_SET_KEY, params),
+    clearKey: (provider: SearchApiProviderId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEARCH_API_CLEAR_KEY, { provider }),
   },
 
   skillRegistry: {

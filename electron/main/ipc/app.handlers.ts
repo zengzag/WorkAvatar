@@ -29,6 +29,8 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'kms_auto_index',
   'web_search_engine',
   'web_search_result_count',
+  'web_search_mode',
+  'web_search_api_provider',
   'prevent_sleep_when_foreground',
   WINDOW_STATE_SETTING_KEY,
 ])
@@ -241,7 +243,7 @@ export function registerAppHandlers(
 
   safeHandle(IPC_CHANNELS.SETTINGS_GET, (params: SettingsGetParams) => {
     // API Key 由 SecureKeyStorage 专管（加密存储 + 后端解密），不开放给渲染层直读
-    if (params.key.startsWith('llm_api_key_')) {
+    if (params.key.startsWith('llm_api_key_') || params.key.startsWith('web_search_api_key_')) {
       return null
     }
     const row = settingsGetStmt.get(params.key) as any

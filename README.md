@@ -41,7 +41,7 @@ Describe a task, and the employee plans the steps and invokes tools on its own. 
   <img src="images/employees.png" alt="Digital employee management" width="88%" />
 </div>
 
-**Tool set** — file read / write / edit / copy / delete, shell commands, web search, image recognition, and Word / Excel / PowerPoint document generation. Tools can be configured per employee; external MCP servers can also be attached.
+**Tool set** — file read / write / edit / copy / delete, shell commands, web search (local browser or search API: DeepSeek / Tavily / Brave), image recognition, and Word / Excel / PowerPoint document generation. Tools can be configured per employee; external MCP servers can also be attached.
 
 **File safety** — all file operations go through a unified permission gate. **Shell commands run inside an OS-level sandbox** (a restricted token plus directory ACLs on Windows, Seatbelt on macOS): reads are unrestricted, writes are limited to the task workspace and a private temp directory, and an out-of-bounds write is rejected by the kernel, so the command fails. Deliverables leave the workspace through `file_copy`, which copies a file or a folder (recursively) to a chosen location and asks for confirmation once (the whole folder can be authorized). When a command genuinely must write globally (for example installing a shared library), it can pass `full_access` to request one-time unrestricted execution, which only runs after the user confirms. File tools read and write freely inside the authorized workspace; anything outside the workspace or sensitive files (`.env`, private keys, `.git`) requires confirmation with a diff preview of the change.
 

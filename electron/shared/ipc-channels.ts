@@ -50,6 +50,12 @@ export type {
   ToolMode,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
+  WebSearchMode,
+  SearchApiProviderId,
+  SearchApiProviderInfo,
+  SearchApiStatus,
+  SearchApiSetKeyParams,
+  SearchApiProviderParams,
 } from './channels/tool'
 export type {
   SettingsGetParams,

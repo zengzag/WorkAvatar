@@ -4,6 +4,11 @@ import { createLogger } from './logger'
 
 const logger = createLogger('SecureKeyStorage')
 
+/** 搜索 API 密钥在 settings 表中的键名（与 LLM 供应商密钥隔离） */
+export function searchApiKeyName(providerId: string): string {
+  return `web_search_api_key_${providerId}`
+}
+
 /**
  * 安全密钥存储
  *
@@ -43,11 +48,25 @@ export class SecureKeyStorage {
     }
   }
 
-  async saveApiKey(providerId: string, apiKey: string): Promise<void> {
-    const encrypted = this.encryptKey(apiKey)
+  private saveSecret(key: string, secret: string): void {
+    const encrypted = this.encryptKey(secret)
     this.db.prepare(
       'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
-    ).run(`llm_api_key_${providerId}`, encrypted)
+    ).run(key, encrypted)
+  }
+
+  private getSecret(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any
+    if (!row?.value) return null
+    return this.decryptKey(row.value)
+  }
+
+  private deleteSecret(key: string): void {
+    this.db.prepare('DELETE FROM settings WHERE key = ?').run(key)
+  }
+
+  async saveApiKey(providerId: string, apiKey: string): Promise<void> {
+    this.saveSecret(`llm_api_key_${providerId}`, apiKey)
   }
 
   async getApiKey(providerId: string): Promise<string | null> {
@@ -57,12 +76,22 @@ export class SecureKeyStorage {
       return (workerData.apiKeys as Record<string, string>)[providerId] ?? null
     }
 
-    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(`llm_api_key_${providerId}`) as any
-    if (!row?.value) return null
-    return this.decryptKey(row.value)
+    return this.getSecret(`llm_api_key_${providerId}`)
   }
 
   async deleteApiKey(providerId: string): Promise<void> {
-    this.db.prepare('DELETE FROM settings WHERE key = ?').run(`llm_api_key_${providerId}`)
+    this.deleteSecret(`llm_api_key_${providerId}`)
+  }
+
+  async saveSearchApiKey(providerId: string, apiKey: string): Promise<void> {
+    this.saveSecret(searchApiKeyName(providerId), apiKey)
+  }
+
+  async getSearchApiKey(providerId: string): Promise<string | null> {
+    return this.getSecret(searchApiKeyName(providerId))
+  }
+
+  async deleteSearchApiKey(providerId: string): Promise<void> {
+    this.deleteSecret(searchApiKeyName(providerId))
   }
 }
