@@ -7,6 +7,7 @@ import MemoryRefinementService from '../memory-refinement.service'
 import WorkspaceManagerService from '../workspace-manager.service'
 import EmployeeAgentService from '../employee-agent.service'
 import EmployeeRegistryService from '../employee-registry.service'
+import LLMClientService from '../llm-client.service'
 import { interactionContext } from '../unified-interaction.service'
 import { broadcastRunEvent } from '../../ipc/agent-run-events'
 import { generateId } from '../common-utils'
@@ -1094,6 +1095,22 @@ class SubAgentRuntime {
     }
   }
 
+  /** 父会话绑定的默认模型（default_model_json）：委托子任务默认沿用发起会话的模型，provider 已失效时返回 null */
+  private async resolveParentConversationModel(conversationId: string): Promise<{ providerId: string; modelId: string } | null> {
+    if (!conversationId) return null
+    try {
+      const row = DatabaseService.getInstance().getDb()
+        .prepare('SELECT default_model_json FROM conversations WHERE id = ?')
+        .get(conversationId) as { default_model_json?: string } | undefined
+      const obj = JSON.parse(row?.default_model_json || '{}')
+      if (!obj?.providerId || !obj?.modelId) return null
+      const config = await LLMClientService.getInstance().getProviderConfig(obj.providerId)
+      if (!config) return null
+      return { providerId: obj.providerId, modelId: obj.modelId }
+    } catch { /* ignore parse/db error */ }
+    return null
+  }
+
   private async executeRun(runId: string): Promise<void> {
     const entry = this.entries.get(runId)
     if (!entry) return
@@ -1246,20 +1263,24 @@ class SubAgentRuntime {
     }
 
     try {
+      const parentModel = await this.resolveParentConversationModel(run.parentConversationId)
       const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
       const hasRunOverride = !!(run.providerId && run.modelId)
-      if (!resolved && !hasRunOverride) {
+      if (!resolved && !parentModel && !hasRunOverride) {
         subError = '无可用 LLM 提供商（请在设置中配置默认模型）'
       } else {
         let providerId = resolved?.providerId || ''
         let modelId = resolved?.modelId || ''
-        // 模型覆盖优先级：运行级显式覆盖（模板任务节点/运行指定）> 临时角色覆盖 > 全局默认
+        // 模型覆盖优先级：运行级显式覆盖（模板任务节点/运行指定）> 临时角色覆盖 > 父会话绑定模型（与主任务一致）> 场景默认
         if (hasRunOverride) {
           providerId = run.providerId!
           modelId = run.modelId!
         } else if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
           providerId = run.ephemeral.providerId
           modelId = run.ephemeral.modelId
+        } else if (parentModel) {
+          providerId = parentModel.providerId
+          modelId = parentModel.modelId
         }
         const ws = WorkspaceManagerService.getInstance()
         if (run.conversationId) {
