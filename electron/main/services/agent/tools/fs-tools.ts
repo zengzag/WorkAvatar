@@ -3,13 +3,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
-import FileSnapshotService from '../../file-snapshot.service'
 import { moveToTrash } from '../../common-utils'
 import { isFsRoot, isWithinPath, normalizePath } from '../../path-normalize'
 import { buildUnifiedDiff } from './text-diff'
 import { expandGlobPattern, isGlobPattern } from './glob-engine'
 import { isIrreversibleTool } from './tool-permission'
-import { diffSuffix, getWorkspacePath, readFileState, recordSnapshot, resolveToolPath } from './fs-shared'
+import { getWorkspacePath, readFileState, resolveToolPath } from './fs-shared'
 import { filesEditTool } from './files-edit.tool'
 
 /**
@@ -29,19 +28,24 @@ import { filesEditTool } from './files-edit.tool'
  * （路径可静态判定、移入回收站可恢复、操作可审计）。
  *
  * 工作区边界判定、授权缓存与区外确认统一由 FilePermissionService 负责；
- * 路径解析与改动快照等共用能力见 fs-shared.ts。
+ * 路径解析与文本状态读取等共用能力见 fs-shared.ts。
  */
 
 const filePermission = FilePermissionService.getInstance()
-const fileSnapshot = FileSnapshotService.getInstance()
 
 const PARSABLE_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
   'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'
 ])
 
-const DEFAULT_MAX_LENGTH = 5000
-const MAX_LENGTH_LIMIT = 50000
+const DEFAULT_LINE_LIMIT = 800
+const MAX_LINE_LIMIT = 5000
+/** 单行输出上限：压缩后的 JS / 单行 JSON 不占满整页 */
+const MAX_LINE_CHARS = 2000
+/** 单页输出字节上限：超出后停在整行边界，并提示用 offset 续读 */
+const MAX_PAGE_BYTES = 50 * 1024
+/** 超过该大小的文件拒绝整读（行窗口仍需扫全文件统计总行数） */
+const MAX_FILE_SIZE = 50 * 1024 * 1024
 
 // ====== 常驻工具 ======
 
@@ -51,13 +55,13 @@ export const fileReadTool: ToolDefinition = {
   id: 'file_read',
   name: 'file_read',
   title: '读取文件',
-  description: `Read a local file. Text files are returned as-is, line-numbered by default; page through large files with offset/max_length. Set parse=true to extract text from PDF/DOCX/XLSX/PPTX instead of reading raw bytes; for text inside an image use ocr_image.`,
+  description: `Read a local file. Text files are paginated by line: offset is the 1-based first line and limit is the number of lines. Each line is cut after ${MAX_LINE_CHARS} characters and one page stops at ${MAX_PAGE_BYTES / 1024}KB. Set parse=true to extract text from PDF/DOCX/XLSX/PPTX instead of reading raw bytes; for text inside an image use ocr_image.`,
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Absolute file path' },
-      offset: { type: 'number', description: 'Start character offset (default 0)', minimum: 0 },
-      max_length: { type: 'number', description: `Max characters to return (default ${DEFAULT_MAX_LENGTH}, max ${MAX_LENGTH_LIMIT})`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
+      path: { type: 'string', description: 'File path (absolute, or relative to the workspace)' },
+      offset: { type: 'number', description: '1-based first line to return (default 1)', minimum: 1 },
+      limit: { type: 'number', description: `Max lines to return (default ${DEFAULT_LINE_LIMIT}, max ${MAX_LINE_LIMIT})`, minimum: 1, maximum: MAX_LINE_LIMIT },
       parse: { type: 'boolean', description: 'Extract text from PDF/DOCX/XLSX/PPTX (default false)' },
       show_line_numbers: { type: 'boolean', description: 'Prefix each line with its number (default true)' },
     },
@@ -289,80 +293,123 @@ async function readFile(args: any) {
   }
   if (!stat.isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
-  const offset = Math.max(0, args.offset || 0)
-  const maxLength = Math.min(Math.max(args.max_length || DEFAULT_MAX_LENGTH, 1), MAX_LENGTH_LIMIT)
+  const offset = Math.max(1, Math.floor(Number(args.offset) || 1))
+  const limit = Math.min(Math.max(Math.floor(Number(args.limit) || DEFAULT_LINE_LIMIT), 1), MAX_LINE_LIMIT)
+  const showLineNumbers = args.show_line_numbers !== false
   const enableParse = args.parse === true
   const ext = path.extname(resolved).toLowerCase().slice(1)
 
-  // 大文件保护：超过 50MB 拒绝全量读取（parse 模式由 file-parser 自身控制），防止 OOM 崩溃
-  const MAX_FILE_SIZE = 50 * 1024 * 1024
+  // 大文件保护：行窗口仍需扫全文件统计总行数，超过 50MB 拒绝（parse 模式由 file-parser 自身控制）
   if (stat.size > MAX_FILE_SIZE && !enableParse) {
-    return { success: false, error: `文件过大（${(stat.size / 1024 / 1024).toFixed(1)}MB），超过 ${MAX_FILE_SIZE / 1024 / 1024}MB 限制。请使用 offset/max_length 分段读取，或使用专用工具处理大文件` }
+    return { success: false, error: `文件过大（${(stat.size / 1024 / 1024).toFixed(1)}MB），超过 ${MAX_FILE_SIZE / 1024 / 1024}MB 限制。请使用 offset/limit 分段读取，或使用专用工具处理大文件` }
   }
 
+  let chunks: AsyncIterable<string> | Iterable<string>
   if (enableParse && PARSABLE_EXTENSIONS.has(ext)) {
     const parser = require('../../file-parser.service').default.getInstance()
     const result = await parser.parseFilePath(resolved)
-    const fullText = result.fullText
-    const totalChars = fullText.length
-
-    // 空文件直接返回，避免「偏移量 0 超出文件总字符数 0」的误导性报错
-    if (totalChars === 0) {
-      return { success: true, output: '(文件为空 — 0 字符)' }
-    }
-
-    if (offset >= totalChars) {
-      return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
-    }
-
-    const end = Math.min(offset + maxLength, totalChars)
-    const content = fullText.slice(offset, end)
-
-    let output = content
-    if (end < totalChars) {
-      output += `\n\n(显示字符 ${offset + 1}-${end}，共 ${totalChars} 字符。使用 offset=${end} 继续读取)`
-    } else {
-      output += `\n\n(文件结束 — 共 ${totalChars} 字符)`
-    }
-
-    return { success: true, output }
-  }
-
-  const content = (await fs.promises.readFile(resolved, 'utf-8')).replace(/\r\n/g, '\n')
-  const totalChars = content.length
-
-  // 空文件直接返回，避免「偏移量 0 超出文件总字符数 0」的误导性报错
-  if (totalChars === 0) {
-    return { success: true, output: '(文件为空 — 0 字符)' }
-  }
-
-  if (offset >= totalChars) {
-    return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
-  }
-
-  const end = Math.min(offset + maxLength, totalChars)
-  const sliced = content.slice(offset, end)
-
-  const beforeOffset = content.slice(0, offset)
-  const showLineNumbers = args.show_line_numbers !== false
-  const startLine = (beforeOffset.match(/\n/g) || []).length + 1
-  const lines = sliced.split('\n')
-  let output: string
-  if (showLineNumbers) {
-    const numbered = lines.map((line, i) => `${startLine + i}| ${line}`)
-    output = numbered.join('\n')
+    chunks = [result.fullText]
   } else {
-    output = sliced
+    // 流式读取：大文件不在内存里整份驻留
+    chunks = fs.createReadStream(resolved, { encoding: 'utf-8' }) as unknown as AsyncIterable<string>
   }
 
-  const totalLines = (content.match(/\n/g) || []).length + 1
-  if (end < totalChars) {
-    output += `\n\n(显示字符 ${offset + 1}-${end}，第 ${startLine}-${startLine + lines.length - 1} 行，共 ${totalChars} 字符 ${totalLines} 行。使用 offset=${end} 继续读取)`
+  const window = await buildReadWindow(chunks, { offset, limit })
+
+  // 空文件直接返回，避免「偏移量超出」的误导性报错
+  if (window.totalLines === 0) {
+    return { success: true, output: '(文件为空 — 0 行)' }
+  }
+  if (offset > window.totalLines) {
+    return { success: false, error: `偏移量 ${offset} 超出文件总行数 ${window.totalLines}` }
+  }
+
+  const startLine = window.lines[0].number
+  const endLine = window.lines[window.lines.length - 1].number
+  let output = showLineNumbers
+    ? window.lines.map(l => `${l.number}| ${l.text}`).join('\n')
+    : window.lines.map(l => l.text).join('\n')
+
+  if (window.truncatedByBytes) {
+    output += `\n\n(输出已达上限，显示第 ${startLine}-${endLine} 行，共 ${window.totalLines} 行。使用 offset=${endLine + 1} 继续读取)`
+  } else if (endLine < window.totalLines) {
+    output += `\n\n(显示第 ${startLine}-${endLine} 行，共 ${window.totalLines} 行。使用 offset=${endLine + 1} 继续读取)`
   } else {
-    output += `\n\n(文件结束 — 共 ${totalChars} 字符，${totalLines} 行)`
+    output += `\n\n(文件结束 — 共 ${window.totalLines} 行)`
   }
 
   return { success: true, output }
+}
+
+interface ReadWindowLine {
+  number: number
+  text: string
+}
+
+interface ReadWindowResult {
+  lines: ReadWindowLine[]
+  totalLines: number
+  /** 是否因单页字节上限提前停止收集（总行数仍完整统计） */
+  truncatedByBytes: boolean
+}
+
+/**
+ * 从流式文本块构建行窗口：按行计数、按行截断超长行、按字节上限停止收集；
+ * 即使提前停止也继续扫描到文件末尾，保证片段外的 totalLines 准确。
+ */
+async function buildReadWindow(
+  chunks: AsyncIterable<string> | Iterable<string>,
+  opts: { offset: number; limit: number },
+): Promise<ReadWindowResult> {
+  const lines: ReadWindowLine[] = []
+  let totalLines = 0
+  let outputBytes = 0
+  let truncatedByBytes = false
+  // 多留一个字符即可判定超长，避免单行无限累积
+  const lineBufferCap = MAX_LINE_CHARS + 1
+  let lineBuffer = ''
+
+  const pushLine = (rawLine: string): void => {
+    totalLines++
+    if (truncatedByBytes || totalLines < opts.offset || lines.length >= opts.limit) return
+
+    const text = rawLine.length > MAX_LINE_CHARS
+      ? `${rawLine.slice(0, MAX_LINE_CHARS)}... (该行超过 ${MAX_LINE_CHARS} 字符已截断)`
+      : rawLine
+    const bytes = Buffer.byteLength(text, 'utf8') + (lines.length > 0 ? 1 : 0)
+    if (outputBytes + bytes > MAX_PAGE_BYTES) {
+      truncatedByBytes = true
+      return
+    }
+    outputBytes += bytes
+    lines.push({ number: totalLines, text })
+  }
+
+  const appendToLineBuffer = (segment: string): void => {
+    if (lineBuffer.length >= lineBufferCap) return
+    lineBuffer += segment
+    if (lineBuffer.length > lineBufferCap) lineBuffer = lineBuffer.slice(0, lineBufferCap)
+  }
+
+  const flushLine = (): void => {
+    pushLine(lineBuffer.endsWith('\r') ? lineBuffer.slice(0, -1) : lineBuffer)
+    lineBuffer = ''
+  }
+
+  for await (const chunk of chunks) {
+    let start = 0
+    let newlinePos: number
+    while ((newlinePos = chunk.indexOf('\n', start)) !== -1) {
+      appendToLineBuffer(chunk.slice(start, newlinePos))
+      flushLine()
+      start = newlinePos + 1
+    }
+    appendToLineBuffer(chunk.slice(start))
+  }
+  // 末行无换行符时补齐；以换行结尾的文件不会多出一行
+  if (lineBuffer.length > 0) flushLine()
+
+  return { lines, totalLines, truncatedByBytes }
 }
 
 async function writeFile(args: any) {
@@ -388,11 +435,9 @@ async function writeFile(args: any) {
   } else {
     fs.writeFileSync(resolved, content, 'utf-8')
   }
-  // 写盘成功后登记快照（写失败时不产生"从未发生"的回滚记录）
-  recordSnapshot('file_write', append ? 'append' : 'write', resolved, before)
 
   const mode = append ? '追加' : '写入'
-  return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符${diffSuffix(diff)}` }
+  return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符` }
 }
 
 // ====== file_copy 实现 ======
@@ -435,20 +480,14 @@ async function copyFile(args: any) {
   }
 
   const targetWasDir = targetExists && fs.statSync(destination).isDirectory()
-  const before = targetExists && !targetWasDir
-    ? readFileState(destination)
-    : { exists: false, content: '', restorable: false }
   const confirm = await filePermission.authorizeFileOperation('复制到', [destination])
   if (!confirm.allowed) return { success: false, error: confirm.error }
 
   fs.mkdirSync(path.dirname(destination), { recursive: true })
   if (targetExists) {
     if (targetWasDir) {
-      // 目录整体替换：旧目录移入回收站（目录内容不可快照还原），再复制新目录
+      // 目录整体替换：旧目录移入回收站，再复制新目录
       await moveToTrash(destination)
-      fileSnapshot.recordChange({
-        toolName: 'file_copy', changeKind: 'write', path: destination, existed: true, beforeContent: null, restorable: false,
-      })
     } else {
       fs.rmSync(destination, { force: true })
     }
@@ -459,8 +498,6 @@ async function copyFile(args: any) {
   } else {
     fs.copyFileSync(source, destination)
   }
-  // 覆盖已有文件时登记可回滚快照（目录替换已在上方登记）
-  if (!targetWasDir) recordSnapshot('file_copy', 'write', destination, before)
 
   if (sourceIsDir) {
     return { success: true, output: `已复制目录 ${source} → ${destination}` }
@@ -538,21 +575,11 @@ async function deleteFile(args: any) {
   })
   if (!confirm.allowed) return { success: false, error: confirm.error || '删除操作已取消' }
 
-  // 删除前读取改动前状态（目录不可还原，仅登记路径供展示），删除成功后登记快照
-  const beforeStates = new Map(deletable.map(t => [t.resolved, t.isDir ? null : readFileState(t.resolved)]))
-
   const results: string[] = []
   const failures: string[] = []
   for (const t of deletable) {
     try {
       const via = await moveToTrash(t.resolved)
-      if (t.isDir) {
-        fileSnapshot.recordChange({
-          toolName: 'file_delete', changeKind: 'delete', path: t.resolved, existed: true, beforeContent: null, restorable: false,
-        })
-      } else {
-        recordSnapshot('file_delete', 'delete', t.resolved, beforeStates.get(t.resolved)!)
-      }
       const kind = t.isDir ? '目录' : '文件'
       results.push(via === 'trash'
         ? `✓ 已删除${kind}（移入回收站，可恢复）: ${t.resolved}`

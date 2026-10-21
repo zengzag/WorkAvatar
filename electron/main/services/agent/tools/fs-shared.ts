@@ -1,16 +1,16 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import FilePermissionService from '../../file-permission.service'
-import FileSnapshotService, { MAX_SNAPSHOT_FILE_BYTES, type FileChangeKind } from '../../file-snapshot.service'
-import type { DiffDisclosure } from '../../../../shared/types'
 
 /**
- * 文件工具共用的路径解析、改动快照与 diff 展示。
+ * 文件工具共用的路径解析、文本状态与可编辑文本读取。
  * 独立成模块避免 fs-tools ↔ files-edit 循环依赖（files-edit 只依赖这里）。
  */
 
 const filePermission = FilePermissionService.getInstance()
-const fileSnapshot = FileSnapshotService.getInstance()
+
+/** 按文本读取的大小上限：超过则不读取原内容（diff/追加仅按空内容处理） */
+const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024
 
 /** 当前任务的有效工作区目录：优先任务独立目录，旧对话（无任务目录）回退到员工工作区 */
 export function getWorkspacePath(): string | null {
@@ -22,47 +22,24 @@ export function resolveToolPath(raw: string): string {
   return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(getWorkspacePath() || process.cwd(), raw)
 }
 
-/** 读取文件改动前状态：内容超上限/二进制/非 UTF-8 时只登记存在性（不可还原），避免回滚损坏原文件 */
-export function readFileState(filePath: string): { exists: boolean; content: string; restorable: boolean } {
+/** 读取文件当前文本状态：超上限/二进制/非 UTF-8 时 content 为空且 isText=false */
+export function readFileState(filePath: string): { exists: boolean; content: string; isText: boolean } {
   try {
     const stat = fs.statSync(filePath)
-    if (!stat.isFile()) return { exists: true, content: '', restorable: false }
-    if (stat.size > MAX_SNAPSHOT_FILE_BYTES) return { exists: true, content: '', restorable: false }
+    if (!stat.isFile()) return { exists: true, content: '', isText: false }
+    if (stat.size > MAX_TEXT_FILE_BYTES) return { exists: true, content: '', isText: false }
     const buf = fs.readFileSync(filePath)
-    // NUL 字节 → 二进制文件；无效 UTF-8（如 GBK）→ 无法无损还原，均不做快照内容记录
-    if (buf.includes(0)) return { exists: true, content: '', restorable: false }
+    // NUL 字节 → 二进制文件；无效 UTF-8（如 GBK）→ 不可按文本处理
+    if (buf.includes(0)) return { exists: true, content: '', isText: false }
     try {
       const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
-      return { exists: true, content: text, restorable: true }
+      return { exists: true, content: text, isText: true }
     } catch {
-      return { exists: true, content: '', restorable: false }
+      return { exists: true, content: '', isText: false }
     }
   } catch {
-    return { exists: false, content: '', restorable: true }
+    return { exists: false, content: '', isText: true }
   }
-}
-
-/** 授权通过后登记快照（被拒绝的操作不产生回滚记录） */
-export function recordSnapshot(
-  toolName: string,
-  changeKind: FileChangeKind,
-  filePath: string,
-  before: { exists: boolean; content: string; restorable: boolean },
-): void {
-  fileSnapshot.recordChange({
-    toolName,
-    changeKind,
-    path: filePath,
-    existed: before.exists,
-    beforeContent: before.restorable ? before.content : null,
-    restorable: before.restorable,
-  })
-}
-
-/** 工具结果中的 diff 展示块（无改动时返回空串；截断提示由 buildUnifiedDiff 内嵌，不重复追加） */
-export function diffSuffix(diff: DiffDisclosure): string {
-  if (!diff.content) return ''
-  return `\n\n\`\`\`diff\n${diff.content}\n\`\`\``
 }
 
 /**

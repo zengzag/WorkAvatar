@@ -3,9 +3,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
-import { MAX_SNAPSHOT_FILE_BYTES } from '../../file-snapshot.service'
 import { buildUnifiedDiff } from './text-diff'
-import { diffSuffix, readEditableText, readFileState, recordSnapshot, resolveToolPath } from './fs-shared'
+import { readEditableText, readFileState, resolveToolPath } from './fs-shared'
 import type { DiffDisclosure } from '../../../../shared/types'
 
 const MAX_CHANGES = 50
@@ -18,7 +17,6 @@ interface PatchPlan {
   resolved: string
   before: string
   after: string
-  existed: boolean
 }
 
 /**
@@ -124,19 +122,19 @@ async function applyPatch(args: any) {
       const applied = applyEdits(filePath, read.content, item.edits)
       if (!applied.ok) return { success: false, error: applied.error }
       if (applied.content === read.content) return { success: false, error: `${filePath}: edits 未产生任何改动` }
-      plans.push({ filePath, resolved, before: read.content, after: applied.content, existed: true })
+      plans.push({ filePath, resolved, before: read.content, after: applied.content })
     } else {
       const state = readFileState(resolved)
-      if (state.exists && !state.restorable) {
-        return { success: false, error: `${filePath}: 现有文件为二进制或超过快照上限，无法安全覆盖（请改用 file_write）` }
+      if (state.exists && !state.isText) {
+        return { success: false, error: `${filePath}: 现有文件为二进制或超过 5MB，无法安全覆盖（请改用 file_write）` }
       }
       const after = String(item.content)
       if (state.exists && state.content === after) return { success: false, error: `${filePath}: content 与现有内容相同，未产生改动` }
-      plans.push({ filePath, resolved, before: state.content, after, existed: state.exists })
+      plans.push({ filePath, resolved, before: state.content, after })
     }
   }
 
-  const { diff, truncated } = buildCombinedDiff(plans)
+  const diff = buildCombinedDiff(plans)
   // 授权发生在全部改动计算完成之后，使确认弹窗能展示完整的合并 diff；一次授权覆盖全部文件
   const confirm = await filePermission.authorizeFileOperation('修改', plans.map(p => p.resolved), { diff })
   if (!confirm.allowed) return { success: false, error: confirm.error || '修改操作已取消' }
@@ -148,23 +146,17 @@ async function applyPatch(args: any) {
       const dir = path.dirname(p.resolved)
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
       fs.writeFileSync(p.resolved, p.after, 'utf-8')
-      const restorable = Buffer.byteLength(p.before, 'utf-8') <= MAX_SNAPSHOT_FILE_BYTES
-      recordSnapshot('files_edit', p.existed ? 'edit' : 'write', p.resolved, {
-        exists: p.existed,
-        content: restorable ? p.before : '',
-        restorable,
-      })
       done.push(`✓ ${p.filePath}`)
     } catch (error: any) {
       failed.push(`✗ ${p.filePath}: ${error?.message || error}`)
     }
   }
 
-  const parts = [`共 ${plans.length} 个文件，已写入 ${done.length} 个${truncated ? '（diff 预览已截断）' : ''}`]
+  const parts = [`共 ${plans.length} 个文件，已写入 ${done.length} 个`]
   parts.push(...done)
   if (failed.length > 0) parts.push(...failed)
 
-  return { success: failed.length === 0, output: parts.join('\n') + diffSuffix(diff) }
+  return { success: failed.length === 0, output: parts.join('\n') }
 }
 
 /** 按顺序对内存中的文本应用精确替换；任一步失败即整体失败 */
@@ -200,8 +192,8 @@ function applyEdits(
   return { ok: true, content: current }
 }
 
-/** 合并各文件 diff，并补上 buildUnifiedDiff 不产出的文件头 */
-function buildCombinedDiff(plans: PatchPlan[]): { diff: DiffDisclosure; truncated: boolean } {
+/** 合并各文件 diff 供确认弹窗展示，并补上 buildUnifiedDiff 不产出的文件头 */
+function buildCombinedDiff(plans: PatchPlan[]): DiffDisclosure {
   const parts: string[] = []
   let truncated = false
   for (const p of plans) {
@@ -210,5 +202,5 @@ function buildCombinedDiff(plans: PatchPlan[]): { diff: DiffDisclosure; truncate
     parts.push(`--- ${p.filePath}`, `+++ ${p.filePath}`, single.content)
     if (single.truncated) truncated = true
   }
-  return { diff: { content: parts.join('\n'), truncated }, truncated }
+  return { content: parts.join('\n'), truncated }
 }

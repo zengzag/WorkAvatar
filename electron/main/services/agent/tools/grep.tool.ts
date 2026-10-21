@@ -11,6 +11,19 @@ const MAX_RESULTS_LIMIT = 1000
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 /** 候选文件数上限：防止在巨大目录树上枚举失控 */
 const MAX_CANDIDATE_FILES = 20000
+/** 单行预览字节上限：压缩后的 JS / 单行 JSON 不应整段进入上下文 */
+const MAX_LINE_PREVIEW_BYTES = 2000
+/** 单次检索输出的总字节上限 */
+const MAX_OUTPUT_BYTES = 256 * 1024
+
+/** 按字节截断单行预览（保留 UTF-8 字符边界） */
+function truncateLinePreview(text: string): string {
+  if (Buffer.byteLength(text, 'utf8') <= MAX_LINE_PREVIEW_BYTES) return text
+  let cut = Buffer.from(text, 'utf8').subarray(0, MAX_LINE_PREVIEW_BYTES).toString('utf-8')
+  // 截断点可能落在多字节字符中间，去掉不完整的替换字符
+  if (cut.endsWith('\uFFFD')) cut = cut.slice(0, -1)
+  return `${cut}… (该行超过 ${MAX_LINE_PREVIEW_BYTES} 字节已截断)`
+}
 
 interface GrepLine {
   lineNo: number
@@ -31,6 +44,7 @@ export const grepTool: ToolDefinition = {
 - glob：可选文件过滤模式（支持 * ? [abc] 与 **，如 "**/*.ts"、"src/**/*.test.ts"）；不传则搜索全部文本文件。
 - ignore_case：忽略大小写（默认false）；context_lines：匹配行上下各展示几行（0-5，默认0，上下文行以 "路径-行号- 内容" 呈现）。
 - 自动跳过 node_modules / .git / dist 等重目录，以及二进制文件与超过 2MB 的文件。
+- 单行预览超过 2000 字节会截断，单次输出超过 256KB 会停止追加并提示。
 - 最多返回 max_results 处匹配，超限会在末尾提示。`,
   parameters: {
     type: 'object',
@@ -151,11 +165,20 @@ async function grepFiles(args: any) {
   ]
 
   const body: string[] = []
+  let bodyBytes = 0
+  let outputCapped = false
   for (const g of groups) {
     const display = relativeDisplayPath(displayBase, g.file)
     for (const l of g.lines) {
-      body.push(l.match ? `${display}:${l.lineNo}: ${l.text}` : `${display}-${l.lineNo}- ${l.text}`)
+      const line = l.match
+        ? `${display}:${l.lineNo}: ${truncateLinePreview(l.text)}`
+        : `${display}-${l.lineNo}- ${truncateLinePreview(l.text)}`
+      const bytes = Buffer.byteLength(line, 'utf8') + 1
+      if (bodyBytes + bytes > MAX_OUTPUT_BYTES) { outputCapped = true; break }
+      bodyBytes += bytes
+      body.push(line)
     }
+    if (outputCapped) break
   }
   if (body.length === 0) body.push('（未找到匹配）')
 
@@ -163,6 +186,7 @@ async function grepFiles(args: any) {
   if (skippedLarge > 0) notes.push(`跳过 ${skippedLarge} 个超过 2MB 的文件`)
   if (skippedBinary > 0) notes.push(`跳过 ${skippedBinary} 个二进制文件`)
   if (truncated) notes.push(`结果不完整：请缩小 path/glob 范围，或提高 max_results（当前 ${maxResults}）`)
+  if (outputCapped) notes.push(`输出已达 ${MAX_OUTPUT_BYTES / 1024}KB 上限，请缩小 path/glob 范围或提高 pattern 精确度`)
   if (notes.length > 0) body.push(`… ${notes.join('；')}`)
 
   return { success: true, output: [...header, ...body].join('\n') }

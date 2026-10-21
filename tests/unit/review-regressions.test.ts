@@ -37,7 +37,44 @@ describe('file_read 边界（空文件不再报越界）', () => {
       fs.writeFileSync(f, 'hello', 'utf-8')
       const res: any = await fileReadTool.handler({ path: f, offset: 100 })
       expect(res.success).toBe(false)
-      expect(String(res.error)).toContain('超出文件总字符数')
+      expect(String(res.error)).toContain('超出文件总行数')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('offset/limit 按行分页，footer 给出下一段行号', async () => {
+    const { fileReadTool } = await import('../../../electron/main/services/agent/tools/fs-tools')
+    const dir = makeTempDir()
+    try {
+      const f = path.join(dir, 'p.txt')
+      fs.writeFileSync(f, 'l1\nl2\nl3\nl4', 'utf-8')
+      const res: any = await fileReadTool.handler({ path: f, offset: 2, limit: 2 })
+      expect(res.success).toBe(true)
+      expect(String(res.output)).toContain('2| l2')
+      expect(String(res.output)).toContain('3| l3')
+      expect(String(res.output)).not.toContain('1| l1')
+      expect(String(res.output)).not.toContain('4| l4')
+      expect(String(res.output)).toContain('使用 offset=4 继续读取')
+
+      const tail: any = await fileReadTool.handler({ path: f, offset: 4 })
+      expect(String(tail.output)).toContain('4| l4')
+      expect(String(tail.output)).toContain('文件结束 — 共 4 行')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('超长行按 2000 字符截断并标记', async () => {
+    const { fileReadTool } = await import('../../../electron/main/services/agent/tools/fs-tools')
+    const dir = makeTempDir()
+    try {
+      const f = path.join(dir, 'long.txt')
+      fs.writeFileSync(f, `${'x'.repeat(3000)}\nnext\n`, 'utf-8')
+      const res: any = await fileReadTool.handler({ path: f })
+      expect(res.success).toBe(true)
+      expect(String(res.output)).toContain('该行超过 2000 字符已截断')
+      expect(String(res.output)).toContain('2| next')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

@@ -208,6 +208,15 @@ describe('agent/tools/grep', () => {
     })
   })
 
+  it('超长单行按 2000 字节截断并标记', async () => {
+    seed(ws, 'min.js', `${'a'.repeat(5000)}TARGET\n`)
+    await withWorkspace(ws, 'gr-8', async () => {
+      const res = await grep({ pattern: 'TARGET' })
+      expect(res.output).toContain('该行超过 2000 字节已截断')
+      expect(Buffer.byteLength(String(res.output), 'utf8')).toBeLessThan(5000)
+    })
+  })
+
   it('工具元信息：常驻、只读、pattern 必填', () => {
     expect(grepTool.onDemand).toBe(false)
     expect(grepTool.permission).toBe('safe')
@@ -221,7 +230,7 @@ describe('agent/tools/files-edit', () => {
   beforeEach(() => { ws = makeTemp('wa-ap-') })
   afterEach(() => { fs.rmSync(ws, { recursive: true, force: true }) })
 
-  it('一次修改多个文件，合并 diff 带文件头', async () => {
+  it('一次修改多个文件，结果只回写入摘要（diff 仅供确认弹窗）', async () => {
     const a = seed(ws, 'src/a.ts', 'const a = 1\n')
     const b = seed(ws, 'src/b.ts', 'const b = 2\n')
 
@@ -234,8 +243,9 @@ describe('agent/tools/files-edit', () => {
       })
       expect(res.success, res.error).toBe(true)
       expect(res.output).toContain('共 2 个文件，已写入 2 个')
-      expect(res.output).toContain(`--- ${a}`)
-      expect(res.output).toContain(`+++ ${b}`)
+      // diff 不再进入模型上下文（避免长期占用 token）
+      expect(res.output).not.toContain('--- ')
+      expect(res.output).not.toContain('```diff')
     })
     expect(fs.readFileSync(a, 'utf-8')).toBe('const a = 10\n')
     expect(fs.readFileSync(b, 'utf-8')).toBe('const b = 20\n')
