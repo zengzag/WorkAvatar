@@ -320,10 +320,10 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   height: 100% !important;
 }
 
-/* 插件贡献的消息快捷操作图标：统一到 12px，与相邻 antd 图标视觉一致 */
+/* 插件贡献的消息快捷操作图标：插件 SVG 的图形在 viewBox 内留有留白，13px 才与相邻 antd 图标视觉等大 */
 .dm-plugin-action-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
 }
 
 /* 工具调用折叠框：容器较窄时隐藏次要信息（工具名括号/耗时/输出字符数），

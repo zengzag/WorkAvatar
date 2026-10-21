@@ -1,11 +1,10 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, useLayoutEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
-import FileChangesModal from './FileChangesModal'
 import EmployeeAvatar from '../common/EmployeeAvatar'
 import type { Employee, ThinkingLevel } from '../../types'
 
@@ -947,7 +946,6 @@ const ChatInput: React.FC<{
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
   const [showKbPicker, setShowKbPicker] = useState(false)
-  const [showFileChanges, setShowFileChanges] = useState(false)
   const [showModePicker, setShowModePicker] = useState(false)
 
   const modelTags = useMemo(() => selectedModels.map((sel, i) => {
@@ -1140,6 +1138,31 @@ const ChatInput: React.FC<{
     }
     return { visible: false, levels: [] as ThinkingLevel[], effortSupported: false }
   }, [defaultProviderId, providers])
+
+  const thinkingLevelLabel = useCallback((level?: ThinkingLevel) => t(
+    !level
+      ? 'workbench.thinkingLevelOff'
+      : level === 'low' ? 'workbench.thinkingLevelLow'
+      : level === 'medium' ? 'workbench.thinkingLevelMedium'
+      : 'workbench.thinkingLevelHigh'
+  ), [t])
+
+  const thinkingTrigger = (
+    <Tooltip title={thinkingCapability.effortSupported
+      ? `${t('workbench.thinkingLevel')}: ${thinkingLevelLabel(enableThinking)}`
+      : enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+      <Button type="text" size="small"
+        onClick={onThinkingChange && !thinkingCapability.effortSupported
+          ? () => onThinkingChange(enableThinking ? false : 'high')
+          : undefined}
+        style={{
+          color: token.colorTextSecondary,
+          padding: '0 4px 0 0', height: 18, minWidth: 18, borderRadius: 4,
+        }}>
+        {enableThinking ? <BulbFilled style={{ fontSize: 12 }} /> : <BulbOutlined style={{ fontSize: 12 }} />}
+      </Button>
+    </Tooltip>
+  )
 
   const filteredDefaultModels = useMemo(() => {
     const search = defaultModelSearch.toLowerCase()
@@ -1630,7 +1653,7 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
+      <div style={{ position: 'relative', display: 'flex', gap: 12, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1760,14 +1783,6 @@ const ChatInput: React.FC<{
                   onClick={() => fileInputRef.current?.click()}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Tooltip>
-              {/* 文件改动与回滚：仅在已绑定任务（会话）时可用 */}
-              {conversationId && (
-                <Tooltip title={t('fileChanges.entryTooltip')}>
-                  <Button type="text" size="small" icon={<HistoryOutlined style={{ fontSize: 12 }} />}
-                    onClick={() => setShowFileChanges(true)}
-                    style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
-                </Tooltip>
-              )}
               {/* 插件视图注入点：对话输入框工具栏 */}
               <PluginViewSlot view="chat.toolbar" />
               {!hideToolbar && (
@@ -1810,7 +1825,7 @@ const ChatInput: React.FC<{
                 </>
               )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
               {onDefaultModelChange && (
                 <Popover
                   content={defaultModelPickerContent}
@@ -1825,30 +1840,29 @@ const ChatInput: React.FC<{
                   open={showDefaultModelPicker}
                 >
                   <Button type="text" size="small"
-                    style={{ color: defaultModelLabel ? token.colorPrimary : token.colorTextQuaternary, padding: '0 6px', height: 20, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {defaultModelLabel ? (
-                      <span style={{ fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{defaultModelLabel}</span>
-                    ) : (
-                      <RobotOutlined style={{ fontSize: 12 }} />
-                    )}
+                    title={defaultModelLabel || undefined}
+                    style={{
+                      color: token.colorTextSecondary,
+                      padding: '0 5px', height: 18, minWidth: 18, borderRadius: 4,
+                    }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11 }}>
+                      {defaultModelLabel ? (
+                        <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{defaultModelLabel}</span>
+                      ) : (
+                        <RobotOutlined style={{ fontSize: 11 }} />
+                      )}
+                    </span>
                   </Button>
                 </Popover>
               )}
               {onThinkingChange && thinkingCapability.visible && (
                 thinkingCapability.effortSupported ? (
                   <Dropdown trigger={['click']} placement="topRight" menu={{
-                    items: thinkingCapability.levels.map(level => {
-                      const labelKey = level === false
-                        ? 'workbench.thinkingLevelOff'
-                        : level === 'low' ? 'workbench.thinkingLevelLow'
-                        : level === 'medium' ? 'workbench.thinkingLevelMedium'
-                        : 'workbench.thinkingLevelHigh'
-                      return {
-                        key: String(level),
-                        label: <span style={{ fontSize: 12 }}>{t(labelKey)}</span>,
-                        icon: enableThinking === level ? <CheckOutlined style={{ fontSize: 11 }} /> : <span style={{ display: 'inline-block', width: 11 }} />,
-                      }
-                    }),
+                    items: thinkingCapability.levels.map(level => ({
+                      key: String(level),
+                      label: <span style={{ fontSize: 12 }}>{thinkingLevelLabel(level)}</span>,
+                      icon: enableThinking === level ? <CheckOutlined style={{ fontSize: 11 }} /> : <span style={{ display: 'inline-block', width: 11 }} />,
+                    })),
                     onClick: ({ key }) => {
                       const next = key === 'false' ? false : key as ThinkingLevel
                       onThinkingChange(next)
@@ -1856,26 +1870,9 @@ const ChatInput: React.FC<{
                     selectable: true,
                     selectedKeys: [String(enableThinking)],
                   }}>
-                    <Tooltip title={t('workbench.thinkingLevel')}>
-                      <Button type="text" size="small"
-                        icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                        style={{
-                          color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
-                          padding: '0 2px', height: 20, minWidth: 20,
-                        }} />
-                    </Tooltip>
+                    {thinkingTrigger}
                   </Dropdown>
-                ) : (
-                  <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
-                    <Button type="text" size="small"
-                      icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                      onClick={() => onThinkingChange(enableThinking ? false : 'high')}
-                      style={{
-                        color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
-                        padding: '0 2px', height: 20, minWidth: 20,
-                      }} />
-                  </Tooltip>
-                )
+                ) : thinkingTrigger
               )}
             </div>
           </div>
@@ -1929,11 +1926,6 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <FileChangesModal
-        open={showFileChanges}
-        conversationId={conversationId}
-        onClose={() => setShowFileChanges(false)}
-      />
     </div>
   )
 }

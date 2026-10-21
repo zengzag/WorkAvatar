@@ -1251,11 +1251,14 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
             content: userContent,
           },
         ],
-        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 1000 },
+        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 10000 },
       })
 
       if (result.success && result.content) {
-        const title = result.content.trim().replace(/["""'']/g, '').substring(0, 20)
+        const raw = result.content.trim().replace(/["""'']/g, '')
+        // 中文标题按 20 字截断，英文按 60 字符截断（约 10 个单词）
+        const maxLength = /[\u4e00-\u9fa5]/.test(raw) ? 20 : 60
+        const title = raw.substring(0, maxLength).trim()
         if (title) {
           await window.electronAPI.conversation.update({
             id: conversationId,

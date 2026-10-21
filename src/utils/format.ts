@@ -34,6 +34,9 @@ export function isColorDark(hex: string): boolean {
   return luminance < 0.5
 }
 
+const formatClock = (date: Date): string =>
+  `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+
 /**
  * 格式化消息时间戳，参考主流聊天软件的时间展示规则：
  * - 1分钟内：刚刚
@@ -48,9 +51,7 @@ export function formatMessageTime(timestamp: number, t: (key: string, options?: 
   const diffMs = now.getTime() - date.getTime()
   const diffMin = Math.floor(diffMs / 60000)
 
-  const hours = date.getHours().toString().padStart(2, '0')
-  const minutes = date.getMinutes().toString().padStart(2, '0')
-  const timeStr = `${hours}:${minutes}`
+  const timeStr = formatClock(date)
 
   // 1分钟内显示"刚刚"；仅对已过去的时间生效，未来时间戳（diffMs < 0）按日期展示，避免与刚发出的消息混淆
   if (diffMs >= 0 && diffMin < 1) {
@@ -79,6 +80,20 @@ export function formatMessageTime(timestamp: number, t: (key: string, options?: 
   }
 
   return `${t('workbench.yearMonthDay', { year, month, day })} ${timeStr}`
+}
+
+/**
+ * 消息页脚的绝对时间：今年显示 M月D日 HH:mm，跨年补年份
+ */
+export function formatMessageDateTime(timestamp: number, t: (key: string, options?: Record<string, any>) => string): string {
+  const date = new Date(timestamp)
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  const year = date.getFullYear()
+  const dayLabel = year === new Date().getFullYear()
+    ? t('workbench.monthDay', { month, day })
+    : t('workbench.yearMonthDay', { year, month, day })
+  return `${dayLabel} ${formatClock(date)}`
 }
 
 /**

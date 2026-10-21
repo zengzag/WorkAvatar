@@ -28,6 +28,7 @@ import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import { markdownComponents } from './markdown-components'
 import { sanitizePluginIconHtml } from '../../utils/sanitize-icon'
+import { formatMessageDateTime } from '../../utils/format'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
 import SubTaskDrawer from './SubTaskDrawer'
@@ -243,6 +244,9 @@ const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
   )
 }
 
+const CONTEXT_RING_RADIUS = 6
+const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS
+
 const ContextUsageInline: React.FC<{
   stats?: any
   isCompacting: boolean
@@ -254,7 +258,7 @@ const ContextUsageInline: React.FC<{
   const maxTokens = stats?.maxTokens ?? 0
   const percent = maxTokens > 0 ? Math.round((tokenCount / maxTokens) * 100) : 0
 
-  const percentColor = percent > 80 ? token.colorError : percent > 50 ? token.colorWarning : token.colorTextTertiary
+  const percentColor = percent > 80 ? token.colorError : percent > 50 ? token.colorWarning : token.colorTextSecondary
 
   return (
     <Tooltip
@@ -279,12 +283,31 @@ const ContextUsageInline: React.FC<{
       <div style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 5,
         cursor: 'pointer',
       }}>
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {t('workbench.contextUsage', { defaultValue: '上下文' })}:
-        </Text>
+        <svg
+          width={16}
+          height={16}
+          viewBox="0 0 16 16"
+          style={{ display: 'block', flexShrink: 0 }}
+          aria-label={`${t('workbench.contextUsage')}: ${percent}%`}
+        >
+          <circle cx={8} cy={8} r={CONTEXT_RING_RADIUS} fill="none" stroke={token.colorFillSecondary} strokeWidth={2} />
+          {percent > 0 && (
+            <circle
+              cx={8}
+              cy={8}
+              r={CONTEXT_RING_RADIUS}
+              fill="none"
+              stroke={percentColor}
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeDasharray={`${(Math.min(percent, 100) / 100) * CONTEXT_RING_CIRCUMFERENCE} ${CONTEXT_RING_CIRCUMFERENCE}`}
+              transform="rotate(-90 8 8)"
+            />
+          )}
+        </svg>
         <Text style={{ fontSize: 11, color: percentColor, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
           {percent}%
         </Text>
@@ -712,6 +735,9 @@ const MessageBubble: React.FC<{
                     onCompact={onCompact}
                   />
                 )}
+                <Text style={{ fontSize: 11, color: token.colorTextTertiary, fontVariantNumeric: 'tabular-nums' }}>
+                  {formatMessageDateTime(msg.timestamp, t)}
+                </Text>
               </div>
             )}
           </div>
