@@ -7,7 +7,14 @@ import DatabaseService from './database.service'
 import PathService from './path.service'
 import EmployeeRegistryService from './employee-registry.service'
 import SkillRegistryService from './skill-registry.service'
-import { generateId, generateShortId, extractMessagePreview, moveToTrash } from './common-utils'
+import { generateId, generateShortId, moveToTrash } from './common-utils'
+import {
+  buildConversationFtsMatch,
+  buildConversationLikeTerms,
+  buildConversationPreview,
+  buildConversationSnippet,
+  segmentConversationText,
+} from './conversation-fts'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
@@ -418,10 +425,18 @@ class WorkspaceManagerService {
 
   private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messagesJson: string): void {
     this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
-    const preview = extractMessagePreview(messagesJson)
+    // 索引列存 jieba 分词结果（unicode61 无法切分中文），content_raw 保留原文供结果片段展示
+    const rawPreview = buildConversationPreview(messagesJson)
     this.db.getDb().prepare(
-      'INSERT INTO conversations_fts (title, summary, content_preview, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?)'
-    ).run(title || '', summary || '', preview, id, employeeId)
+      'INSERT INTO conversations_fts (title, summary, content_preview, content_raw, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(
+      segmentConversationText(title || ''),
+      segmentConversationText(summary || ''),
+      segmentConversationText(rawPreview),
+      rawPreview,
+      id,
+      employeeId
+    )
   }
 
   updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }): boolean {
@@ -607,8 +622,9 @@ class WorkspaceManagerService {
   /**
    * 跨智能体检索历史对话（FTS5 优先，无结果降级 LIKE）
    * - 支持 employeeIds 过滤（为空则搜索全部员工）
-   * - snippet 来自 conversations_fts 的 content_preview 列，高亮匹配片段
-   * - 排序：标题相似度优先（精确 > 开头 > 包含），其次内容命中次数，最后时间降序
+   * - 索引/查询两侧统一 jieba 预分词，中文按词命中（unicode61 无法切分中文）
+   * - snippet 由原始预览 content_raw 在应用层截取并高亮
+   * - 排序：标题相似度优先（精确 > 开头 > 包含），其次 BM25/内容命中次数，最后时间降序
    */
   searchConversationsGlobal(params: {
     query: string
@@ -629,7 +645,11 @@ class WorkspaceManagerService {
 
     const limit = Math.min(Math.max(params.limit ?? 20, 1), 50)
     const employeeIds = params.employeeIds?.filter(Boolean) ?? []
-    const ftsQuery = buildFtsQuery(query)
+    // 先按"全部词命中"精确检索，无结果再放宽为"任一词命中"，避免长查询直接零召回
+    const ftsQueries = Array.from(new Set([
+      buildConversationFtsMatch(query, 'all'),
+      buildConversationFtsMatch(query, 'any'),
+    ].filter((q): q is string => !!q)))
     // 去空格版本，用于标题/内容的子串匹配（用户用空格分词，不应把空格当作必须出现的字符）
     const queryNoSpace = query.replace(/\s+/g, '')
     const titleLikePattern = `%${queryNoSpace.replace(/[%_]/g, (m) => '\\' + m)}%`
@@ -644,9 +664,11 @@ class WorkspaceManagerService {
     // 标题匹配参数顺序：精确匹配 queryNoSpace / 开头匹配 queryNoSpace% / 包含匹配 %queryNoSpace%
     const titleStartPattern = `${queryNoSpace.replace(/[%_]/g, (m) => '\\' + m)}%`
 
-    // Phase 1: FTS5 隐式 AND 匹配（rank 已包含内容相关度，叠加标题命中加成）
+    // Phase 1: FTS5 匹配（索引侧 jieba 预分词 + 查询侧同分词器，AND 优先 / OR 兜底，
+    // BM25 让命中词更多的对话排前面，再叠加标题命中加成）
     let results: any[] = []
-    if (ftsQuery) {
+    for (const ftsQuery of ftsQueries) {
+      if (results.length > 0) break
       const employeePlaceholders = employeeIds.length > 0
         ? `AND c.employee_id IN (${employeeIds.map(() => '?').join(',')})`
         : ''
@@ -658,7 +680,7 @@ class WorkspaceManagerService {
         SELECT
           c.id, c.employee_id, e.name as employee_name,
           c.title, c.summary, c.last_message_at, c.message_count,
-          snippet(conversations_fts, 2, '<highlight>', '</highlight>', '...', 30) as preview_snippet,
+          COALESCE(f.content_raw, '') as preview_raw,
           ${titleScoreExpr} as title_score
         FROM conversations_fts f
         JOIN conversations c ON c.id = f.conversation_id
@@ -676,12 +698,12 @@ class WorkspaceManagerService {
       }
     }
 
-    // Phase 2: FTS 无结果降级 LIKE（逐 token AND）
-    // 叠加标题分 + content_preview 中查询出现次数，实现内容相似度排序
+    // Phase 2: FTS 无结果降级 LIKE（按 jieba 词粒度 AND，覆盖词典未收录的子串）
+    // 叠加标题分 + content_raw 中查询出现次数，实现内容相似度排序
     if (results.length === 0) {
-      const likeTokens = query.split(/\s+/).filter((t) => t.length > 0)
+      const likeTokens = buildConversationLikeTerms(query)
       if (likeTokens.length > 0) {
-        const tokenCond = `(c.title LIKE ? ESCAPE '\\' OR COALESCE(c.summary, '') LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM conversations_fts f WHERE f.conversation_id = c.id AND f.content_preview LIKE ? ESCAPE '\\'))`
+        const tokenCond = `(c.title LIKE ? ESCAPE '\\' OR COALESCE(c.summary, '') LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM conversations_fts f WHERE f.conversation_id = c.id AND f.content_raw LIKE ? ESCAPE '\\'))`
         const andClause = likeTokens.map(() => tokenCond).join(' AND ')
         const tokenParams = likeTokens.flatMap((t) => {
           const p = `%${t.replace(/[%_]/g, (m) => '\\' + m)}%`
@@ -693,9 +715,9 @@ class WorkspaceManagerService {
           : ''
         const employeeParams = employeeIds
 
-        // content_preview 中 queryNoSpace 出现次数（LENGTH 差值法）
+        // content_raw 中 queryNoSpace 出现次数（LENGTH 差值法）
         const contentHitsExpr = `COALESCE((
-          SELECT (LENGTH(f.content_preview) - LENGTH(REPLACE(LOWER(f.content_preview), LOWER(?), ''))) / MAX(LENGTH(?), 1)
+          SELECT (LENGTH(f.content_raw) - LENGTH(REPLACE(LOWER(f.content_raw), LOWER(?), ''))) / MAX(LENGTH(?), 1)
           FROM conversations_fts f WHERE f.conversation_id = c.id
         ), 0)`
 
@@ -703,7 +725,7 @@ class WorkspaceManagerService {
           SELECT
             c.id, c.employee_id, e.name as employee_name,
             c.title, c.summary, c.last_message_at, c.message_count,
-            '' as preview_snippet,
+            COALESCE((SELECT f.content_raw FROM conversations_fts f WHERE f.conversation_id = c.id), '') as preview_raw,
             ${titleScoreExpr} as title_score,
             ${contentHitsExpr} as content_hits
           FROM conversations c
@@ -729,35 +751,11 @@ class WorkspaceManagerService {
       employeeName: r.employee_name || '',
       title: r.title || '',
       summary: r.summary || '',
-      previewSnippet: r.preview_snippet || r.summary || '',
+      previewSnippet: buildConversationSnippet(r.preview_raw || '', query) || r.summary || '',
       lastMessageAt: r.last_message_at,
       messageCount: r.message_count || 0,
     }))
   }
-}
-
-/**
- * 构建 FTS5 MATCH 表达式：
- * - 英文 token 追加 * 实现前缀匹配
- * - 中文 token 逐字拆分后每字追加 * 前缀匹配：unicode61 将连续汉字归并为单 token，
- *   仅逐字拆分（要求存在"知/识/库"三个独立完整 token）几乎永不命中；
- *   每字加 * 后按"以该字开头"匹配 token，可命中完整词组 token
- * - 仅保留字母/数字/CJK，剔除全部 FTS5 语法字符（: , ; { } [ ] < > ~ & | ! " * ^ - 等），
- *   防止含标点查询触发 fts5 syntax error
- */
-export function buildFtsQuery(query: string): string {
-  const cleaned = query.replace(/[^\p{L}\p{N}\s]/gu, '').trim()
-  if (!cleaned) return ''
-  const tokens = cleaned.split(/\s+/).filter((t) => t.length > 0)
-  return tokens
-    .map((tok) => {
-      if (/^[a-zA-Z0-9]+$/.test(tok) && tok.length >= 2) {
-        return `${tok}*`
-      }
-      // 中文逐字拆分，每字追加 * 前缀匹配
-      return tok.split('').map((ch) => `${ch}*`).join(' ')
-    })
-    .join(' ')
 }
 
 export default WorkspaceManagerService

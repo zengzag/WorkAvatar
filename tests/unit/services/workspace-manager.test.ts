@@ -111,7 +111,7 @@ const mockState = vi.hoisted(() => {
         return { run: (id: string) => { const i = ftsRows.findIndex(r => r.conversation_id === id); if (i >= 0) ftsRows.splice(i, 1); return { changes: 1 } } }
       }
       if (s.startsWith('INSERT INTO conversations_fts')) {
-        return { run: (...a: any[]) => { ftsRows.push({ title: a[0], summary: a[1], content_preview: a[2], conversation_id: a[3], employee_id: a[4] }); return { changes: 1 } } }
+        return { run: (...a: any[]) => { ftsRows.push({ title: a[0], summary: a[1], content_preview: a[2], content_raw: a[3], conversation_id: a[4], employee_id: a[5] }); return { changes: 1 } } }
       }
       if (s === 'UPDATE conversations_fts SET employee_id = ? WHERE employee_id = ?') {
         return { run: () => ({ changes: 1 }) }
@@ -164,7 +164,7 @@ const mockState = vi.hoisted(() => {
         return { run: (id: string) => { const i = ftsRows.findIndex(r => r.conversation_id === id); if (i >= 0) ftsRows.splice(i, 1); return { changes: 1 } } }
       }
       if (s.startsWith('INSERT INTO conversations_fts')) {
-        return { run: (...a: any[]) => { ftsRows.push({ title: a[0], summary: a[1], content_preview: a[2], conversation_id: a[3], employee_id: a[4] }); return { changes: 1 } } }
+        return { run: (...a: any[]) => { ftsRows.push({ title: a[0], summary: a[1], content_preview: a[2], content_raw: a[3], conversation_id: a[4], employee_id: a[5] }); return { changes: 1 } } }
       }
       if (s === 'UPDATE conversations_fts SET employee_id = ? WHERE employee_id = ?') {
         return { run: () => ({ changes: 1 }) }

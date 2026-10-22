@@ -2,8 +2,12 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import PathService from './path.service'
 import { createLogger } from './logger'
-import { extractMessagePreview } from './common-utils'
 import { migrateMemorySchema } from './employee-memory-migrations'
+import {
+  ensureConversationFts,
+  buildConversationPreview,
+  segmentConversationText,
+} from './conversation-fts'
 
 const logger = createLogger('DB')
 
@@ -92,7 +96,7 @@ class DatabaseService {
       )
       const trimTx = this.db.transaction(() => {
         const ftsUpdate = this.db.prepare(
-          `UPDATE conversations_fts SET content_preview = ? WHERE conversation_id = ?`
+          `UPDATE conversations_fts SET content_preview = ?, content_raw = ? WHERE conversation_id = ?`
         )
         for (const c of oldConvos) {
           try {
@@ -101,8 +105,9 @@ class DatabaseService {
               const trimmedMessages = messages.slice(-50)
               const trimmedJson = JSON.stringify(trimmedMessages)
               updateStmt.run(trimmedJson, trimmedMessages.length, c.id)
-              // 同步 FTS 摘要预览，避免搜索结果展示与实际内容永久不一致
-              ftsUpdate.run(extractMessagePreview(trimmedJson), c.id)
+              // 同步 FTS 索引，避免搜索结果展示与实际内容永久不一致（索引列存分词结果）
+              const rawPreview = buildConversationPreview(trimmedJson)
+              ftsUpdate.run(segmentConversationText(rawPreview), rawPreview, c.id)
               trimmed++
             }
           } catch { /* skip invalid JSON */ }
@@ -432,17 +437,10 @@ class DatabaseService {
         tokenize='unicode61',
         prefix='2,3'
       );
-
-      CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
-        title,
-        summary,
-        content_preview,
-        conversation_id UNINDEXED,
-        employee_id UNINDEXED,
-        tokenize='unicode61',
-        prefix='2,3'
-      );
     `)
+
+    // 对话 FTS 表由 conversation-fts 统一建表/迁移（索引侧 jieba 预分词 + 原始预览列）
+    ensureConversationFts(this.db)
 
     // 文件改动快照功能已移除：清理旧版遗留表（仅存回滚缓存，不再读取）
     this.db.exec('DROP TABLE IF EXISTS file_snapshots')

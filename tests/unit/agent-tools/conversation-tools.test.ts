@@ -387,26 +387,34 @@ describe('agent/tools/conversation-search / search_conversations', () => {
     expect(searchTool()({ query: '   ' })).toMatchObject({ success: false, error: '查询不能为空' })
   })
 
-  it('FTS 查询：英文 token 加前缀通配符，中文不加', () => {
-    installDb({ ftsRows: [{ id: 'c1', title: 'T', summary: 'S', last_message_at: 1750000000, message_count: 2, preview_snippet: '片段' }] })
+  it('FTS 查询：中文按 jieba 分词后 AND 连接，英文小写化', () => {
+    installDb({ ftsRows: [{ id: 'c1', title: 'T', summary: 'S', last_message_at: 1750000000, message_count: 2, preview_raw: '这段是片段' }] })
     const res = searchTool()({ query: 'hello 知识库 a' })
     const ftsCall = lastCall(/conversations_fts MATCH/)!
-    // 空白拆分 → hello* / 知识库 / a（单字符英文不加 *）
-    expect(ftsCall.args[1]).toBe('hello* 知识库 a')
+    // jieba 搜索引擎模式：hello / 知识 / 知识库（单字符英文 a 被过滤）
+    expect(ftsCall.args[1]).toBe('"hello" AND "知识" AND "知识库"')
+    expect(ftsCall.args[2]).toBe(3)
     expect(res.success).toBe(true)
     expect(res.output).toContain('找到 1 条相关历史对话')
-    expect(res.output).toContain('相关片段: 片段')
+    expect(res.output).toContain('相关片段: 这段是片段')
+  })
+
+  it('AND 无结果时放宽为 OR 再检一次', () => {
+    installDb({ ftsRows: [] })
+    searchTool()({ query: '保密协议' })
+    const calls = dbState.calls.filter(c => /conversations_fts MATCH/.test(c.sql))
+    expect(calls.map(c => c.args[1])).toEqual(['"保密" AND "协议"', '"保密" OR "协议"'])
   })
 
   it('FTS 查询清洗特殊字符（" * ( ) ^ + -）后再分词', () => {
     installDb({ ftsRows: [{ id: 'c1', title: 'T', message_count: 1 }] })
     searchTool()({ query: '"a*b(c)^d+e-f"' })
     // 特殊字符被移除后字母相连 → 单个 token
-    expect(lastCall(/conversations_fts MATCH/)!.args[1]).toBe('abcdef*')
+    expect(lastCall(/conversations_fts MATCH/)!.args[1]).toBe('"abcdef"')
   })
 
   it('清洗后为空时跳过 FTS，直接走 LIKE', () => {
-    installDb({ rows: [{ id: 'c1', title: '标题', summary: null, message_count: 1, last_message_at: 1750000000, preview_snippet: '' }] })
+    installDb({ rows: [{ id: 'c1', title: '标题', summary: null, message_count: 1, last_message_at: 1750000000, preview_raw: '' }] })
     const res = searchTool()({ query: '***' })
     expect(lastCall(/conversations_fts MATCH/)).toBeUndefined()
     expect(lastCall(/ESCAPE/)!.args[1]).toBe('%***%')
@@ -415,11 +423,11 @@ describe('agent/tools/conversation-search / search_conversations', () => {
   })
 
   it('LIKE 降级时转义 % 与 _ 通配符', () => {
-    installDb({ rows: [{ id: 'c1', title: '50% 增长', summary: null, message_count: 1, last_message_at: 1750000000, preview_snippet: '' }] })
+    installDb({ rows: [{ id: 'c1', title: '50% 增长', summary: null, message_count: 1, last_message_at: 1750000000, preview_raw: '' }] })
     const res = searchTool()({ query: '50%_' })
     // FTS 仍会先尝试（% 与 _ 不在清洗字符集内）
-    expect(lastCall(/conversations_fts MATCH/)!.args[1]).toBe('50%_')
-    expect(lastCall(/ESCAPE/)!.args[1]).toBe('%50\\%\\_%')
+    expect(lastCall(/conversations_fts MATCH/)!.args[1]).toBe('"50%"')
+    expect(lastCall(/ESCAPE/)!.args[1]).toBe('%50\\%%')
     expect(res.success).toBe(true)
     expect(res.output).toContain('50% 增长')
   })
