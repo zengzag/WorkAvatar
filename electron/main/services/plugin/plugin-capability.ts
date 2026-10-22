@@ -139,6 +139,30 @@ export function getWebviewOrigins(
   return cap.origins ?? []
 }
 
+/** 合法主机名：小写字母 / 数字 / 连字符，至少两段（不含协议、端口、路径、通配） */
+const WEBVIEW_HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
+
+/** 规范化运行时注册的主机名；非法返回 null（运行时只接受精确主机名，不允许通配） */
+export function normalizeWebviewHost(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const host = raw.trim().toLowerCase()
+  return WEBVIEW_HOST_RE.test(host) ? host : null
+}
+
+/** 校验插件是否被允许在运行时追加用户自定义站点域名 */
+export function canRegisterWebviewOrigins(
+  capabilities: PluginCapability[] | undefined
+): CapabilityCheck {
+  const cap = getCapability(capabilities, 'webview')
+  if (!cap || cap.domain !== 'webview') {
+    return { ok: false, reason: '未声明 webview 能力域' }
+  }
+  if (cap.allowUserOrigins !== true) {
+    return { ok: false, reason: '未声明 webview.allowUserOrigins，禁止运行时追加自定义站点域名' }
+  }
+  return { ok: true }
+}
+
 /**
  * 判断主机名是否命中单条白名单条目。
  * 支持精确匹配（`chat.deepseek.com`）与 `*.` 前缀通配（`*.doubao.com` 命中该域及其子域）。
@@ -270,9 +294,12 @@ export function validateCapabilities(
         break
       }
       case 'webview': {
-        const c = cap as { origins?: unknown }
+        const c = cap as { origins?: unknown; allowUserOrigins?: unknown }
         if (!Array.isArray(c.origins) || c.origins.length === 0) {
           return { ok: false, reason: 'webview 能力域必须声明非空 origins 数组' }
+        }
+        if (c.allowUserOrigins !== undefined && typeof c.allowUserOrigins !== 'boolean') {
+          return { ok: false, reason: 'webview 能力域 allowUserOrigins 必须是布尔值' }
         }
         for (const raw of c.origins) {
           if (typeof raw !== 'string' || !raw.trim()) {
@@ -282,7 +309,7 @@ export function validateCapabilities(
             ? raw.trim().toLowerCase().slice(2)
             : raw.trim().toLowerCase()
           // 仅允许主机名（不含协议 / 端口 / 路径），防止把整条 URL 塞进白名单
-          if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) {
+          if (!WEBVIEW_HOST_RE.test(host)) {
             return { ok: false, reason: `webview 能力域 origins 含非法主机名（仅允许主机名，不含协议/端口/路径）: ${raw}` }
           }
         }

@@ -47,6 +47,8 @@ import {
   validateCapabilities,
   getWebviewOrigins,
   matchWebviewOrigin,
+  canRegisterWebviewOrigins,
+  normalizeWebviewHost,
 } from './plugin-capability'
 import { createDataAccessService } from './plugin-data-access'
 import { createExecuteService } from './plugin-execute'
@@ -163,6 +165,8 @@ class PluginHostService {
   private contributions = new Map<string, CollectedContributions>()
   /** 本宿主注册的全局快捷键（pluginId → accelerators，退出/下线时按插件注销） */
   private registeredShortcuts = new Map<string, Set<string>>()
+  /** 插件运行时追加的内嵌网页主机名（pluginId → hosts，插件下线/禁用时清空） */
+  private runtimeWebviewOrigins = new Map<string, Set<string>>()
   /** 插件渲染端窗口集合（主窗口 + tab 独立窗口），broadcast 时遍历 */
   private targets = new Set<BrowserWindow>()
   /** 插件经 ctx.services.windows 创建的窗口（pluginId → 窗口集合，退出/禁用/下线时按插件回收） */
@@ -389,6 +393,7 @@ class PluginHostService {
       try { globalShortcut.unregister(acc) } catch { /* ignore */ }
     }
     this.registeredShortcuts.delete(id)
+    this.runtimeWebviewOrigins.delete(id)
     for (const win of this.pluginWindows.get(id) ?? []) {
       if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
     }
@@ -1005,7 +1010,7 @@ class PluginHostService {
               {
                 onChunk: (text: string) => callbacks?.onChunk?.(text),
                 onThought: (thought: string) => callbacks?.onThought?.(thought),
-                onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args }),
+                onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args, iteration: tc.iteration }),
                 onToolCallDelta: (delta: any) => callbacks?.onToolCallDelta?.(delta),
                 onToolResult: (tr: any) => callbacks?.onToolResult?.(tr),
                 onToolProgress: (p: any) => callbacks?.onToolProgress?.(p),
@@ -1058,7 +1063,7 @@ class PluginHostService {
             {
               onChunk: (text: string) => callbacks?.onChunk?.(text),
               onThought: (thought: string) => callbacks?.onThought?.(thought),
-              onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args }),
+              onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args, iteration: tc.iteration }),
               onToolCallDelta: (delta: any) => callbacks?.onToolCallDelta?.(delta),
               onToolResult: (tr: any) => callbacks?.onToolResult?.(tr),
               onToolProgress: (p: any) => callbacks?.onToolProgress?.(p),
@@ -1495,6 +1500,20 @@ class PluginHostService {
         },
       },
       services,
+      webview: {
+        allowOrigins: (hosts) => {
+          const check = canRegisterWebviewOrigins(manifest.capabilities)
+          if (!check.ok) throw new Error(check.reason)
+          if (!Array.isArray(hosts)) throw new Error('allowOrigins 参数必须是主机名数组')
+          const next = new Set<string>()
+          for (const raw of hosts) {
+            const host = normalizeWebviewHost(raw)
+            if (!host) throw new Error(`非法的内嵌站点主机名: ${String(raw)}`)
+            next.add(host)
+          }
+          this.runtimeWebviewOrigins.set(manifest.id, next)
+        },
+      },
       contributions: {
         registerAgentTools: (tools) => {
           for (const tool of tools) {
@@ -1980,6 +1999,10 @@ class PluginHostService {
     for (const record of this.records.values()) {
       if (!record.enabled || record.status === 'invalid') continue
       for (const origin of getWebviewOrigins(record.manifest.capabilities)) out.add(origin)
+    }
+    // 插件运行时追加的自定义站点域名（仅精确主机名；下线时已清理）
+    for (const hosts of this.runtimeWebviewOrigins.values()) {
+      for (const host of hosts) out.add(host)
     }
     return Array.from(out)
   }

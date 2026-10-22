@@ -96,7 +96,7 @@ A bundled **Plugin Development Assistant** lets a digital employee develop and i
 | **Data Model** | Design database schemas on a canvas with DBML import and export. Models can also be edited through conversation. |
 | **Document Editor** | Word-fidelity `.docx` editor with import / export, PDF export, and version snapshots. The AI assistant edits the open document directly — rewrite, replace, insert, delete, reorder, and adjust styles. Editor interface is in Chinese. |
 | **Task Templates** | Build multi-step workflows on a canvas — agent, review, condition, loop, parallel, and human nodes — with pass / fail gating and round limits. A bundled Template Designer employee can turn a written requirement into a runnable template. |
-| **AI Aggregator** | Open third-party AI websites such as Doubao and DeepSeek inside the app, in single-pane, dual-pane, or tabbed layouts, with isolated login state per site. Subject to each site's own terms of service. |
+| **AI Aggregator** | Open third-party AI websites such as Doubao and DeepSeek inside the app, in single-pane, dual-pane, or tabbed layouts, with isolated login state per site. Any custom HTTPS page can be added too. Subject to each site's own terms of service. |
 
 <div align="center">
   <table><tr>

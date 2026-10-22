@@ -27,6 +27,17 @@ export interface PluginIpc {
   broadcast(event: string, payload?: unknown): void
 }
 
+export interface PluginWebviewApi {
+  /**
+   * 声明本插件在运行时允许内嵌的主机名（如用户自定义网页的域名）。
+   *
+   * - 需 manifest `capabilities.webview.allowUserOrigins === true`，否则调用抛错；
+   * - 每项必须是精确主机名（不支持通配 / 协议 / 端口 / 路径），宿主恒按 https 放行；
+   * - 每次调用**整体替换**本插件的运行时白名单，插件下线 / 禁用时自动清空。
+   */
+  allowOrigins(hosts: string[]): void
+}
+
 export interface PluginContext {
   manifest: PluginManifest
   /** 宿主应用版本 */
@@ -36,6 +47,7 @@ export interface PluginContext {
   storage: PluginStorage
   services: PluginServices
   contributions: PluginContributionsApi
+  webview: PluginWebviewApi
 }
 
 /** 插件主进程入口（dist/main/index.cjs）须导出的契约 */

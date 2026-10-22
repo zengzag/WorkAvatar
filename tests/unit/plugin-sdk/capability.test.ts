@@ -12,6 +12,8 @@ import {
   canCallPlugin,
   validateCapabilities,
   getCapability,
+  canRegisterWebviewOrigins,
+  normalizeWebviewHost,
 } from '../../../electron/main/services/plugin/plugin-capability'
 import type { PluginCapability } from '../../../plugin-sdk/src'
 
@@ -353,6 +355,36 @@ describe('validateCapabilities 新能力域', () => {
 
   it('collaboration call 非数组拒绝', () => {
     const caps = [{ domain: 'collaboration', call: 'other:x' }] as unknown as PluginCapability[]
+    expect(validateCapabilities(caps).ok).toBe(false)
+  })
+})
+
+describe('webview 运行时自定义域名', () => {
+  it('声明 allowUserOrigins 后允许注册', () => {
+    const caps: PluginCapability[] = [
+      { domain: 'webview', origins: ['*.example.com'], allowUserOrigins: true },
+    ]
+    expect(canRegisterWebviewOrigins(caps).ok).toBe(true)
+  })
+
+  it('未声明 allowUserOrigins / webview 能力域时拒绝注册', () => {
+    const noFlag: PluginCapability[] = [{ domain: 'webview', origins: ['*.example.com'] }]
+    expect(canRegisterWebviewOrigins(noFlag).ok).toBe(false)
+    expect(canRegisterWebviewOrigins(undefined).ok).toBe(false)
+  })
+
+  it('只接受精确主机名（拒绝通配 / 协议 / 端口 / 路径）', () => {
+    expect(normalizeWebviewHost(' Chat.Example.com ')).toBe('chat.example.com')
+    expect(normalizeWebviewHost('*.example.com')).toBeNull()
+    expect(normalizeWebviewHost('https://example.com')).toBeNull()
+    expect(normalizeWebviewHost('example.com:8443')).toBeNull()
+    expect(normalizeWebviewHost('')).toBeNull()
+  })
+
+  it('allowUserOrigins 非布尔值拒绝', () => {
+    const caps = [
+      { domain: 'webview', origins: ['*.example.com'], allowUserOrigins: 'yes' },
+    ] as unknown as PluginCapability[]
     expect(validateCapabilities(caps).ok).toBe(false)
   })
 })

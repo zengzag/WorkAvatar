@@ -75,6 +75,12 @@ export type PluginCapability =
        * 或 `*.` 前缀通配（`*.doubao.com` 命中该域及其任意子域）。协议恒为 https。
        */
       origins: PluginWebviewOrigin[]
+      /**
+       * 允许插件在运行时追加用户自定义站点域名（经 `ctx.webview.allowOrigins` 注册，
+       * 仅精确主机名、恒 https）。声明为 true 后，插件才可把用户输入的网址交给宿主放行。
+       * 未声明时运行时注册调用会被拒绝。
+       */
+      allowUserOrigins?: boolean
     }
   | {
       // 插件协作：共享 KV + 跨插件 RPC
