@@ -7,18 +7,21 @@ import type {
   SettingsSetParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
+  StorageCategoryKey,
+  StorageCategoryUsage,
+  StorageUsageResult,
+  StoragePathParams,
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
+import { resolveDialogDefaultPath, rememberDialogPath } from '../services/dialog-path'
 import { LoggerBackend } from '../services/logger'
 import LLMLoggerService from '../services/llm-logger.service'
 import TabWindowService from '../services/tab-window.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import PowerSaveService from '../services/power-save.service'
-import EmployeeAgentService from '../services/employee-agent.service'
 import mainUiI18n from '../services/ui-i18n.service'
 import { WINDOW_STATE_SETTING_KEY } from '../services/window-state.service'
-import { SETTING_DELEGATION_ENABLED } from '../../shared/types'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -26,8 +29,9 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'kms_auto_index',
   'web_search_engine',
   'web_search_result_count',
+  'web_search_mode',
+  'web_search_api_provider',
   'prevent_sleep_when_foreground',
-  SETTING_DELEGATION_ENABLED,
   WINDOW_STATE_SETTING_KEY,
 ])
 
@@ -67,6 +71,124 @@ function getDirSize(dir: string): number {
   return total
 }
 
+// 路径占用（文件取大小，目录递归求和），不存在或不可读按 0 计
+function getPathSize(target: string): number {
+  try {
+    const stat = fs.statSync(target)
+    return stat.isDirectory() ? getDirSize(target) : stat.size
+  } catch {
+    return 0
+  }
+}
+
+// SQLite 主文件 + WAL/SHM 附属文件的后缀，统计时需一并计入
+const SQLITE_SIDECAR_SUFFIXES = ['', '-wal', '-shm']
+
+function getSqliteGroupSize(basePath: string): number {
+  return SQLITE_SIDECAR_SUFFIXES.reduce((sum, suffix) => sum + getPathSize(`${basePath}${suffix}`), 0)
+}
+
+// 数据目录下已被分类统计的顶层条目，其余归入「其他」
+const KNOWN_DATA_ENTRIES = new Set([
+  'workavatar.db', 'workavatar.db-wal', 'workavatar.db-shm',
+  'workavatar-kms.db', 'workavatar-kms.db-wal', 'workavatar-kms.db-shm',
+  'workavatar-kms-vectors.db', 'workavatar-kms-vectors.db-wal', 'workavatar-kms-vectors.db-shm',
+  'attachments', 'employees', 'skills', 'plugins', 'plugin-data', '.log',
+])
+
+function getOtherSize(dataDir: string): number {
+  let total = 0
+  try {
+    for (const entry of fs.readdirSync(dataDir, { withFileTypes: true })) {
+      if (KNOWN_DATA_ENTRIES.has(entry.name)) continue
+      total += getPathSize(path.join(dataDir, entry.name))
+    }
+  } catch {}
+  return total
+}
+
+// 各存储分类对应的主路径与形态（文件型在资源管理器中定位，目录型直接打开）
+function resolveStorageTarget(key: StorageCategoryKey): { path: string; isFile: boolean } | null {
+  const dataDir = PathService.getInstance().getDataDir()
+  switch (key) {
+    case 'dataDir':
+      return { path: dataDir, isFile: false }
+    case 'mainDb':
+      return { path: PathService.getInstance().getDbPath(), isFile: true }
+    case 'kmsDb':
+      return { path: PathService.getInstance().getKMSDbPath(), isFile: true }
+    case 'attachments':
+      return { path: path.join(dataDir, 'attachments'), isFile: false }
+    case 'workspaces':
+      return { path: path.join(dataDir, 'employees'), isFile: false }
+    case 'skills':
+      return { path: path.join(dataDir, 'skills'), isFile: false }
+    case 'plugins':
+      return { path: path.join(dataDir, 'plugins'), isFile: false }
+    case 'pluginData':
+      return { path: path.join(dataDir, 'plugin-data'), isFile: false }
+    case 'logs':
+      return { path: path.join(dataDir, '.log'), isFile: false }
+    default:
+      return null
+  }
+}
+
+function buildStorageUsage(): StorageUsageResult {
+  const dataDir = PathService.getInstance().getDataDir()
+  const dir = (name: string) => path.join(dataDir, name)
+  const categories: StorageCategoryUsage[] = [
+    { key: 'mainDb', bytes: getSqliteGroupSize(PathService.getInstance().getDbPath()), path: PathService.getInstance().getDbPath(), isFile: true, canOpen: true, cleanable: false },
+    { key: 'kmsDb', bytes: getSqliteGroupSize(PathService.getInstance().getKMSDbPath()) + getSqliteGroupSize(PathService.getInstance().getKMSVectorDbPath()), path: PathService.getInstance().getKMSDbPath(), isFile: true, canOpen: true, cleanable: false },
+    { key: 'attachments', bytes: getPathSize(dir('attachments')), path: dir('attachments'), isFile: false, canOpen: true, cleanable: false },
+    { key: 'workspaces', bytes: getPathSize(dir('employees')), path: dir('employees'), isFile: false, canOpen: true, cleanable: false },
+    { key: 'skills', bytes: getPathSize(dir('skills')), path: dir('skills'), isFile: false, canOpen: true, cleanable: false },
+    { key: 'plugins', bytes: getPathSize(dir('plugins')), path: dir('plugins'), isFile: false, canOpen: true, cleanable: false },
+    { key: 'pluginData', bytes: getPathSize(dir('plugin-data')), path: dir('plugin-data'), isFile: false, canOpen: true, cleanable: false },
+    { key: 'logs', bytes: getPathSize(dir('.log')), path: dir('.log'), isFile: false, canOpen: true, cleanable: true },
+    { key: 'other', bytes: getOtherSize(dataDir), path: dataDir, isFile: false, canOpen: false, cleanable: false },
+  ]
+
+  const totalBytes = categories.reduce((sum, c) => sum + c.bytes, 0)
+
+  let diskFreeBytes: number | null = null
+  let diskTotalBytes: number | null = null
+  try {
+    const stat = fs.statfsSync(dataDir)
+    diskFreeBytes = stat.bavail * stat.bsize
+    diskTotalBytes = stat.blocks * stat.bsize
+  } catch {
+    // 部分平台/文件系统不支持 statfs，忽略磁盘容量展示
+  }
+
+  return {
+    dataDir,
+    totalBytes,
+    // 无占用分类不展示；可清理分类（如日志）始终展示，便于随时清理
+    categories: categories.filter((c) => c.bytes > 0 || c.cleanable),
+    diskFreeBytes,
+    diskTotalBytes,
+  }
+}
+
+// 清空日志：先释放被占用的文件句柄，再删除日志目录并重建新的日志流
+function clearLogsInternal(): { success: boolean; error?: string } {
+  const logDir = path.join(PathService.getInstance().getDataDir(), '.log')
+  LoggerBackend.getInstance().closeStream()
+  LLMLoggerService.getInstance().closeStreams()
+  try {
+    if (fs.existsSync(logDir)) {
+      // Windows 下句柄释放存在延迟，重试以提高删除成功率
+      fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    }
+  } catch (e) {
+    LoggerBackend.getInstance().reopen()
+    return { success: false, error: (e as Error)?.message || String(e) }
+  }
+  LoggerBackend.getInstance().reopen()
+  return { success: true }
+}
+
 export function registerAppHandlers(
   db: ReturnType<DatabaseService['getDb']>
 ) {
@@ -90,7 +212,7 @@ export function registerAppHandlers(
   safeHandle(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, async (params: AppShowOpenDialogParams) => {
     const options = {
       title: params.title,
-      defaultPath: params.defaultPath,
+      defaultPath: resolveDialogDefaultPath(params.defaultPath),
       buttonLabel: params.buttonLabel,
       filters: params.filters,
       properties: params.properties,
@@ -100,13 +222,14 @@ export function registerAppHandlers(
     const result = win
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options)
+    rememberDialogPath(result.filePaths?.[0])
     return result
   })
 
   safeHandle(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, async (params: AppShowSaveDialogParams) => {
     const options = {
       title: params.title,
-      defaultPath: params.defaultPath,
+      defaultPath: resolveDialogDefaultPath(params.defaultPath),
       buttonLabel: params.buttonLabel,
       filters: params.filters,
     }
@@ -114,12 +237,13 @@ export function registerAppHandlers(
     const result = win
       ? await dialog.showSaveDialog(win, options)
       : await dialog.showSaveDialog(options)
+    rememberDialogPath(result.filePath)
     return result
   })
 
   safeHandle(IPC_CHANNELS.SETTINGS_GET, (params: SettingsGetParams) => {
     // API Key 由 SecureKeyStorage 专管（加密存储 + 后端解密），不开放给渲染层直读
-    if (params.key.startsWith('llm_api_key_')) {
+    if (params.key.startsWith('llm_api_key_') || params.key.startsWith('web_search_api_key_')) {
       return null
     }
     const row = settingsGetStmt.get(params.key) as any
@@ -131,10 +255,6 @@ export function registerAppHandlers(
     // 语言变更需同步刷新主进程 UI（托盘菜单等）
     if (params.key === 'appearance_locale' && (params.value === 'zh-CN' || params.value === 'en-US')) {
       mainUiI18n.setLocale(params.value)
-    }
-    // 全局委托开关变更：委托工具是否注册取决于该值，需使存量 agent 缓存按新工具集重建
-    if (params.key === SETTING_DELEGATION_ENABLED) {
-      EmployeeAgentService.getInstance().bumpToolEpoch()
     }
     return { success: true }
   })
@@ -172,29 +292,26 @@ export function registerAppHandlers(
     return { success: true }
   })
 
-  // 查询日志目录占用（{dataDir}/.log，含 app/llm 子目录）
-  safeHandle(IPC_CHANNELS.APP_GET_LOG_SIZE, () => {
-    const logDir = path.join(PathService.getInstance().getDataDir(), '.log')
-    return { size: getDirSize(logDir) }
-  })
+  // 单独清空日志占用
+  safeHandle(IPC_CHANNELS.APP_CLEAR_LOGS, () => clearLogsInternal())
 
-  // 单独清空日志占用：先释放被占用的文件句柄，再删除日志目录并重建新的日志文件
-  safeHandle(IPC_CHANNELS.APP_CLEAR_LOGS, () => {
-    const dataDir = PathService.getInstance().getDataDir()
-    const logDir = path.join(dataDir, '.log')
-    LoggerBackend.getInstance().closeStream()
-    LLMLoggerService.getInstance().closeStreams()
-    try {
-      if (fs.existsSync(logDir)) {
-        // Windows 下句柄释放存在延迟，重试以提高删除成功率
-        fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
-      }
-    } catch (e) {
-      LoggerBackend.getInstance().reopen()
-      return { success: false, error: (e as Error)?.message || String(e) }
+  // 存储分类占用统计（数据目录下的库/附件/工作区/技能/插件/日志等）
+  safeHandle(IPC_CHANNELS.APP_GET_STORAGE_USAGE, () => buildStorageUsage())
+
+  // 打开指定存储分类：目录型直接打开，文件型在资源管理器中定位（仅接受分类键，杜绝任意路径）
+  safeHandle(IPC_CHANNELS.APP_OPEN_STORAGE_PATH, async (params: StoragePathParams) => {
+    const target = resolveStorageTarget(params?.key)
+    if (!target) return { success: false, error: '未知的存储分类' }
+    if (target.isFile) {
+      if (!fs.existsSync(target.path)) return { success: false, error: '文件不存在' }
+      shell.showItemInFolder(target.path)
+      return { success: true }
     }
-    LoggerBackend.getInstance().reopen()
-    return { success: true }
+    if (!fs.existsSync(target.path)) {
+      fs.mkdirSync(target.path, { recursive: true })
+    }
+    const errMsg = await shell.openPath(target.path)
+    return { success: !errMsg, error: errMsg || undefined }
   })
 
   // 清除所有用户数据（保留应用级 settings 配置），需重启应用生效

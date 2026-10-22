@@ -29,8 +29,12 @@ export const STAGE_PROGRESS_MAP: Record<string, number> = {
   error: 100,
 }
 
-/** 默认选中的内置工具名 */
-export const DEFAULT_TOOL_NAMES = ['kms_search', 'file_read', 'file_write', 'file_edit', 'file_delete']
+/** 默认选中的内置工具名（文件操作类全部默认开启） */
+export const DEFAULT_TOOL_NAMES = [
+  'kms_search',
+  'file_read', 'file_write', 'files_edit', 'file_copy', 'file_delete',
+  'file_list', 'grep', 'report_generated_files', 'ocr_image', 'read_image',
+]
 
 /**
  * 将 LLM 建议的工具名匹配到内置工具 ID

@@ -41,7 +41,7 @@ beforeEach(() => {
 })
 
 describe('GenericAgent / 上下文装配顺序与缓存', () => {
-  it('消息顺序：system → 稳定锚点 → history → 任务尾部 → query', async () => {
+  it('消息顺序：system → 稳定锚点 → history → query；任务上下文走请求末尾追加文本', async () => {
     const agent = makeAgent()
     agent.registerTool(onDemandTool)
     agent.updateWorkspaceContextPrompt('Current task workspace: /ws')
@@ -59,15 +59,20 @@ describe('GenericAgent / 上下文装配顺序与缓存', () => {
     expect(contents[0]).toContain('helpful AI assistant operating inside WorkAvatar')
     expect(contents[1].startsWith(STABLE_CONTEXT_MSG_PREFIX)).toBe(true)
     expect(contents[1]).toContain('calendar_create')
-    expect(contents.slice(2, 4)).toEqual(['h1', 'a1'])
-    expect(contents[contents.length - 2].startsWith(TASK_CONTEXT_MSG_PREFIX)).toBe(true)
-    expect(contents[contents.length - 2]).toContain('<workspace>Current task workspace: /ws</workspace>')
-    expect(contents[contents.length - 2]).toContain('<task_time>Task started at: 2026-09-26 09:00</task_time>')
-    expect(contents[contents.length - 2]).toContain('<memory>- 用户偏好简洁回复</memory>')
+    // 工作区/任务时间稳定，进入头部稳定锚点；易变记忆仍走请求末尾
+    expect(contents[2].startsWith(TASK_CONTEXT_MSG_PREFIX)).toBe(true)
+    expect(contents[2]).toContain('<workspace>Current task workspace: /ws</workspace>')
+    expect(contents[2]).toContain('<task_time>Task started at: 2026-09-26 09:00</task_time>')
+    expect(contents.slice(3, 5)).toEqual(['h1', 'a1'])
     expect(contents[contents.length - 1]).toBe('最终问题')
+    expect(params.requestTail.startsWith(TASK_CONTEXT_MSG_PREFIX)).toBe(true)
+    expect(params.requestTail).toContain('<memory>- 用户偏好简洁回复</memory>')
+    // 稳定任务信息不再重复进入每次请求的尾部
+    expect(params.requestTail).not.toContain('<workspace>')
+    expect(params.requestTail).not.toContain('<task_time>')
   })
 
-  it('稳定锚点首次构建后字节冻结；任务尾部变化与历史增长都不改变锚点', async () => {
+  it('稳定锚点首次构建后字节冻结；任务上下文变化与历史增长都不改变锚点', async () => {
     const agent = makeAgent()
     agent.registerTool(onDemandTool)
     agent.updateMemoryPrompt('M1')
@@ -75,6 +80,7 @@ describe('GenericAgent / 上下文装配顺序与缓存', () => {
     await agent.runStream({ query: 'q1', history: [] }, {}, new AbortController().signal)
     const head1 = h.calls[0].messages[1].content
     expect(head1.startsWith(STABLE_CONTEXT_MSG_PREFIX)).toBe(true)
+    expect(h.calls[0].requestTail).toContain('M1')
 
     agent.updateMemoryPrompt('M2')
     await agent.runStream(
@@ -83,8 +89,8 @@ describe('GenericAgent / 上下文装配顺序与缓存', () => {
       new AbortController().signal
     )
     expect(h.calls[1].messages[1].content).toBe(head1)
-    expect(h.calls[1].messages.at(-2).content).toContain('M2')
-    expect(h.calls[1].messages.at(-2).content).not.toContain('M1')
+    expect(h.calls[1].requestTail).toContain('M2')
+    expect(h.calls[1].requestTail).not.toContain('M1')
   })
 
   it('已存在的旧合成上下文消息在装配前被过滤，不重复堆积', async () => {
@@ -193,8 +199,8 @@ describe('EmployeeAgent / 稳定能力块', () => {
     expect(head).toContain('Delegation (multi-employee collaboration)')
     expect(head).toContain('- 研究员 (id=e2): 查资料')
     expect(head).toContain('calendar_create')
-    // 任务信息仍在尾部
-    expect(params.messages.at(-2).content).toContain('<memory>M</memory>')
+    // 任务信息走请求末尾追加文本，不进入消息列表
+    expect(params.requestTail).toContain('<memory>M</memory>')
   })
 
   it('无委托目标时锚点不出现 Delegation 段', async () => {

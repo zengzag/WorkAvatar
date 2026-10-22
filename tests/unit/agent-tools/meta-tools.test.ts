@@ -40,18 +40,18 @@ describe('agent/tools/meta-tools / list_available_tools', () => {
     registry.registerTool(makeTool({ name: 'a', summary: '一句话A', onDemand: true }))
     registry.registerTool(makeTool({ name: 'b', title: '标题B', onDemand: true }))
     const out = String(list().handler!({}).output)
-    expect(out).toContain('可用按需工具（共 2 个）：')
+    expect(out).toContain('Available on-demand tools (2):')
     expect(out).toContain('- a: 一句话A')
     expect(out).toContain('- b: 标题B')
-    expect(out).toContain('invoke_tool(tool_name="工具名", args={...})')
-    expect(out).toContain('list_available_tools(tool_name="工具名")')
+    expect(out).toContain('invoke_tool(tool_name="<name>", args={...})')
+    expect(out).toContain('list_available_tools(tool_name="<name>")')
   })
 
   it('tool_name 为 null/undefined 时仍走摘要模式', () => {
     registry.registerTool(makeTool({ name: 'a', summary: 'S', onDemand: true }))
     const handler = list().handler!
-    expect(String(handler({ tool_name: null }).output)).toContain('可用按需工具')
-    expect(String(handler({ tool_name: undefined }).output)).toContain('可用按需工具')
+    expect(String(handler({ tool_name: null }).output)).toContain('Available on-demand tools')
+    expect(String(handler({ tool_name: undefined }).output)).toContain('Available on-demand tools')
   })
 
   it('详情模式（字符串）：输出标题、描述、参数说明与调用方式', () => {

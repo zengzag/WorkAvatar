@@ -188,7 +188,7 @@ describe('retry 中间件语义', () => {
 /**
  * 元工具嵌套分发的超时语义：
  * invoke_tool 自身未声明 timeoutMs，外层 timeout 中间件按默认 30s 兜底，
- * 而内层被调用工具的 timeoutMs 可能远大于 30s（javascript_exec 120s、shell_exec 310s）。
+ * 而内层被调用工具的 timeoutMs 可能远大于 30s（如 shell_exec 310s）。
  * 期望：外层不应以更短的默认超时截断内层工具的长超时。
  */
 describe('invoke_tool 嵌套超时', () => {
@@ -235,7 +235,7 @@ describe('invoke_tool 嵌套超时', () => {
     const dispatcher = new ToolDispatcher(registry)
     const invokeTool = createInvokeToolTool(dispatcher, registry)
 
-    // shell_exec 声明 310s，交互类工具（file_write/file_edit/ask_user）声明 305s，
+    // shell_exec 声明 310s，交互类工具（file_write/files_edit/ask_user）声明 305s，
     // 元工具外层超时必须不小于这两者，否则被默认 30s 截断
     expect(invokeTool.timeoutMs).toBeGreaterThanOrEqual(310_000)
     // 内层已套用目标工具自身的重试链，外层不应再重试

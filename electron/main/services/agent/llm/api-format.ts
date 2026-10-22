@@ -1,4 +1,5 @@
 import type { Model } from '@earendil-works/pi-ai'
+import { normalizeContext } from '@earendil-works/pi-ai'
 import { stream as openaiCompletionsStream } from '@earendil-works/pi-ai/api/openai-completions'
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
@@ -29,9 +30,15 @@ type PiStreamFn = (model: any, context: any, options?: any) => any
 /** 按接口形式选择 pi-ai stream 函数（chat-completions 复用既有静态导入） */
 export function resolvePiStreamFn(value?: string | null): PiStreamFn {
   const format = normalizeApiFormat(value)
-  if (format === 'anthropic-messages') return anthropicApi.stream as PiStreamFn
-  if (format === 'openai-responses') return responsesApi.stream as PiStreamFn
-  return openaiCompletionsStream as unknown as PiStreamFn
+  const inner: PiStreamFn = format === 'anthropic-messages'
+    ? anthropicApi.stream as unknown as PiStreamFn
+    : format === 'openai-responses'
+      ? responsesApi.stream as unknown as PiStreamFn
+      : openaiCompletionsStream as unknown as PiStreamFn
+  // pi-ai 1.x 的 api 实现只接受 TranscriptContext（提示词/工具声明折叠进首条 system 消息），
+  // 故在入口统一 normalizeContext：项目内 Context 简写（PiAIProvider）与 pi-agent-core
+  // 已归一化的 context（agent 主流程）两种入参都安全
+  return (model, context, options) => inner(model, normalizeContext(context), options)
 }
 
 /**

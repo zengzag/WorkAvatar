@@ -11,10 +11,27 @@ const searchState = vi.hoisted(() => ({
   searchImpl: null as any,
 }))
 
+const apiState = vi.hoisted(() => ({
+  mode: 'browser' as 'browser' | 'api',
+  provider: 'deepseek' as 'deepseek' | 'tavily' | 'brave',
+  apiKey: null as string | null,
+  searchImpl: null as any,
+}))
+
 vi.mock('../../../electron/main/services/internet-search.service', () => ({
   internetSearchService: {
     search: (query: string, engine: string, count: number) => searchState.searchImpl(query, engine, count),
     getEngineName: (engine: string) => `名称:${engine}`,
+  },
+}))
+
+vi.mock('../../../electron/main/services/search-api.service', () => ({
+  searchApiService: {
+    getMode: () => apiState.mode,
+    getProvider: () => apiState.provider,
+    getProviderName: (p: string) => ({ deepseek: 'DeepSeek', tavily: 'Tavily', brave: 'Brave Search' } as any)[p] || p,
+    getApiKey: async () => apiState.apiKey,
+    search: (query: string, count: number) => apiState.searchImpl(query, count),
   },
 }))
 
@@ -47,6 +64,10 @@ describe('agent/tools/web-search.tool', () => {
     searchState.countSetting = null
     searchState.settingsThrow = false
     searchState.searchImpl = async () => [{ title: 'T', url: 'https://e.com', snippet: 'S' }]
+    apiState.mode = 'browser'
+    apiState.provider = 'deepseek'
+    apiState.apiKey = null
+    apiState.searchImpl = async () => ({ provider: 'deepseek', providerName: 'DeepSeek', results: [] })
   })
 
   it('空查询报错，且不触发搜索', async () => {
@@ -184,6 +205,68 @@ describe('agent/tools/web-search.tool', () => {
     expect(webSearchTool.parameters.required).toEqual(['query'])
     expect(webSearchTool.timeoutMs).toBe(60000)
     expect(webSearchTool.onDemand).toBeFalsy()
+  })
+
+  it('搜索 API 模式：使用设置中的服务商并格式化结果', async () => {
+    apiState.mode = 'api'
+    apiState.provider = 'tavily'
+    apiState.apiKey = 'key-1'
+    const calls: any[] = []
+    apiState.searchImpl = async (query: string, count: number) => {
+      calls.push([query, count])
+      return {
+        provider: 'tavily',
+        providerName: 'Tavily',
+        results: [{ title: 'API 标题', url: 'https://api.example.com', snippet: 'API 摘要' }],
+      }
+    }
+
+    const res = await search({ query: 'hello', count: 3 })
+
+    expect(calls[0]).toEqual(['hello', 3])
+    expect(res.success).toBe(true)
+    expect(res.engine).toBe('tavily')
+    expect(res.output).toContain('搜索结果（Tavily API）: hello')
+    expect(res.output).toContain('1. API 标题')
+    expect(res.output).toContain('   链接: https://api.example.com')
+    expect(res.output).toContain('   摘要: API 摘要')
+  })
+
+  it('搜索 API 模式：未配置 API Key 时返回配置提示', async () => {
+    apiState.mode = 'api'
+    apiState.provider = 'brave'
+    let called = false
+    apiState.searchImpl = async () => { called = true; return { results: [] } }
+
+    const res = await search({ query: 'hi' })
+
+    expect(called).toBe(false)
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('Brave Search')
+    expect(res.error).toContain('未配置 API Key')
+  })
+
+  it('搜索 API 模式：调用失败时返回错误信息', async () => {
+    apiState.mode = 'api'
+    apiState.apiKey = 'key-1'
+    apiState.searchImpl = async () => { throw new Error('HTTP 401（API Key 无效或未授权）') }
+
+    const res = await search({ query: 'hi' })
+
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('DeepSeek')
+    expect(res.error).toContain('HTTP 401')
+  })
+
+  it('搜索 API 模式：空结果给出无结果提示', async () => {
+    apiState.mode = 'api'
+    apiState.apiKey = 'key-1'
+    apiState.searchImpl = async () => ({ provider: 'deepseek', providerName: 'DeepSeek', results: [] })
+
+    const res = await search({ query: 'abc' })
+
+    expect(res.success).toBe(true)
+    expect(res.output).toBe('未找到关于 "abc" 的搜索结果')
   })
 })
 

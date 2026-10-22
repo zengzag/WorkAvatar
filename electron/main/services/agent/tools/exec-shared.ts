@@ -2,10 +2,17 @@ import { spawn, execSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import SandboxService, {
+  isSandboxDenial,
+  isSandboxRunnerFailure,
+  type ConfinedLaunch,
+  type SandboxFacts,
+  type SandboxMode,
+} from '../../sandbox.service'
 export const IS_WINDOWS = process.platform === 'win32'
 
 /** 强制所有输出用 UTF-8 解码，配合启动时设置 chcp 65001 + [Console]::OutputEncoding */
-function decodeBuffer(buf: Buffer): string {
+export function decodeOutputBuffer(buf: Buffer): string {
   if (!buf || buf.length === 0) return ''
   return buf.toString('utf-8')
 }
@@ -86,6 +93,20 @@ function killProcessTreeOnWindows(pid: number): void {
   }
 }
 
+/** 强杀进程树：Windows 用 taskkill /T /F；Unix 先 SIGKILL 子进程再杀进程组（detached 时生效） */
+export function killProcessTree(pid: number | undefined, kill?: (signal: NodeJS.Signals) => void): void {
+  try {
+    if (IS_WINDOWS && pid) {
+      killProcessTreeOnWindows(pid)
+      return
+    }
+    try { kill?.('SIGKILL') } catch { /* noop */ }
+    if (pid) {
+      try { process.kill(-pid, 'SIGKILL') } catch { /* ignore */ }
+    }
+  } catch { /* noop */ }
+}
+
 /**
  * Windows PowerShell 前缀：统一设置 UTF-8 编码、错误输出重定向、正确捕获退出码
  * - chcp 65001: 设置控制台代码页为 UTF-8
@@ -160,8 +181,93 @@ export function parseHeredoc(command: string): { preCommand: string; heredocBody
   return { preCommand: before, heredocBody, shell: before }
 }
 
+/** 子进程环境：统一 UTF-8（Python 输出编码 + Unix locale），前台/后台执行共用 */
+export function buildChildEnv(extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...(IS_WINDOWS ? {
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+    } : {
+      LANG: process.env.LANG || 'en_US.UTF-8',
+      LC_ALL: process.env.LC_ALL || 'en_US.UTF-8',
+    }),
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUTF8: '1',
+    NODE_OPTIONS: process.env.NODE_OPTIONS,
+    ...(extraEnv || {}),
+  }
+}
+
+export interface ShellLaunchSpec {
+  shell: string
+  shellArgs: string[]
+  /** PowerShell 长命令 / stdin 模式落盘的临时 .ps1，进程结束后必须清理 */
+  tempFile?: string
+  /** 实际要写入子进程 stdin 的内容（Unix heredoc 已并入 shellArgs，故为 undefined） */
+  stdinContent?: string
+}
+
 /**
- * 跨平台执行命令：
+ * 计算 shell 启动参数：heredoc 解析 → 按平台包装
+ * （Windows 统一 PowerShell + UTF-8 + 退出码传递；Unix 用 /bin/bash，heredoc 内容经 cat 管道注入）。
+ * 前台（runCommandPlatform）与后台任务共用，保证两者行为一致。
+ */
+export function resolveShellLaunch(command: string, stdinContent?: string): ShellLaunchSpec {
+  let effectiveCommand = command
+  let stdin = stdinContent
+
+  const heredoc = parseHeredoc(effectiveCommand)
+  if (heredoc) {
+    stdin = heredoc.heredocBody
+    effectiveCommand = heredoc.preCommand
+  }
+
+  if (IS_WINDOWS) {
+    const psWrap = wrapPowerShellCommand(effectiveCommand, !!stdin)
+    return { shell: psWrap.shell, shellArgs: psWrap.shellArgs, tempFile: psWrap.tempFile, stdinContent: stdin }
+  }
+  if (stdin) {
+    return {
+      shell: '/bin/bash',
+      shellArgs: ['-c', `cat <<'__INNER_EOF__' | ${effectiveCommand}\n${stdin}\n__INNER_EOF__`],
+      stdinContent: undefined,
+    }
+  }
+  return { shell: '/bin/bash', shellArgs: ['-c', effectiveCommand], stdinContent: undefined }
+}
+
+/** 清理启动阶段落盘的临时脚本 */
+export function cleanupShellLaunch(spec: { tempFile?: string }): void {
+  cleanupTempFile(spec.tempFile)
+}
+
+export interface RunCommandOptions {
+  cwd: string
+  timeoutMs: number
+  stdinContent?: string
+  extraEnv?: Record<string, string>
+  /** 可写边界（工作区）；缺省回退到 cwd */
+  workspaceRoot?: string
+  /** 沙箱模式，默认 workspace-write */
+  sandboxMode?: SandboxMode
+}
+
+export interface RunCommandResult {
+  stdout: string
+  stderr: string
+  code: number | null
+  signal: NodeJS.Signals | null
+  /** 沙箱执行事实（未启用沙箱时为空） */
+  sandbox?: SandboxFacts
+  /** 沙箱运行器自身故障：命令没有真正执行 */
+  sandboxRunnerFailed?: boolean
+  /** 沙箱不可用导致命令未执行 */
+  sandboxError?: string
+}
+
+/**
+ * 跨平台执行命令（前台，等待结束并聚合全部输出）：
  * - Windows 统一用 PowerShell（自动检测 pwsh.exe 优先，回退 powershell.exe，自动设置 UTF-8 + 正确退出码传递）
  * - Unix 用 /bin/bash -c
  * - 支持通过 stdin 写入 heredoc 内容（避免引号嵌套地狱）
@@ -169,54 +275,44 @@ export function parseHeredoc(command: string): { preCommand: string; heredocBody
  * - 超时时使用 taskkill /T /F 彻底杀死进程树（Windows），避免孤儿进程残留
  * - 严格分离 stdout / stderr
  * - 所有输出强制 UTF-8 解码
+ * - 默认套用文件沙箱（可读全部、只可写工作区 + 私有临时目录），拒绝由内核判定
+ *
+ * 需要长跑/后台执行时改用 BackgroundShellService（main/services/background-shell.service.ts）。
  */
 export function runCommandPlatform(
   command: string,
-  opts: {
-    cwd: string
-    timeoutMs: number
-    stdinContent?: string
-    extraEnv?: Record<string, string>
-  }
-): Promise<{
-  stdout: string
-  stderr: string
-  code: number | null
-  signal: NodeJS.Signals | null
-}> {
+  opts: RunCommandOptions
+): Promise<RunCommandResult> {
   return new Promise((resolve) => {
-    let shell: string
-    let shellArgs: string[]
-    let actualStdin: string | undefined = opts.stdinContent
-    let tempFile: string | undefined
+    // 1) heredoc 解析 + 2) 选择 shell（与后台任务共用同一份启动逻辑）
+    const spec = resolveShellLaunch(command, opts.stdinContent)
+    const actualStdin = spec.stdinContent
 
-    // 1) 先尝试解析 heredoc 语法：如果检测到 heredoc，把 body 作为 stdinContent 传入
-    const heredoc = parseHeredoc(command)
-    if (heredoc) {
-      actualStdin = heredoc.heredocBody
-      command = heredoc.preCommand
-    }
-
-    // 2) 选择 shell
-    if (IS_WINDOWS) {
-      // Windows 统一用 PowerShell：
-      // - 自动检测 pwsh.exe (PowerShell 7) 优先，回退 powershell.exe (PowerShell 5.1)
-      // - 长命令自动写入临时 .ps1 文件执行
-      // - cmd.exe 完全废弃：编码/管道/退出码问题太多
-      const psWrap = wrapPowerShellCommand(command, !!actualStdin)
-      shell = psWrap.shell
-      shellArgs = psWrap.shellArgs
-      tempFile = psWrap.tempFile
-    } else {
-      shell = '/bin/bash'
-      // Unix 下设置 LANG/LC_ALL 确保 UTF-8 输出
-      shellArgs = ['-c', actualStdin ? `cat <<'__INNER_EOF__' | ${command}\n${actualStdin}\n__INNER_EOF__` : command]
-      actualStdin = undefined
+    // 3) 套沙箱：拿不到可用后端时直接拒绝执行，绝不静默降级
+    let confined: ConfinedLaunch
+    try {
+      confined = SandboxService.getInstance().confine({
+        program: spec.shell,
+        args: spec.shellArgs,
+        cwd: opts.cwd,
+        workspaceRoot: opts.workspaceRoot || opts.cwd,
+        mode: opts.sandboxMode ?? 'workspace-write',
+      })
+    } catch (err: any) {
+      cleanupShellLaunch(spec)
+      resolve({
+        stdout: '',
+        stderr: String(err?.message || err),
+        code: -1,
+        signal: null,
+        sandboxError: String(err?.message || err),
+      })
+      return
     }
 
     let child: ReturnType<typeof spawn>
     try {
-      child = spawn(shell, shellArgs, {
+      child = spawn(confined.program, confined.args, {
         cwd: opts.cwd,
         // Unix 下 detached:true 使 shell 成为独立进程组长，超时才能用 kill(-pid) 杀整棵进程树；
         // 不影响正常等待 close 事件。Windows 的进程树杀灭走 taskkill /T（见超时分支）。
@@ -226,24 +322,12 @@ export function runCommandPlatform(
         stdio: [actualStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,
-        env: {
-          ...process.env,
-          ...(IS_WINDOWS ? {
-            PYTHONIOENCODING: 'utf-8',
-            PYTHONUTF8: '1',
-          } : {
-            LANG: process.env.LANG || 'en_US.UTF-8',
-            LC_ALL: process.env.LC_ALL || 'en_US.UTF-8',
-          }),
-          PYTHONIOENCODING: 'utf-8',
-          PYTHONUTF8: '1',
-          NODE_OPTIONS: process.env.NODE_OPTIONS,
-          ...(opts.extraEnv || {}),
-        },
+        env: { ...buildChildEnv(opts.extraEnv), ...confined.env },
       })
     } catch (err: any) {
-      // 清理临时文件
-      cleanupTempFile(tempFile)
+      // 清理临时文件与沙箱临时目录
+      cleanupShellLaunch(spec)
+      confined.cleanup()
       resolve({ stdout: '', stderr: String(err?.message || err), code: -1, signal: null })
       return
     }
@@ -261,48 +345,50 @@ export function runCommandPlatform(
     const stderrBufs: Buffer[] = []
     let settled = false
     let killTimer: NodeJS.Timeout | undefined
+    let cleanedUp = false
+    const cleanupOnce = () => {
+      if (cleanedUp) return
+      cleanedUp = true
+      cleanupShellLaunch(spec)
+      confined.cleanup()
+    }
 
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null, extra?: Partial<RunCommandResult>) => {
       if (settled) return
       settled = true
       // 及时清掉超时定时器，避免事件循环被无谓挂到 timeoutMs+500
       if (killTimer) clearTimeout(killTimer)
-      const stdout = decodeBuffer(Buffer.concat(stdoutBufs))
-      const stderr = decodeBuffer(Buffer.concat(stderrBufs))
-      // 清理临时文件
-      cleanupTempFile(tempFile)
-      resolve({ stdout, stderr, code, signal })
+      const stdout = decodeOutputBuffer(Buffer.concat(stdoutBufs))
+      const stderr = decodeOutputBuffer(Buffer.concat(stderrBufs))
+      cleanupOnce()
+      const runnerFailed = isSandboxRunnerFailure(stderr)
+      // 运行器故障的输出里也可能带「拒绝访问」，此时命令根本没跑，必须与策略拒绝区分开
+      const sandbox: SandboxFacts | undefined = confined!.facts.backend === 'none'
+        ? undefined
+        : { ...confined!.facts, denied: !runnerFailed && isSandboxDenial(stderr) }
+      resolve({
+        stdout,
+        stderr,
+        code,
+        signal,
+        sandbox,
+        sandboxRunnerFailed: sandbox ? runnerFailed : undefined,
+        ...extra,
+      })
     }
 
     child.stdout?.on('data', (d: Buffer) => { stdoutBufs.push(d) })
     child.stderr?.on('data', (d: Buffer) => { stderrBufs.push(d) })
     child.on('error', (err) => {
-      if (!settled) {
-        settled = true
-        if (killTimer) clearTimeout(killTimer)
-        cleanupTempFile(tempFile)
-        resolve({ stdout: '', stderr: err.message, code: -1, signal: null })
-      }
+      finish(-1, null, { stderr: err.message })
     })
     child.on('close', (code, signal) => finish(code, signal))
 
     if (opts.timeoutMs) {
       killTimer = setTimeout(() => {
         if (!settled) {
-          const pid = child.pid
-          try {
-            // Windows 使用 taskkill /T /F 彻底杀死进程树（包括所有子进程/孙进程）
-            // 参考：Codex CLI 的 Windows Job Object + 进程树管理策略
-            if (IS_WINDOWS && pid) {
-              killProcessTreeOnWindows(pid)
-            } else {
-              try { child.kill('SIGKILL') } catch { /* noop */ }
-              // Unix: 尝试杀进程组
-              if (pid) {
-                try { process.kill(-pid, 'SIGKILL') } catch { /* ignore */ }
-              }
-            }
-          } catch { /* noop */ }
+          // 超时强杀整棵进程树（含子进程/孙进程），避免孤儿进程残留
+          killProcessTree(child.pid, (signal) => child.kill(signal))
           // 由 finish 统一设置 settled 并 resolve，避免提前设 true 导致 finish 被跳过、Promise 永不 resolve
           finish(-2, 'SIGKILL')
         }

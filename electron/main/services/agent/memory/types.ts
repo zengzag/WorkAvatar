@@ -31,8 +31,11 @@ export interface ManageContextOptions {
   lastKnownPromptTokens?: number
   /** 锚定在 system 之后、历史之前的稳定上下文消息（agent 生命周期字节冻结，永不参与压缩） */
   headAnchors?: Message[]
-  /** 置于历史之后、真实 query 之前的易变任务上下文消息（不参与压缩，变化只影响尾部） */
-  tailContext?: Message[]
+  /**
+   * 本次 run 首次请求末尾追加的易变上下文（不进入 messages 列表）的 token 估算，
+   * 仅用于计算 history 可用预算。
+   */
+  requestTailTokens?: number
 }
 
 export interface IMemoryManager {

@@ -29,64 +29,47 @@ export const delegateTool: ToolDefinition = {
   name: 'delegate_to_employee',
   title: '委托给数字员工',
   summary: '将子任务委托给指定执行者（已有员工/临时角色/模板），同步等待或后台执行',
-  description: `将当前子任务委托给一个执行者。子智能体在独立上下文中工作，只回传自包含的结果，因此委托能保持你的上下文干净。
-适用信号（满足其一即应主动委托）：
-- 子任务独立，可与其他工作并行推进；
-- 需要横扫大量文件/资料来源（约 3 轮以上查询或 10+ 文件读取）且你只想要结论而非原始内容；
-- 需要其他专业能力、更窄的工具集，或需要隔离上下文避免污染本对话；
-- 需要对已完成工作做独立的第三方复评。
-不适用（自己做）：
-- 已知文件/符号/取值的单点查找，或本对话、已有工具结果即可回答的问题；
-- 依赖尚未拿到的部分输出的串行工作（应委托并等待，而非并行拆分）；
-- 琐碎单步请求，不要为了显得有结构而委托。
-执行者三选一：
-- target_employee_id: 已有数字员工 id（从上下文信息 [DELEGATION] 段的可委托员工列表中选择）
-- ephemeral_role: 临时子智能体（无合适已有员工时现场创建），对象字段：
-  - name: 简洁职责名（如"财报分析师"）
-  - system_prompt: 自包含角色提示词（身份/职责/输出要求/约束；子会话看不到主管对话）
-  - description: 可选说明；tools: 可选宿主内置工具 id 白名单（仅确需收窄能力时指定）
-- subagent_profile_id: 复用子智能体模板 id（用 list_subagent_profiles 查询）
-其他参数：
-- instruction: 任务指令（清晰、自包含：背景 + 目标 + 验收标准）
-- context_files: 可选，上下文文件绝对路径列表（最多 10 个，需位于当前任务工作区或员工工作区内）
-- task_items: 可选，任务台账要点字符串数组；子智能体需逐项收尾（task_item_update），未收尾项会计入未完成清单
-- run_in_background: 可选，true 时立即返回 runId 不阻塞（后台执行，完成后经 read_run_notifications 获取结果）
-- output_schema: 可选，JSON Schema；要求子智能体调用 submit_structured_result 上报机器可读结果
-返回：子执行者的结果摘要、产物文件清单与 delegationId（委托 id）。
-后续：若结果有错误、缺失细节或不达验收标准，用 followup_delegation 工具携带 delegationId 追问同一子智能体（保留其任务上下文）。
-限制：不能委托给自己；委托深度上限 ${MAX_DELEGATION_DEPTH} 层。`,
+  description: `Delegate one self-contained sub-task to an executor and wait for its result. The sub-agent works in an isolated context and returns only a self-contained result, so your context stays clean.
+
+Provide exactly one executor: an existing employee, a one-off ephemeral_role, or a reusable subagent_profile_id (candidates are enumerated in the parameter). The instruction must be self-contained — the sub-agent has never seen this conversation.
+
+Returns the result summary, the generated file list and a delegationId.
+
+The synchronous wait window is ~280s. A result with pending=true means the sub-task is still running — NOT a failure, never report it as failed. Check it later with get_subagent_status or await_agents, or read the completion notice via read_run_notifications. Do not repeat the same delegation to retry.
+
+Hard limits: never delegate to yourself; delegation depth is capped at ${MAX_DELEGATION_DEPTH} levels.`,
   parameters: {
     type: 'object',
     properties: {
-      target_employee_id: { type: 'string', description: '三选一：已有数字员工 id' },
+      target_employee_id: { type: 'string', description: 'Executor option 1 of 3: an existing employee id' },
       ephemeral_role: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: '简洁职责名' },
-          description: { type: 'string', description: '可选说明' },
-          system_prompt: { type: 'string', description: '自包含角色提示词（身份/职责/输出要求/约束）' },
-          tools: { type: 'array', items: { type: 'string' }, description: '可选宿主内置工具 id 白名单' },
-          skills: { type: 'array', items: { type: 'string' }, description: '可选技能 id 列表' },
-          provider_id: { type: 'string', description: '可选模型供应商 id（需与 model_id 成对）' },
-          model_id: { type: 'string', description: '可选模型 id' },
+          name: { type: 'string', description: 'Short duty name' },
+          description: { type: 'string', description: 'Optional note' },
+          system_prompt: { type: 'string', description: 'Self-contained role prompt: identity, duties, output requirements, constraints' },
+          tools: { type: 'array', items: { type: 'string' }, description: 'Optional allowlist of host builtin tool ids' },
+          skills: { type: 'array', items: { type: 'string' }, description: 'Optional skill id list' },
+          provider_id: { type: 'string', description: 'Optional provider id (pair with model_id)' },
+          model_id: { type: 'string', description: 'Optional model id' },
         },
         required: ['name', 'system_prompt'],
-        description: '三选一：临时子智能体规格',
+        description: 'Executor option 2 of 3: a one-off sub-agent spec',
       },
-      subagent_profile_id: { type: 'string', description: '三选一：子智能体模板 id' },
-      instruction: { type: 'string', description: '任务指令（自包含：背景/目标/验收标准）' },
+      subagent_profile_id: { type: 'string', description: 'Executor option 3 of 3: a reusable sub-agent profile id' },
+      instruction: { type: 'string', description: 'Self-contained task instruction: background, objective, acceptance criteria' },
       context_files: {
         type: 'array',
         items: { type: 'string' },
-        description: '可选，上下文文件绝对路径（最多 10 个）',
+        description: 'Optional absolute context file paths (max 10)',
       },
       task_items: {
         type: 'array',
         items: { type: 'string' },
-        description: '可选，任务台账要点（子智能体需逐项收尾）',
+        description: 'Optional checklist the sub-agent must close one by one',
       },
-      run_in_background: { type: 'boolean', description: '可选，true 时后台执行立即返回' },
-      output_schema: { type: 'object', description: '可选，JSON Schema 结构化输出契约' },
+      run_in_background: { type: 'boolean', description: 'Return a runId immediately instead of waiting' },
+      output_schema: { type: 'object', description: 'Optional JSON Schema the sub-agent must report against' },
     },
     required: ['instruction'],
   },
@@ -157,6 +140,18 @@ async function handleDelegate(args: Record<string, any>): Promise<any> {
 
   if (!outcome) {
     return { success: false, error: '委托执行异常', ...base }
+  }
+
+  // 同步等待窗口内未结束：子任务仍在执行（不是失败）。转为后台通知，完成后主管可读取
+  if (outcome.pending) {
+    return {
+      success: true,
+      pending: true,
+      output: `${launched.targetEmployeeName} 仍在执行中（已超出同步等待窗口，尚未结束，未失败也未取消）。\n` +
+        `不要向用户报告失败。可选动作：稍后用 get_subagent_status 查看进度（run_id=${launched.runId}）；用 await_agents(["${launched.runId}"]) 再次等待；` +
+        '完成后会向本会话投递通知（read_run_notifications 读取），届时也可用 followup_delegation 追问同一子智能体。',
+      ...base,
+    }
   }
 
   if (outcome.success) {

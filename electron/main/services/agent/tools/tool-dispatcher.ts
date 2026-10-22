@@ -140,7 +140,7 @@ export class ToolDispatcher {
       }
     }
 
-    parts.push('建议：检查参数是否符合工具 schema；若代码执行类工具（如 javascript_exec），检查生成的代码语法与运行时逻辑。')
+    parts.push('建议：检查参数是否符合工具 schema；命令/脚本类工具请结合 stderr 与退出码定位语法或运行时问题。')
     return parts.join('\n')
   }
 

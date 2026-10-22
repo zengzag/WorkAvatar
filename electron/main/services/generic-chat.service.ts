@@ -5,6 +5,7 @@ import type { BaseAgentOptions } from './agent/core/base-agent'
 import type { Message } from './agent/core/types'
 import type { ToolDefinition } from './agent/tools/types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
+import { resolveContextWindowTokens, resolveToolResultTrimThresholds } from './llm-request-builder'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
@@ -140,6 +141,8 @@ class GenericChatService {
 
     const modelConfig = config.modelConfig ?? this.getModelConfig(providerConfig, config.modelId)
     const resolvedModelName = modelConfig?.model || config.modelId || providerConfig.model
+    const contextWindowTokens = resolveContextWindowTokens(modelConfig)
+    const trimThresholds = resolveToolResultTrimThresholds(contextWindowTokens)
 
     const agentConfig: GenericAgentConfig = {
       name: '智能助手',
@@ -153,6 +156,8 @@ class GenericChatService {
       supportsImageInput: resolveImageSupport(providerConfig.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: config.enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: config.conversationId,
+      trimHighWaterTokens: trimThresholds.high,
+      trimLowWaterTokens: trimThresholds.low,
       allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: !!config.allowedSkillPaths && config.useSkills !== false,
       workspaceGuidance: config.workspaceGuidance,
@@ -160,7 +165,7 @@ class GenericChatService {
 
     const agentOptions: BaseAgentOptions = {
       memoryConfig: {
-        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 256 * 1024),
+        maxTokens: contextWindowTokens,
         strategy: modelConfig?.memory_strategy ?? 'sliding_window_with_summary',
         recentTurnsToKeep: modelConfig?.recent_turns_to_keep ?? 10,
       },
@@ -202,7 +207,7 @@ class GenericChatService {
       content: string
       images?: string[]
       reasoning_content?: string
-      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; images?: string[]; isComplete?: boolean }>
+      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; resultRaw?: string; isError?: boolean; images?: string[]; isComplete?: boolean }>
       toolCallId?: string
     }>
   ): Message[] {
@@ -229,13 +234,18 @@ class GenericChatService {
         result.push(assistantMsg)
 
         for (const tc of validToolCalls) {
-          const toolContent = tc.result === undefined || tc.result === null
-            ? ''
-            : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result))
+          // 与数字员工链路一致：优先使用 LLM 原文，对象按 2 空格缩进，
+          // 否则插件工具对话每轮重建出的 tool 消息与上一轮 transcript 字节不一致。
+          const toolContent = tc.resultRaw !== undefined
+            ? tc.resultRaw
+            : tc.result === undefined || tc.result === null
+              ? ''
+              : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2))
           result.push({
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            isError: tc.isError === true,
             images: tc.images,
           })
         }
@@ -259,7 +269,7 @@ class GenericChatService {
       content: string
       images?: string[]
       reasoning_content?: string
-      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; images?: string[]; isComplete?: boolean }>
+      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; resultRaw?: string; isError?: boolean; images?: string[]; isComplete?: boolean }>
       toolCallId?: string
     }>,
     callbacks: GenericChatCallbacks,
@@ -281,7 +291,7 @@ class GenericChatService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      const maxIterations = config.modelConfig?.max_retry ?? 100
+      const maxIterations = config.modelConfig?.max_retry ?? 400
 
       await agent.runStream(
         {

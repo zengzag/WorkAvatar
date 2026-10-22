@@ -62,6 +62,17 @@ const h = vi.hoisted(() => {
 
 vi.mock('electron', () => ({ BrowserWindow: h.FakeWindow }))
 
+// 本用例只验证本地浏览器链路，固定为 browser 模式
+vi.mock('../../../electron/main/services/search-api.service', () => ({
+  searchApiService: {
+    getMode: () => 'browser',
+    getProvider: () => 'deepseek',
+    getProviderName: () => 'DeepSeek',
+    getApiKey: async () => null,
+    search: async () => ({ provider: 'deepseek', providerName: 'DeepSeek', results: [] }),
+  },
+}))
+
 vi.mock('../../../electron/main/services/database.service', () => ({
   default: {
     getInstance: () => ({

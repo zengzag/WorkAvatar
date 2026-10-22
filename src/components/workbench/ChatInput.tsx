@@ -1,11 +1,10 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, HistoryOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, useLayoutEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
-import FileChangesModal from './FileChangesModal'
 import EmployeeAvatar from '../common/EmployeeAvatar'
 import type { Employee, ThinkingLevel } from '../../types'
 
@@ -371,6 +370,8 @@ const ChatInput: React.FC<{
   conversationId?: string | null
   getInitialDraft?: () => string
   onDraftChange?: (value: string) => void
+  /** 草稿恢复键：由 null 变为具体值时（如新任务模式员工首次确定）重新恢复草稿 */
+  draftRestoreKey?: string | null
   availableSkills?: AvailableSkill[]
   centerMode?: boolean
   showEmployeeSelector?: boolean
@@ -385,16 +386,23 @@ const ChatInput: React.FC<{
   isCompacting?: boolean
   /** 隐藏高级工具栏（高权限/模型对比/资料库/极简模式/技能下拉），用于轻量对话视图 */
   hideToolbar?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [highPermission, setHighPermission] = useState(false)
-  /** 本轮任务高权限模式（确认弹窗中选择"本轮任务不再提醒"后开启，跨消息持续到任务结束或手动关闭） */
-  const taskHighPermission = useTaskPermissionStore((s) => (conversationId ? !!s.enabledKeys[conversationId] : false))
-  const disableTaskHighPermission = useTaskPermissionStore((s) => s.disable)
+  /** 任务级完全允许（高权限）：确认弹窗"本轮任务不再提醒"与执行模式选择器共用同一登记，整个任务期间生效 */
+  const taskFullAllow = useTaskPermissionStore((s) => (conversationId ? !!s.enabledKeys[conversationId] : false))
+  const enableTaskFullAllow = useTaskPermissionStore((s) => s.enable)
+  const disableTaskFullAllow = useTaskPermissionStore((s) => s.disable)
+  /** 新任务尚未创建会话时的完全允许草稿态；会话创建时由 useEmployeeChat 登记到该会话，此处仅负责新任务视图的显示 */
+  const [draftFullAllow, setDraftFullAllow] = useState(false)
+  const fullAllow = conversationId ? taskFullAllow : draftFullAllow
+  // 会话已存在（新任务已创建或切到既有任务）时，完全允许以任务级登记为准，清掉草稿避免残留到其他新任务
+  useEffect(() => {
+    if (conversationId) setDraftFullAllow(false)
+  }, [conversationId])
   const editorRef = useRef<HTMLDivElement>(null)
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
@@ -458,18 +466,42 @@ const ChatInput: React.FC<{
       bindFileTokenElement(node as HTMLElement, token, removeFileById)
     })
 
+    // Chromium 插入不可编辑节点后不会自动把光标置于其后，需显式移动，
+    // 否则继续输入会插到令牌前方（粘贴文件后光标停在文件前面）
+    const lastFile = files[files.length - 1]
+    const lastTokenEl = editor.querySelector<HTMLElement>(`.${FILE_TOKEN_CLASS}[data-id="${lastFile.id}"]`)
+    if (lastTokenEl) {
+      const range = document.createRange()
+      const next = lastTokenEl.nextSibling
+      // 优先落在令牌后紧跟的零宽空格文本节点内，保持可继续输入
+      if (next && next.nodeType === Node.TEXT_NODE) {
+        range.setStart(next, 0)
+      } else {
+        range.setStartAfter(lastTokenEl)
+      }
+      range.collapse(true)
+      const sel = window.getSelection()
+      if (sel) {
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    }
+
     emitDraftChange()
   }, [token, removeFileById, emitDraftChange])
 
-  // 仅在 conversationId 变化（切换对话 / 首次挂载）时恢复草稿；
+  // 仅在 conversationId / 草稿恢复键变化（切换对话、首次挂载、新任务员工首次确定）时恢复草稿；
   // restoreDraft / getInitialDraft 通过 ref 读取最新实现，避免其引用变化（如主题 token 变化）触发覆盖。
-  // 新任务模式下切换数字员工时 conversationId 不变（始终为 null），编辑器内容原样保留。
+  const prevDraftRestoreKeyRef = useRef<string | null | undefined>(undefined)
   useEffect(() => {
     const getDraft = getInitialDraftRef.current
-    if (getDraft) {
-      restoreDraftRef.current(getDraft())
-    }
-  }, [conversationId])
+    if (!getDraft) return
+    const prevKey = prevDraftRestoreKeyRef.current
+    prevDraftRestoreKeyRef.current = draftRestoreKey ?? null
+    // 新任务模式下员工之间切换：保留当前编辑内容，不被目标员工的旧草稿覆盖
+    if (prevKey && draftRestoreKey && prevKey !== draftRestoreKey) return
+    restoreDraftRef.current(getDraft())
+  }, [conversationId, draftRestoreKey])
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -577,14 +609,12 @@ const ChatInput: React.FC<{
     // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
     // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
     // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
-    const sendHighPermission = highPermission || taskHighPermission
-    onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
+    onSend(content, imageUrls, selectedModels, { highPermission: fullAllow })
     // 清空编辑器
     if (editorRef.current) editorRef.current.innerHTML = ''
     emitDraftChange()
     onDraftChange?.('')
-    setHighPermission(false)
-  }, [hasEditorContent, attachedImages, selectedModels, highPermission, taskHighPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
@@ -916,7 +946,7 @@ const ChatInput: React.FC<{
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
   const [showKbPicker, setShowKbPicker] = useState(false)
-  const [showFileChanges, setShowFileChanges] = useState(false)
+  const [showModePicker, setShowModePicker] = useState(false)
 
   const modelTags = useMemo(() => selectedModels.map((sel, i) => {
     const p = providers.find((p: any) => p.id === sel.providerId)
@@ -954,7 +984,7 @@ const ChatInput: React.FC<{
   }, [providers, modelSearchText])
 
   const modelPickerContent = useMemo(() => (
-    <div style={{ width: 320, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 192, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
         prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -975,8 +1005,8 @@ const ChatInput: React.FC<{
           return (
             <div key={provider.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextSecondary }}>
-                <RobotOutlined style={{ fontSize: 11 }} />
-                <span>{provider.name}</span>
+                <RobotOutlined style={{ fontSize: 11, flexShrink: 0 }} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.name}</span>
                 {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
                 {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
               </div>
@@ -1109,6 +1139,31 @@ const ChatInput: React.FC<{
     return { visible: false, levels: [] as ThinkingLevel[], effortSupported: false }
   }, [defaultProviderId, providers])
 
+  const thinkingLevelLabel = useCallback((level?: ThinkingLevel) => t(
+    !level
+      ? 'workbench.thinkingLevelOff'
+      : level === 'low' ? 'workbench.thinkingLevelLow'
+      : level === 'medium' ? 'workbench.thinkingLevelMedium'
+      : 'workbench.thinkingLevelHigh'
+  ), [t])
+
+  const thinkingTrigger = (
+    <Tooltip title={thinkingCapability.effortSupported
+      ? `${t('workbench.thinkingLevel')}: ${thinkingLevelLabel(enableThinking)}`
+      : enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+      <Button type="text" size="small"
+        onClick={onThinkingChange && !thinkingCapability.effortSupported
+          ? () => onThinkingChange(enableThinking ? false : 'high')
+          : undefined}
+        style={{
+          color: token.colorTextSecondary,
+          padding: '0 4px 0 0', height: 18, minWidth: 18, borderRadius: 4,
+        }}>
+        {enableThinking ? <BulbFilled style={{ fontSize: 12 }} /> : <BulbOutlined style={{ fontSize: 12 }} />}
+      </Button>
+    </Tooltip>
+  )
+
   const filteredDefaultModels = useMemo(() => {
     const search = defaultModelSearch.toLowerCase()
     return providers.map((provider: any) => {
@@ -1125,7 +1180,7 @@ const ChatInput: React.FC<{
   }, [providers, defaultModelSearch])
 
   const defaultModelPickerContent = useMemo(() => (
-    <div style={{ width: 300, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 180, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
         prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -1143,8 +1198,8 @@ const ChatInput: React.FC<{
           return (
             <div key={provider.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextSecondary }}>
-                <RobotOutlined style={{ fontSize: 11 }} />
-                <span>{provider.name}</span>
+                <RobotOutlined style={{ fontSize: 11, flexShrink: 0 }} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.name}</span>
                 {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
                 {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
               </div>
@@ -1271,6 +1326,112 @@ const ChatInput: React.FC<{
       (e.description || '').toLowerCase().includes(search)
     )
   }, [employees, employeeSearch])
+
+  // 执行模式：纯对话（原极简模式）/ 手动审批（默认）/ 完全允许（任务级高权限），三者互斥
+  const executionMode: 'pureChat' | 'manual' | 'fullAllow' =
+    minimalMode ? 'pureChat' : (fullAllow ? 'fullAllow' : 'manual')
+  // 任务已有内容时模式已冻结（主进程按任务首条消息固定工具与系统提示词），不允许再切换
+  const modeLocked = !canToggleMinimalMode
+
+  /** 关闭完全允许：有会话时撤销任务级登记，新任务模式回落到草稿态 */
+  const clearFullAllow = useCallback(() => {
+    if (conversationId) disableTaskFullAllow(conversationId)
+    setDraftFullAllow(false)
+  }, [conversationId, disableTaskFullAllow])
+
+  const selectExecutionMode = useCallback((mode: 'pureChat' | 'manual' | 'fullAllow') => {
+    setShowModePicker(false)
+    if (mode === executionMode) return
+    // 从纯对话切出需要解除极简模式，受任务冻结限制
+    if (minimalMode && modeLocked) return
+    if (mode === 'pureChat') {
+      if (modeLocked) return
+      onMinimalModeChange(true)
+      clearFullAllow()
+      return
+    }
+    if (mode === 'fullAllow') {
+      if (minimalMode) onMinimalModeChange(false)
+      if (conversationId) enableTaskFullAllow(conversationId)
+      else setDraftFullAllow(true)
+      return
+    }
+    if (minimalMode) onMinimalModeChange(false)
+    clearFullAllow()
+  }, [executionMode, minimalMode, modeLocked, conversationId, onMinimalModeChange, enableTaskFullAllow, clearFullAllow])
+
+  const modeLabel = executionMode === 'pureChat'
+    ? t('workbench.modePureChat')
+    : executionMode === 'fullAllow' ? t('workbench.modeFullAllow') : t('workbench.modeManualApproval')
+  const modeDesc = executionMode === 'pureChat'
+    ? t('workbench.modePureChatDesc')
+    : executionMode === 'fullAllow' ? t('workbench.modeFullAllowDesc') : t('workbench.modeManualApprovalDesc')
+
+  const modePickerContent = useMemo(() => {
+    const options: Array<{
+      key: 'pureChat' | 'manual' | 'fullAllow'
+      icon: React.ReactNode
+      title: string
+      desc: string
+      disabled: boolean
+    }> = [
+      {
+        key: 'pureChat',
+        icon: <MessageOutlined />,
+        title: t('workbench.modePureChat'),
+        desc: t('workbench.modePureChatDesc'),
+        disabled: executionMode !== 'pureChat' && modeLocked,
+      },
+      {
+        key: 'manual',
+        icon: <SafetyOutlined />,
+        title: t('workbench.modeManualApproval'),
+        desc: t('workbench.modeManualApprovalDesc'),
+        disabled: minimalMode && modeLocked,
+      },
+      {
+        key: 'fullAllow',
+        icon: <UnlockOutlined />,
+        title: t('workbench.modeFullAllow'),
+        desc: t('workbench.modeFullAllowDesc'),
+        disabled: minimalMode && modeLocked,
+      },
+    ]
+    return (
+      <div style={{ width: 208, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ padding: '2px 8px 6px', fontSize: 11, color: token.colorTextQuaternary }}>
+          {t('workbench.executionMode')}
+        </div>
+        {options.map(opt => {
+          const selected = executionMode === opt.key
+          return (
+            <div
+              key={opt.key}
+              title={opt.disabled ? t('workbench.modeLockedTip') : undefined}
+              onClick={() => { if (!opt.disabled) selectExecutionMode(opt.key) }}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px',
+                borderRadius: 6,
+                cursor: opt.disabled ? 'not-allowed' : 'pointer',
+                opacity: opt.disabled ? 0.45 : 1,
+                background: selected ? token.colorPrimaryBg : 'transparent',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => { if (!opt.disabled && !selected) e.currentTarget.style.background = token.colorBgTextHover }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = selected ? token.colorPrimaryBg : 'transparent' }}
+            >
+              <span style={{ fontSize: 13, marginTop: 2, color: selected ? token.colorPrimary : token.colorTextSecondary }}>{opt.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, color: selected ? token.colorPrimary : token.colorText }}>{opt.title}</div>
+                <div style={{ fontSize: 11, lineHeight: 1.5, color: token.colorTextTertiary }}>{opt.desc}</div>
+              </div>
+              {selected && <CheckOutlined style={{ fontSize: 11, marginTop: 3, color: token.colorPrimary }} />}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }, [t, token, executionMode, modeLocked, minimalMode, selectExecutionMode])
 
   return (
     <div style={centerMode
@@ -1492,7 +1653,7 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
+      <div style={{ position: 'relative', display: 'flex', gap: 12, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1589,27 +1750,32 @@ const ChatInput: React.FC<{
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {!hideToolbar && (
-                <Tooltip title={
-                  taskHighPermission
-                    ? t('workbench.highPermissionTaskOn')
-                    : (highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff'))
-                }>
-                  <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
-                    onClick={() => {
-                      // 任务级高权限：点击关闭（同步撤销主进程登记），避免界面显示关闭但后端继续放行
-                      if (taskHighPermission) {
-                        disableTaskHighPermission(conversationId)
-                        setHighPermission(false)
-                        return
-                      }
-                      setHighPermission(!highPermission)
-                    }}
+                <Popover
+                  content={modePickerContent}
+                  trigger="click"
+                  placement="topLeft"
+                  arrow={false}
+                  styles={{ container: { padding: 8 } }}
+                  open={showModePicker}
+                  onOpenChange={setShowModePicker}
+                >
+                  <Button type="text" size="small"
+                    title={`${modeLabel}\n${modeDesc}`}
+                    icon={executionMode === 'pureChat'
+                      ? <MessageOutlined style={{ fontSize: 12 }} />
+                      : executionMode === 'fullAllow'
+                        ? <UnlockOutlined style={{ fontSize: 12 }} />
+                        : <SafetyOutlined style={{ fontSize: 12 }} />}
                     style={{
-                      color: highPermission || taskHighPermission ? token.colorWarning : token.colorTextQuaternary,
-                      padding: '0 2px', height: 20, minWidth: 20,
-                      background: highPermission || taskHighPermission ? token.colorWarningBg : 'transparent',
-                    }} />
-                </Tooltip>
+                      color: executionMode === 'pureChat'
+                        ? token.colorPrimary
+                        : executionMode === 'fullAllow' ? token.colorWarning : token.colorTextQuaternary,
+                      padding: '0 6px', height: 20, gap: 4,
+                      background: executionMode === 'fullAllow' ? token.colorWarningBg : 'transparent',
+                    }}>
+                    <span style={{ fontSize: 11 }}>{modeLabel}</span>
+                  </Button>
+                </Popover>
               )}
               {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
               <Tooltip title={t('workbench.attachFile')}>
@@ -1617,14 +1783,6 @@ const ChatInput: React.FC<{
                   onClick={() => fileInputRef.current?.click()}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Tooltip>
-              {/* 文件改动与回滚：仅在已绑定任务（会话）时可用 */}
-              {conversationId && (
-                <Tooltip title={t('fileChanges.entryTooltip')}>
-                  <Button type="text" size="small" icon={<HistoryOutlined style={{ fontSize: 12 }} />}
-                    onClick={() => setShowFileChanges(true)}
-                    style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
-                </Tooltip>
-              )}
               {/* 插件视图注入点：对话输入框工具栏 */}
               <PluginViewSlot view="chat.toolbar" />
               {!hideToolbar && (
@@ -1658,21 +1816,16 @@ const ChatInput: React.FC<{
                       style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                       title={t('workbench.knowledgeBase')} />
                   </Popover>
-                  <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>
-                    <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}
-                      onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
-                      style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
-                  </Tooltip>
                   <Tooltip title={t('workbench.selectSkillToExecute')}>
                     <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
-                      <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
+                      <Button type="text" size="small" icon={<ToolOutlined style={{ fontSize: 12 }} />}
                         style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
                     </Dropdown>
                   </Tooltip>
                 </>
               )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
               {onDefaultModelChange && (
                 <Popover
                   content={defaultModelPickerContent}
@@ -1687,30 +1840,29 @@ const ChatInput: React.FC<{
                   open={showDefaultModelPicker}
                 >
                   <Button type="text" size="small"
-                    style={{ color: defaultModelLabel ? token.colorPrimary : token.colorTextQuaternary, padding: '0 6px', height: 20, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {defaultModelLabel ? (
-                      <span style={{ fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{defaultModelLabel}</span>
-                    ) : (
-                      <RobotOutlined style={{ fontSize: 12 }} />
-                    )}
+                    title={defaultModelLabel || undefined}
+                    style={{
+                      color: token.colorTextSecondary,
+                      padding: '0 5px', height: 18, minWidth: 18, borderRadius: 4,
+                    }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11 }}>
+                      {defaultModelLabel ? (
+                        <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{defaultModelLabel}</span>
+                      ) : (
+                        <RobotOutlined style={{ fontSize: 11 }} />
+                      )}
+                    </span>
                   </Button>
                 </Popover>
               )}
               {onThinkingChange && thinkingCapability.visible && (
                 thinkingCapability.effortSupported ? (
                   <Dropdown trigger={['click']} placement="topRight" menu={{
-                    items: thinkingCapability.levels.map(level => {
-                      const labelKey = level === false
-                        ? 'workbench.thinkingLevelOff'
-                        : level === 'low' ? 'workbench.thinkingLevelLow'
-                        : level === 'medium' ? 'workbench.thinkingLevelMedium'
-                        : 'workbench.thinkingLevelHigh'
-                      return {
-                        key: String(level),
-                        label: <span style={{ fontSize: 12 }}>{t(labelKey)}</span>,
-                        icon: enableThinking === level ? <CheckOutlined style={{ fontSize: 11 }} /> : <span style={{ display: 'inline-block', width: 11 }} />,
-                      }
-                    }),
+                    items: thinkingCapability.levels.map(level => ({
+                      key: String(level),
+                      label: <span style={{ fontSize: 12 }}>{thinkingLevelLabel(level)}</span>,
+                      icon: enableThinking === level ? <CheckOutlined style={{ fontSize: 11 }} /> : <span style={{ display: 'inline-block', width: 11 }} />,
+                    })),
                     onClick: ({ key }) => {
                       const next = key === 'false' ? false : key as ThinkingLevel
                       onThinkingChange(next)
@@ -1718,26 +1870,9 @@ const ChatInput: React.FC<{
                     selectable: true,
                     selectedKeys: [String(enableThinking)],
                   }}>
-                    <Tooltip title={t('workbench.thinkingLevel')}>
-                      <Button type="text" size="small"
-                        icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                        style={{
-                          color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
-                          padding: '0 2px', height: 20, minWidth: 20,
-                        }} />
-                    </Tooltip>
+                    {thinkingTrigger}
                   </Dropdown>
-                ) : (
-                  <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
-                    <Button type="text" size="small"
-                      icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                      onClick={() => onThinkingChange(enableThinking ? false : 'high')}
-                      style={{
-                        color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
-                        padding: '0 2px', height: 20, minWidth: 20,
-                      }} />
-                  </Tooltip>
-                )
+                ) : thinkingTrigger
               )}
             </div>
           </div>
@@ -1791,11 +1926,6 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <FileChangesModal
-        open={showFileChanges}
-        conversationId={conversationId}
-        onClose={() => setShowFileChanges(false)}
-      />
     </div>
   )
 }

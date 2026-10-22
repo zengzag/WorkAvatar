@@ -217,16 +217,16 @@ export function registerLLMHandlers(
                   scheduleToolCallDeltaFlush()
                 }
               },
-              onToolCall: (toolCall: { id: string; name: string; args: any }) => {
+              onToolCall: (toolCall: { id: string; name: string; args: any; iteration?: number }) => {
                 if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
                   flushToolCallDeltas()
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args })
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args, iteration: toolCall.iteration })
                 }
               },
-              onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => {
+              onToolResult: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => {
                 if (abortController.signal.aborted) return
                 if (!event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, generatedFiles: toolResult.generatedFiles, images: toolResult.images, success: toolResult.success })
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, resultRaw: toolResult.resultRaw, generatedFiles: toolResult.generatedFiles, images: toolResult.images, success: toolResult.success, isError: toolResult.isError })
                 }
               },
               onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {
@@ -245,11 +245,17 @@ export function registerLLMHandlers(
                   const mergedMetadata = { ...(metadata || {}) }
                   if (childUsage && (childUsage.totalTokens || childUsage.completionTokens || childUsage.promptTokens)) {
                     const base = metadata?.tokenUsage || {}
+                    const cachedTokens = (base.cachedTokens || 0) + (childUsage.cachedTokens || 0)
+                    const generationMs = (base.generationMs || 0) + (childUsage.generationMs || 0)
                     mergedMetadata.tokenUsage = {
                       promptTokens: (base.promptTokens || 0) + (childUsage.promptTokens || 0),
                       completionTokens: (base.completionTokens || 0) + (childUsage.completionTokens || 0),
                       totalTokens: (base.totalTokens || 0) + (childUsage.totalTokens || 0),
-                      cachedTokens: base.cachedTokens || childUsage.cachedTokens,
+                      // 缓存命中必须与 prompt/completion 一样求和：混入子会话 prompt 却不计入其 cached，
+                      // 会让 UI 的 cached/prompt 命中率被严重低估。
+                      ...(cachedTokens > 0 ? { cachedTokens } : {}),
+                      // 输出速度口径：子会话的生成耗时随 completionTokens 一并合并，避免平均速度被高估
+                      ...(generationMs > 0 ? { generationMs } : {}),
                     }
                   }
                   event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: mergedMetadata })

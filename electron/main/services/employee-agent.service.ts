@@ -1,7 +1,7 @@
 import os from 'os'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
-import { parseJsonRecord } from './llm-request-builder'
+import { parseJsonRecord, resolveContextWindowTokens, resolveToolResultTrimThresholds } from './llm-request-builder'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
@@ -10,7 +10,7 @@ import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import { PROMPT_FORMAT_MARKER } from './agent/business/prompts'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import {
   listSubagentsTool, listSubagentProfilesTool, getSubagentStatusTool, cancelSubagentTool,
   readRunNotificationsTool, taskItemCreateTool, taskItemUpdateTool, taskItemListTool, submitStructuredResultTool,
@@ -23,7 +23,7 @@ import { createMemorySearchTool } from './agent/tools/memory-search.tool'
 import { MEMORY_BOUND_TOOL_IDS } from './employee-memory-types'
 import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
-import { parseEmployeeDelegation, SETTING_DELEGATION_ENABLED } from '../../shared/types'
+import { parseEmployeeDelegation } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
@@ -35,6 +35,12 @@ import EmployeeRegistryService from './employee-registry.service'
 import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
+
+/** Agent 缓存上限：每个会话/模型组合一个实例，数量必须收敛，否则长期使用会持续增长 */
+const AGENT_CACHE_MAX = 24
+/** 空闲多久后回收 Agent（释放系统提示词、工具表与 MCP 引用），下次使用再重建 */
+const AGENT_IDLE_TTL_MS = 30 * 60 * 1000
+const AGENT_SWEEP_INTERVAL_MS = 5 * 60 * 1000
 
 interface EmployeeChatStreamParams {
   employee_id: string
@@ -50,6 +56,10 @@ interface EmployeeChatStreamParams {
       name: string
       args: any
       result?: any
+      /** 实际发送给 LLM 的工具结果原文（仅在与展示值不同时下发），重建 history 时优先使用 */
+      resultRaw?: string
+      /** 工具调用本身是否失败（异常/中止），重建 history 时回放给 Anthropic tool_result.is_error */
+      isError?: boolean
       images?: string[]
       isComplete?: boolean
     }>
@@ -72,9 +82,9 @@ interface EmployeeChatStreamParams {
 interface EmployeeChatCallbacks {
   onChunk: (chunk: string) => void
   onThought: (thought: string) => void
-  onToolCall: (toolCall: { id: string; name: string; args: any }) => void
+  onToolCall: (toolCall: { id: string; name: string; args: any; iteration?: number }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -93,6 +103,10 @@ interface CachedAgentEntry {
   memoryEnabled: boolean
   /** 构建常驻记忆块时的记忆数据集版本号，用于按需刷新（见 refreshMemoryPromptIfStale） */
   memoryRevision: number
+  /** 所属会话（清理/回收时按会话精确定位，避免解析含冒号的员工 ID） */
+  conversationId?: string
+  /** 最近一次使用时间（LRU/TTL 回收依据） */
+  lastUsedAt: number
 }
 
 class EmployeeAgentService {
@@ -106,6 +120,7 @@ class EmployeeAgentService {
   private agentCreationInFlight: Map<string, Promise<CachedAgentEntry>> = new Map()
   /** 插件工具/员工/技能集合版本号：插件增删升级时递增，使存量 agent 缓存按工具集失效 */
   private toolEpoch = 0
+  private sweepTimer: NodeJS.Timeout | null = null
   private static instance: EmployeeAgentService
 
   private constructor() {
@@ -114,6 +129,8 @@ class EmployeeAgentService {
     this.skillRegistry = SkillRegistryService.getInstance()
     this.memoryService = EmployeeMemoryService.getInstance()
     this.mcpRegistry = McpRegistryService.getInstance()
+    this.sweepTimer = setInterval(() => this.sweepIdleAgents(), AGENT_SWEEP_INTERVAL_MS)
+    this.sweepTimer.unref?.()
   }
 
   static getInstance(): EmployeeAgentService {
@@ -144,13 +161,11 @@ class EmployeeAgentService {
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
+      existing.lastUsedAt = Date.now()
       // 插件工具集合已变更（bumpToolEpoch）且该 agent 不在运行 → 丢弃旧缓存按新工具集重建
       if (existing.toolEpoch !== this.toolEpoch) {
         if (!existing.agent.isRunning()) {
-          if (existing.mcpRelease) {
-            existing.mcpRelease().catch(() => { /* ignore */ })
-          }
-          this.agentEntries.delete(cacheKey)
+          this.purgeEntry(cacheKey, existing)
           // 重建沿用创建时冻结的极简模式，而不是本次调用参数（会话模式不随单次请求翻转）
           minimalMode = existing.minimalMode
         } else {
@@ -228,22 +243,24 @@ class EmployeeAgentService {
     const modelConfig = this.getModelConfig(config, modelId)
 
     const resolvedModelName = modelConfig?.model || modelId || config.model
+    // 上下文窗口与工具结果裁剪水位统一由模型配置派生：裁剪必须跟随真实窗口，不能固定 80k
+    const contextWindowTokens = resolveContextWindowTokens(modelConfig)
+    const trimThresholds = resolveToolResultTrimThresholds(contextWindowTokens)
 
     const memoryEnabled = this.isMemoryEnabled(employeeId, emp)
     const memoryPrompt = memoryEnabled
       ? this.memoryService.buildInjectionMemoryPrompt(employeeId)
       : undefined
 
-    // 委托能力：默认开启（全局开关 delegation_enabled + 员工 delegation_json 双重控制）。
+    // 委托能力：由员工级 delegation_json 单独控制（默认开启）。
     // targetIds 仅约束「委托给已有员工」；未选择目标时仍可派发临时子智能体/子智能体模板。
-    // 关闭条件：全局开关关闭 / 员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）
+    // 关闭条件：员工显式关闭 / 极简模式（不传任何工具）/ inline 子智能体（执行者而非主管）
     //          / 内置与插件员工（专家执行者定位，默认不扮演主管；其委托设置本身也不可编辑）
     const delegation = parseEmployeeDelegation(emp.delegation_json)
     const isSubAgentId = emp.id.startsWith('inline:')
     const isRegisteredId = emp.id.startsWith('builtin:') || emp.id.startsWith('plugin:')
     const delegationEnabled = delegation.enabled
       && !minimalMode
-      && this.isDelegationGloballyEnabled()
       && !isSubAgentId
       && !isRegisteredId
     const delegationTargets = delegationEnabled
@@ -251,7 +268,10 @@ class EmployeeAgentService {
       : []
     // 可复用子智能体模板（内置 explore/general + 用户自建）：作为「预置执行者」候选，随稳定上下文与工具枚举下发
     const delegationProfiles = delegationEnabled
-      ? SubAgentProfileService.getInstance().list().map(p => ({ id: p.id, name: p.name, description: p.description }))
+      ? SubAgentProfileService.getInstance().list()
+          .map(p => ({ id: p.id, name: p.name, description: p.description }))
+          // 提示词必须字节稳定：模板按名称/ID 排序，避免 updated_at 顺序变化导致稳定头漂移
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       : []
 
     const agentConfig: EmployeeAgentConfig = {
@@ -267,6 +287,8 @@ class EmployeeAgentService {
       supportsImageInput: resolveImageSupport(config.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,
+      trimHighWaterTokens: trimThresholds.high,
+      trimLowWaterTokens: trimThresholds.low,
       // 采样 / 传输设置：单次调用覆盖 > 模型配置 > 供应商配置
       stream: {
         temperature: streamOverrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
@@ -298,7 +320,7 @@ class EmployeeAgentService {
 
     const agentOptions: BaseAgentOptions = {
       memoryConfig: {
-        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 256 * 1024),
+        maxTokens: contextWindowTokens,
         strategy: modelConfig?.memory_strategy ?? 'sliding_window_with_summary',
         recentTurnsToKeep: modelConfig?.recent_turns_to_keep ?? 10,
       },
@@ -360,10 +382,6 @@ class EmployeeAgentService {
     const collectionIdsRef: SearchScopeRef = { current: { collectionIds: [] } }
     agent.registerTools(this.applyToolModes(createKMSTools(collectionIdsRef), toolModes))
     agent.registerTools(this.applyToolModes(createKMSCollectionTools(collectionIdsRef), toolModes))
-
-    if (toolModes.get('javascript_exec') !== 'off') {
-      agent.registerTools([{ ...javascriptExecTool, onDemand: toolModes.get('javascript_exec') === 'on_demand' }])
-    }
 
     // run_skill_script 工具：受全局开关 skills_enable_script_execution 控制（默认禁用）
     const scriptExecRow = this.db.getDb().prepare("SELECT value FROM settings WHERE key = 'skills_enable_script_execution'").get() as { value: string } | undefined
@@ -427,8 +445,11 @@ class EmployeeAgentService {
       minimalMode: agent.getMinimalMode(),
       memoryEnabled,
       memoryRevision: this.memoryService.getRevision(),
+      conversationId,
+      lastUsedAt: Date.now(),
     }
     this.agentEntries.set(cacheKey, entry)
+    this.trimAgentCache()
     return entry
   }
 
@@ -498,7 +519,7 @@ class EmployeeAgentService {
       try { role = c.profile_json ? JSON.parse(c.profile_json)?.roleName : undefined } catch { /* ignore */ }
       out.push({ id: c.id, name: c.name, description: c.description, role })
     }
-    out.sort((a, b) => a.name.localeCompare(b.name))
+    out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
     return out
   }
 
@@ -520,7 +541,6 @@ class EmployeeAgentService {
     // KMS / 脚本工具（工厂函数创建，默认按需）
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
-      'javascript_exec',
     ]
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')
@@ -576,18 +596,6 @@ class EmployeeAgentService {
       }
     }
     return modeMap
-  }
-
-  /** 全局委托开关（settings KV delegation_enabled；未设置视为开启） */
-  private isDelegationGloballyEnabled(): boolean {
-    try {
-      const row = this.db.getDb()
-        .prepare('SELECT value FROM settings WHERE key = ?')
-        .get(SETTING_DELEGATION_ENABLED) as { value?: string } | undefined
-      return row?.value !== '0' && row?.value !== 'false'
-    } catch {
-      return true
-    }
   }
 
   /** 按员工工具模式过滤并应用 onDemand 标志（off 移除，on_demand 标记按需，on 常驻） */
@@ -779,7 +787,7 @@ class EmployeeAgentService {
 
   private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {
     const config = await this.llmClient.getProviderConfig(providerId)
-    if (!config?.models_json) return 100
+    if (!config?.models_json) return 400
     try {
       const models: LLMModelConfig[] = JSON.parse(config.models_json)
       const matched = modelId
@@ -791,7 +799,7 @@ class EmployeeAgentService {
     } catch (err: any) {
       logger.warn(`Failed to parse models_json for max_iterations (provider=${providerId}):`, err?.message || err)
     }
-    return 100
+    return 400
   }
 
   private persistSystemPrompt(
@@ -876,20 +884,53 @@ class EmployeeAgentService {
   clearAgentCache(employeeId?: string): void {
     // 运行中的 agent 跳过：插件/工具热更新时保留正在生成的任务（不打断流式输出），
     // 其 toolEpoch 已失效，本轮结束后下次访问自动重建（见 getOrCreateAgent）
-    const purge = (key: string, entry: CachedAgentEntry) => {
-      if (entry.agent.isRunning()) return
-      // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
-      if (entry.mcpRelease) {
-        entry.mcpRelease().catch(() => { /* ignore */ })
-      }
-      this.agentEntries.delete(key)
-    }
     if (employeeId) {
       for (const [key, entry] of this.agentEntries.entries()) {
-        if (key.startsWith(`${employeeId}:`)) purge(key, entry)
+        if (key.startsWith(`${employeeId}:`)) this.purgeEntry(key, entry)
       }
     } else {
-      for (const [key, entry] of this.agentEntries.entries()) purge(key, entry)
+      for (const [key, entry] of this.agentEntries.entries()) this.purgeEntry(key, entry)
+    }
+  }
+
+  /** 会话删除时定向释放其 agent（IPC 与插件删除通道共用，避免缓存随会话数增长） */
+  clearAgentCacheForConversations(conversationIds: string[]): void {
+    if (conversationIds.length === 0) return
+    const ids = new Set(conversationIds)
+    for (const [key, entry] of this.agentEntries.entries()) {
+      if (!entry.conversationId || !ids.has(entry.conversationId)) continue
+      this.purgeEntry(key, entry)
+    }
+  }
+
+  private purgeEntry(key: string, entry: CachedAgentEntry): void {
+    if (entry.agent.isRunning()) return
+    // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
+    if (entry.mcpRelease) {
+      entry.mcpRelease().catch(() => { /* ignore */ })
+    }
+    this.agentEntries.delete(key)
+  }
+
+  /** 周期回收：空闲 agent 释放，并把缓存条目数压到上限内（运行中的始终保留） */
+  private sweepIdleAgents(): void {
+    const now = Date.now()
+    for (const [key, entry] of this.agentEntries.entries()) {
+      if (entry.agent.isRunning()) continue
+      if (now - entry.lastUsedAt < AGENT_IDLE_TTL_MS) continue
+      this.purgeEntry(key, entry)
+    }
+    this.trimAgentCache()
+  }
+
+  private trimAgentCache(): void {
+    if (this.agentEntries.size <= AGENT_CACHE_MAX) return
+    const idle = [...this.agentEntries.entries()]
+      .filter(([, entry]) => !entry.agent.isRunning())
+      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt)
+    for (const [key, entry] of idle) {
+      if (this.agentEntries.size <= AGENT_CACHE_MAX) break
+      this.purgeEntry(key, entry)
     }
   }
 
@@ -924,13 +965,18 @@ class EmployeeAgentService {
         for (const tc of validToolCalls) {
           // 工具执行成功但无返回值时，result 可能为 undefined/null/空字符串；
           // OpenAI 协议要求 tool result content 非空，补一个占位文本
-          const toolContent = tc.result === undefined || tc.result === null
-            ? ''
-            : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result))
+          // 优先使用 resultRaw（后端下发的 LLM 原文），保证与上一轮真实 transcript 字节一致；
+          // 对象按 2 空格缩进序列化，与 formatToolMessageContent 的成功分支保持一致
+          const toolContent = tc.resultRaw !== undefined
+            ? tc.resultRaw
+            : tc.result === undefined || tc.result === null
+              ? ''
+              : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2))
           result.push({
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            isError: tc.isError === true,
             images: tc.images,
           })
         }

@@ -1,46 +1,75 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Button, Divider, Input, Space, Typography, App } from 'antd'
-import { FolderOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Button, Divider, Input, Space, Typography, Tooltip, theme, App } from 'antd'
+import {
+  FolderOutlined,
+  FolderOpenOutlined,
+  FileSearchOutlined,
+  ReloadOutlined,
+  DeleteOutlined,
+} from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { formatFileSize } from '../../utils/format'
+import SettingsItem from '../common/SettingsItem'
+import type {
+  StorageCategoryKey,
+  StorageCategoryUsage,
+  StorageUsageResult,
+} from '../../../electron/shared/ipc-channels'
 
 const { Text, Title } = Typography
+
+// 分类键 → i18n 文案键
+const CATEGORY_LABEL_KEY: Record<StorageCategoryKey, string> = {
+  dataDir: 'settings.dataDir',
+  mainDb: 'settings.storageCatMainDb',
+  kmsDb: 'settings.storageCatKmsDb',
+  attachments: 'settings.storageCatAttachments',
+  workspaces: 'settings.storageCatWorkspaces',
+  skills: 'settings.storageCatSkills',
+  plugins: 'settings.storageCatPlugins',
+  pluginData: 'settings.storageCatPluginData',
+  logs: 'settings.storageCatLogs',
+  other: 'settings.storageCatOther',
+}
 
 const StorageSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
+  const { token } = theme.useToken()
   const [dataDir, setDataDir] = useState<string>('')
+  const [usage, setUsage] = useState<StorageUsageResult | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [clearing, setClearing] = useState(false)
-  const [logSize, setLogSize] = useState<number>(0)
-  const [logSizeLoading, setLogSizeLoading] = useState(false)
   const [clearingLogs, setClearingLogs] = useState(false)
 
-  const loadDataDir = useCallback(async () => {
+  const loadUsage = useCallback(async () => {
+    setUsageLoading(true)
     try {
-      const dir = await window.electronAPI.app.getDataDir()
-      setDataDir(dir || '')
+      const res = await window.electronAPI.app.getStorageUsage()
+      setUsage(res?.categories ? res : null)
+      setDataDir(res?.dataDir || '')
     } catch {
-      setDataDir('')
-    }
-  }, [])
-
-  const loadLogSize = useCallback(async () => {
-    setLogSizeLoading(true)
-    try {
-      const res = await window.electronAPI.app.getLogSize()
-      setLogSize(res?.size || 0)
-    } catch {
-      setLogSize(0)
+      setUsage(null)
     } finally {
-      setLogSizeLoading(false)
+      setUsageLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    loadDataDir()
-    loadLogSize()
-  }, [loadDataDir, loadLogSize])
+    loadUsage()
+  }, [loadUsage])
+
+  const handleOpenPath = useCallback(async (key: StorageCategoryKey) => {
+    try {
+      const res = await window.electronAPI.app.openStoragePath(key)
+      if (!res?.success) {
+        message.error(res?.error || t('settings.openPathFailed'))
+      }
+    } catch {
+      message.error(t('settings.openPathFailed'))
+    }
+  }, [message, t])
 
   const handleSelectDir = useCallback(async () => {
     try {
@@ -115,7 +144,7 @@ const StorageSettings: React.FC = () => {
           const res = await window.electronAPI.app.clearLogs()
           if (res?.success) {
             message.success(t('settings.clearLogsSuccess'))
-            await loadLogSize()
+            await loadUsage()
           } else {
             message.error(res?.error || t('settings.clearLogsFailed'))
           }
@@ -126,64 +155,121 @@ const StorageSettings: React.FC = () => {
         }
       },
     })
-  }, [loadLogSize, message, modal, t])
+  }, [loadUsage, message, modal, t])
+
+  const renderCategory = (category: StorageCategoryUsage) => {
+    // 占比以总占用为基准，便于直观看出"谁最占地方"
+    const percent = usage && usage.totalBytes > 0
+      ? Math.max(1, Math.round((category.bytes / usage.totalBytes) * 100))
+      : 0
+    return (
+      <div key={category.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 0' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+            <Text style={{ flex: 1, minWidth: 0 }} ellipsis={{ tooltip: category.path }}>
+              {t(CATEGORY_LABEL_KEY[category.key])}
+            </Text>
+            <Text strong style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+              {formatFileSize(category.bytes)}
+            </Text>
+          </div>
+          <div style={{ height: 4, marginTop: 6, borderRadius: 2, background: token.colorFillSecondary, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${percent}%`, borderRadius: 2, background: token.colorPrimary }} />
+          </div>
+        </div>
+        <Space size={2} style={{ flexShrink: 0 }}>
+          {category.canOpen && (
+            <Tooltip title={category.isFile ? t('settings.revealInExplorer') : t('settings.openDir')}>
+              <Button
+                size="small"
+                type="text"
+                icon={category.isFile ? <FileSearchOutlined /> : <FolderOpenOutlined />}
+                onClick={() => handleOpenPath(category.key)}
+              />
+            </Tooltip>
+          )}
+          {category.cleanable && (
+            <Tooltip title={t('settings.clearLogs')}>
+              <Button
+                size="small"
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                loading={clearingLogs}
+                onClick={handleClearLogs}
+              />
+            </Tooltip>
+          )}
+        </Space>
+      </div>
+    )
+  }
+
+  const diskText = usage?.diskFreeBytes != null && usage?.diskTotalBytes != null
+    ? t('settings.storageDisk', {
+        free: formatFileSize(usage.diskFreeBytes),
+        total: formatFileSize(usage.diskTotalBytes),
+      })
+    : ''
 
   return (
     <div>
       <Title level={5}>{t('settings.storageTitle')}</Title>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ flex: 1, marginRight: 16 }}>
-            <Text strong>{t('settings.dataDir')}</Text>
-            <br />
-            <Text type="secondary">{t('settings.dataDirDesc')}</Text>
-            <Space.Compact style={{ marginTop: 8, width: '100%' }}>
-              <Input
-                value={dataDir}
-                readOnly
-              />
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={loadDataDir}
-                loading={loading}
-              />
-            </Space.Compact>
-          </div>
-          <Button
-            icon={<FolderOutlined />}
-            onClick={handleSelectDir}
-            loading={loading}
-          >
-            {t('settings.selectDir')}
-          </Button>
-        </div>
-        <Divider />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ flex: 1, marginRight: 16 }}>
-            <Text strong>{t('settings.logStorage')}</Text>
-            <br />
-            <Text type="secondary">
-              {t('settings.logStorageDesc', { size: formatFileSize(logSize) })}
-            </Text>
-          </div>
-          <Space>
+        <SettingsItem
+          align="start"
+          title={t('settings.dataDir')}
+          description={t('settings.dataDirDesc')}
+          extra={
+            <Space size={8}>
+              <Button icon={<FolderOpenOutlined />} onClick={() => handleOpenPath('dataDir')}>
+                {t('settings.openDir')}
+              </Button>
+              <Button type="primary" icon={<FolderOutlined />} onClick={handleSelectDir} loading={loading}>
+                {t('settings.selectDir')}
+              </Button>
+            </Space>
+          }
+        >
+          <Input value={dataDir} readOnly />
+        </SettingsItem>
+        <Divider style={{ margin: 0 }} />
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text strong style={{ display: 'block' }}>{t('settings.storageUsage')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.storageUsageDesc')}</Text>
+            </div>
             <Button
+              size="small"
               icon={<ReloadOutlined />}
-              onClick={loadLogSize}
-              loading={logSizeLoading}
-            />
-            <Button
-              icon={<DeleteOutlined />}
-              danger
-              onClick={handleClearLogs}
-              loading={clearingLogs}
+              onClick={loadUsage}
+              loading={usageLoading}
             >
-              {t('settings.clearLogs')}
+              {t('common.refresh')}
             </Button>
-          </Space>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 12 }}>
+            <Text style={{ fontSize: 22, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              {usage ? formatFileSize(usage.totalBytes) : '--'}
+            </Text>
+            <Text type="secondary">{t('settings.storageTotal')}</Text>
+            {diskText && (
+              <Text type="secondary" style={{ marginLeft: 'auto', fontSize: 12 }}>{diskText}</Text>
+            )}
+          </div>
+          <div style={{ marginTop: 4 }}>
+            {usage?.categories?.length
+              ? usage.categories.map(renderCategory)
+              : (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {usageLoading ? t('common.loading') : t('settings.storageEmpty')}
+                </Text>
+              )}
+          </div>
         </div>
-        <Divider />
-        <Button danger loading={clearing} onClick={handleClearAllData}>
+        <Divider style={{ margin: 0 }} />
+        <Button danger block loading={clearing} onClick={handleClearAllData}>
           {t('settings.clearAllData')}
         </Button>
       </div>

@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'reac
 import { useTranslation } from 'react-i18next'
 import type { MessageSegment } from './types'
 import { formatDuration } from '../../utils/format'
+import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 import PreviewLine from './PreviewLine'
 
 const { Text } = Typography
@@ -32,6 +33,7 @@ const WorkProcessGroupInner: React.FC<{
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
+  const { containerRef: contentScrollRef, onScroll: contentOnScroll } = useAutoFollowScroll<HTMLDivElement>()
 
   const hasActive = useMemo(() => segments.some(isStepActive), [segments])
   // 执行中：任一步骤在跑，或本组是流式消息的末组（等待下一轮 LLM 输出也算执行中，避免来回闪动）
@@ -117,12 +119,18 @@ const WorkProcessGroupInner: React.FC<{
 
       {open && (
         <div
+          ref={contentScrollRef}
+          onScroll={contentOnScroll}
           style={{
             marginLeft: 4,
             paddingLeft: 12,
             borderLeft: `2px solid ${token.colorBorderSecondary}`,
-            display: 'flex',
-            flexDirection: 'column',
+            maxHeight: 420,
+            // 块流布局：子项恒为容器宽度，长 token 由 word-break 断行（flex 下 min-width:auto
+            // 会被长 URL/长串撑宽，导致底部横向滚动条随流式内容反复出现消失而闪烁）
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
           }}
         >
           {children}

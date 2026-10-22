@@ -110,6 +110,23 @@ const MessageList: React.FC<MessageListProps> = ({
     [messages, visibleStartIndex]
   )
 
+  // 当前对话平均输出速度：仅统计带计时数据的主对话助手消息（子任务用量单独展示）
+  const conversationTokensPerSec = useMemo(() => {
+    let completionTokens = 0
+    let generationMs = 0
+    for (const m of messages) {
+      if (m.role !== 'assistant' || m.isCompactSummary) continue
+      const branch = m.branches && (m.activeBranchIndex ?? m.branches.length) < m.branches.length
+        ? m.branches[m.activeBranchIndex ?? 0]
+        : undefined
+      const usage = branch ? branch.tokenUsage : m.tokenUsage
+      if (!usage?.completionTokens || !usage.generationMs) continue
+      completionTokens += usage.completionTokens
+      generationMs += usage.generationMs
+    }
+    return generationMs > 0 ? completionTokens / (generationMs / 1000) : undefined
+  }, [messages])
+
   const handleLoadMoreOlder = useCallback(() => {
     if (!chatContainerRef.current) return
     prevScrollHeightRef.current = chatContainerRef.current.scrollHeight
@@ -224,6 +241,7 @@ const MessageList: React.FC<MessageListProps> = ({
                   onCompact={isLastAssistantMsg ? onCompact : undefined}
                   hideMessageActions={hideMessageActions}
                   assistantEmployee={assistantEmployee}
+                  conversationTokensPerSec={conversationTokensPerSec}
                 />
               )
             })()}

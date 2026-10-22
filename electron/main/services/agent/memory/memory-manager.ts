@@ -1,8 +1,10 @@
 import { Message } from '../core/types'
+import { createHash } from 'node:crypto'
 import {
   IMemoryManager,
   MemoryConfig,
   MemoryStats,
+  MemoryStrategy,
   ManageContextOptions,
   DEFAULT_MEMORY_CONFIG,
 } from './types'
@@ -14,6 +16,21 @@ const logger = createLogger('MemoryManager')
 /** 单张图片的 token 估算（对齐主流视觉模型单图典型开销，防止图片对话压缩触发滞后） */
 const IMAGE_ESTIMATE_TOKENS = 1500
 
+/**
+ * 冻结的压缩结果：首次压缩后固定切点与摘要，后续轮次只要前缀未变就直接复用。
+ * 否则每来一个新 user turn，最近 N 轮窗口滑动 → olderMessages 变化 → 摘要重新生成，
+ * checkpoint 字节变化会让 system + 稳定头之后的整个前缀失效。
+ */
+interface FrozenCompression {
+  strategy: MemoryStrategy
+  /** 已压缩进摘要/丢弃的历史消息数量（history 下标） */
+  cutoff: number
+  /** 前 cutoff 条消息的内容指纹，用于识别编辑/删除等历史变更 */
+  prefixHash: string
+  /** 摘要策略下的 checkpoint 文本；sliding_window 无摘要 */
+  summary?: string
+}
+
 export class MemoryManager implements IMemoryManager {
   private config: MemoryConfig
   private lastStats: MemoryStats | null = null
@@ -21,6 +38,8 @@ export class MemoryManager implements IMemoryManager {
   private lastSummaryKey: string | null = null
   private lastSummaryText = ''
   private lastSummaryPromise: Promise<string> | null = null
+  /** 首次压缩后冻结的切点与摘要，保证后续轮次的 checkpoint 字节稳定 */
+  private frozen: FrozenCompression | null = null
 
   constructor(config?: Partial<MemoryConfig>) {
     this.config = { ...DEFAULT_MEMORY_CONFIG, ...config }
@@ -42,13 +61,14 @@ export class MemoryManager implements IMemoryManager {
       content: currentQuery,
     }
 
-    // 稳定锚点（system 之后、历史之前）与易变任务上下文（历史之后、query 之前）
-    // 均不参与压缩：锚点字节冻结构成缓存前缀，任务上下文只影响尾部。
+    // 稳定锚点（system 之后、历史之前）不参与压缩：字节冻结构成缓存前缀。
+    // 易变任务上下文不再进入消息列表，而是由调用方作为「请求末尾追加文本」注入，
+    // 这里只把它的 token 估算计入预算。
     const headAnchors = options?.headAnchors ?? []
-    const tailContext = options?.tailContext ?? []
+    const requestTailTokens = options?.requestTailTokens ?? 0
 
-    const fixedMessages = [systemMessage, ...headAnchors, ...tailContext, userMessage]
-    const fixedTokens = this.estimateTokens(fixedMessages)
+    const fixedMessages = [systemMessage, ...headAnchors, userMessage]
+    const fixedTokens = this.estimateTokens(fixedMessages) + requestTailTokens
     const availableForHistory = this.config.maxTokens - fixedTokens - this.config.reservedResponseTokens
 
     let managedHistory = [...history]
@@ -59,11 +79,14 @@ export class MemoryManager implements IMemoryManager {
 
     if (shouldCompress && managedHistory.length > 0) {
       wasCompressed = true
-      managedHistory = await this.compressHistory(managedHistory, availableForHistory, systemPrompt)
+      // 首次压缩后冻结切点/摘要：后续轮次只要前缀未变且压缩结果仍在预算内，直接复用，
+      // 避免最近 N 轮窗口滑动导致摘要与 checkpoint 每轮重算。
+      const frozen = options?.forceCompress ? null : this.buildFromFrozen(managedHistory, availableForHistory)
+      managedHistory = frozen ?? await this.compressHistory(managedHistory, availableForHistory, systemPrompt)
     }
 
-    const finalMessages = [systemMessage, ...headAnchors, ...managedHistory, ...tailContext, userMessage]
-    const totalTokens = this.estimateTokens(finalMessages)
+    const finalMessages = [systemMessage, ...headAnchors, ...managedHistory, userMessage]
+    const totalTokens = this.estimateTokens(finalMessages) + requestTailTokens
 
     const stats: MemoryStats = {
       totalMessages: finalMessages.length,
@@ -124,6 +147,8 @@ export class MemoryManager implements IMemoryManager {
     tokenBudget: number,
     systemPrompt: string
   ): Promise<Message[]> {
+    // 每次重压缩都先清空冻结态；成功产出可复用结果的分支会重新写入
+    this.frozen = null
     switch (this.config.strategy) {
       case 'sliding_window':
         return this.slidingWindowCompress(history, tokenBudget)
@@ -142,10 +167,12 @@ export class MemoryManager implements IMemoryManager {
     const recentTokens = this.estimateTokens(recentMessages)
 
     if (recentTokens <= tokenBudget) {
+      this.freeze('sliding_window', history, history.length - recentMessages.length)
       return recentMessages
     }
 
-    return this.truncateFromStart(recentMessages, tokenBudget)
+    // 保留轮次本身超预算：只能丢弃更早的整轮；冻结丢弃切点，避免下一轮窗口起点再次前移
+    return this.freezeSuffix('sliding_window', history, this.truncateFromStart(recentMessages, tokenBudget))
   }
 
   private async summaryCompress(
@@ -167,10 +194,12 @@ export class MemoryManager implements IMemoryManager {
     const compressedTokens = this.estimateTokens(compressed)
 
     if (compressedTokens <= tokenBudget) {
+      this.freeze('summary', history, history.length - 4, summary)
       return compressed
     }
 
-    return this.truncateFromStart(recentMessages, tokenBudget)
+    // 保留轮次本身超预算：丢弃摘要，冻结一个稳定的后缀切点
+    return this.freezeSuffix('summary', history, this.truncateFromStart(recentMessages, tokenBudget))
   }
 
   private async slidingWindowWithSummaryCompress(
@@ -186,12 +215,19 @@ export class MemoryManager implements IMemoryManager {
       const olderMessages = history.slice(0, history.length - recentMessages.length)
       if (olderMessages.length > 0) {
         const summary = await this.generateSummary(olderMessages, systemPrompt)
-        return [buildCheckpointMessage(summary), ...recentMessages]
+        const compressed = [buildCheckpointMessage(summary), ...recentMessages]
+        // 压缩后仍超预算（保留轮次本身过大）时继续收窄，否则下一轮会反复触发压缩 +
+        // 重算摘要，前缀每轮都被替换，KV cache 永远命中不了。
+        if (this.estimateTokens(compressed) > tokenBudget) {
+          return this.freezeSuffix('sliding_window_with_summary', history, this.truncateFromStart(recentMessages, tokenBudget))
+        }
+        this.freeze('sliding_window_with_summary', history, history.length - recentMessages.length, summary)
+        return compressed
       }
       return recentMessages
     }
 
-    return this.truncateFromStart(recentMessages, tokenBudget)
+    return this.freezeSuffix('sliding_window_with_summary', history, this.truncateFromStart(recentMessages, tokenBudget))
   }
 
   private getLastNTurns(history: Message[], turns: number): Message[] {
@@ -232,6 +268,83 @@ export class MemoryManager implements IMemoryManager {
     }
 
     return this.repairToolCallPairing(result)
+  }
+
+  /** 复用冻结的切点/摘要；前缀被编辑或压缩结果已超预算时返回 null 并交由重新压缩处理 */
+  private buildFromFrozen(history: Message[], tokenBudget: number): Message[] | null {
+    const frozen = this.frozen
+    if (!frozen || frozen.strategy !== this.config.strategy) return null
+    if (frozen.cutoff <= 0 || frozen.cutoff > history.length) return null
+    if (this.hashMessages(history.slice(0, frozen.cutoff)) !== frozen.prefixHash) {
+      this.frozen = null
+      return null
+    }
+    const suffix = history.slice(frozen.cutoff)
+    const compressed = frozen.summary !== undefined
+      ? (frozen.strategy === 'summary'
+          // summary 策略的首次压缩会修复 tool 配对，复用路径必须与之一致
+          ? this.repairToolCallPairing([buildCheckpointMessage(frozen.summary), ...suffix])
+          : [buildCheckpointMessage(frozen.summary), ...suffix])
+      : suffix
+    return this.estimateTokens(compressed) <= tokenBudget ? compressed : null
+  }
+
+  /** 压缩成功后冻结切点与摘要：cutoff=0 表示没有实际压缩，不冻结 */
+  private freeze(strategy: MemoryStrategy, history: Message[], cutoff: number, summary?: string): void {
+    if (cutoff <= 0) {
+      this.frozen = null
+      return
+    }
+    this.frozen = {
+      strategy,
+      cutoff,
+      prefixHash: this.hashMessages(history.slice(0, cutoff)),
+      ...(summary !== undefined ? { summary } : {}),
+    }
+  }
+
+  /**
+   * 保留轮次本身超预算时的兜底：kept 是 history 的连续后缀，冻结其起点即可，
+   * 下一轮仍按同一切点拼接新消息，不会因窗口滑动而每轮改变前缀。
+   */
+  private freezeSuffix(strategy: MemoryStrategy, history: Message[], kept: Message[]): Message[] {
+    const cutoff = history.length - kept.length
+    if (cutoff > 0) {
+      this.frozen = {
+        strategy,
+        cutoff,
+        prefixHash: this.hashMessages(history.slice(0, cutoff)),
+      }
+    }
+    return kept
+  }
+
+  /** 前 cutoff 条消息的内容指纹：覆盖角色、正文、思考、工具调用与图片引用 */
+  private hashMessages(messages: Message[]): string {
+    const hash = createHash('sha1')
+    for (const m of messages) {
+      hash.update(m.role)
+      hash.update('\u0000')
+      hash.update(m.content || '')
+      hash.update('\u0000')
+      hash.update(m.reasoning_content || '')
+      hash.update('\u0000')
+      hash.update(m.toolCallId || '')
+      hash.update('\u0000')
+      if (m.images?.length) hash.update(m.images.join('|'))
+      if (m.toolCalls?.length) {
+        for (const tc of m.toolCalls) {
+          hash.update(tc.id)
+          hash.update('\u0000')
+          hash.update(tc.function.name)
+          hash.update('\u0000')
+          hash.update(tc.function.arguments)
+          hash.update('\u0000')
+        }
+      }
+      hash.update('\u0001')
+    }
+    return hash.digest('hex')
   }
 
   /**

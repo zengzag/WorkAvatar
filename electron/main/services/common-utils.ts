@@ -86,7 +86,7 @@ export function getDefaultProviderId(db: { getDb(): any }): string | null {
   return row ? row.id : null
 }
 
-export function extractMessagePreview(messagesJson: string): string {
+export function extractMessagePreview(messagesJson: string, maxChars: number = 4000): string {
   try {
     const messages = JSON.parse(messagesJson || '[]')
     if (!Array.isArray(messages)) return ''
@@ -109,7 +109,7 @@ export function extractMessagePreview(messagesJson: string): string {
       }
     }
     const preview = parts.join(' ')
-    return preview.length > 4000 ? preview.substring(0, 4000) : preview
+    return preview.length > maxChars ? preview.substring(0, maxChars) : preview
   } catch {
     return ''
   }

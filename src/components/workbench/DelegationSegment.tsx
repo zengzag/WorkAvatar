@@ -57,7 +57,7 @@ const DelegationSegmentInner: React.FC<{
 }> = ({ seg, msgId, onToggle, getToolDisplayName }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  const isExpanded = !seg.collapsed
+  const isExpanded = seg.collapsed === false
   const status = seg.delegationStatus || 'streaming'
 
   const isError = status === 'failed' || status === 'timed_out'

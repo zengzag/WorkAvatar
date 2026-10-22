@@ -1,4 +1,4 @@
-import { memo, useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { memo, useState, useMemo, useCallback, useRef, useEffect, startTransition } from 'react'
 import { Input, Button, Typography, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
 import type { MenuProps, InputRef } from 'antd'
 import {
@@ -20,6 +20,11 @@ import dayjs from 'dayjs'
 import type { Conversation, Employee } from '../../types'
 
 const { Text } = Typography
+
+const SIDEBAR_WIDTH_KEY = 'tasks:sidebarWidth'
+const SIDEBAR_MIN_WIDTH = 200
+const SIDEBAR_MAX_WIDTH = 560
+const SIDEBAR_DEFAULT_WIDTH = 260
 
 export interface TaskWithEmployee extends Conversation {
   employee_name: string
@@ -49,7 +54,7 @@ interface TaskSidebarProps {
   onLoadMore?: () => void
 }
 
-const formatTime = (timestamp: number | null, t: (key: string, options?: Record<string, any>) => string): string => {
+export const formatTaskTime = (timestamp: number | null, t: (key: string, options?: Record<string, any>) => string): string => {
   if (!timestamp) return ''
   const now = dayjs()
   const time = dayjs(timestamp * 1000)
@@ -61,6 +66,94 @@ const formatTime = (timestamp: number | null, t: (key: string, options?: Record<
   if (now.isSame(time, 'year')) return t('workbench.monthDay', { month: time.month() + 1, day: time.date() })
   return time.format('YYYY/M/D')
 }
+
+/** 搜索提交防抖时长：停止输入后再触发检索与列表过滤 */
+const SEARCH_DEBOUNCE_MS = 250
+
+/**
+ * 搜索输入框：本地维护输入值并防抖提交。
+ * 输入过程只重渲染这个小组件，不触发整页（含对话区）重渲染与后端检索；
+ * 提交时用 startTransition 标记为低优先级，避免长列表/流式输出阻塞按键。
+ */
+const DebouncedSearchInput = memo(({
+  value,
+  onChange,
+  placeholder,
+  token,
+}: {
+  value: string
+  onChange: (query: string) => void
+  placeholder: string
+  token: any
+}) => {
+  const [local, setLocal] = useState(value)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onChangeRef = useRef(onChange)
+
+  useEffect(() => { onChangeRef.current = onChange }, [onChange])
+  // 外部重置（如清空筛选）时同步本地值
+  useEffect(() => { setLocal(value) }, [value])
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+
+  const commit = useCallback((next: string, immediate = false) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    const run = () => startTransition(() => onChangeRef.current(next))
+    if (immediate) {
+      run()
+    } else {
+      timerRef.current = setTimeout(run, SEARCH_DEBOUNCE_MS)
+    }
+  }, [])
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value
+    setLocal(next)
+    commit(next)
+  }, [commit])
+
+  const handleClear = useCallback(() => {
+    setLocal('')
+    commit('', true)
+  }, [commit])
+
+  return (
+    <>
+      <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
+      <input
+        placeholder={placeholder}
+        value={local}
+        onChange={handleChange}
+        style={{
+          flex: 1,
+          height: '100%',
+          border: 'none',
+          outline: 'none',
+          background: 'transparent',
+          fontSize: 12,
+          padding: '0 6px',
+          color: token.colorText,
+          minWidth: 0,
+        }}
+      />
+      {local && (
+        <Button
+          type="text"
+          size="small"
+          icon={<CloseOutlined style={{ fontSize: 10 }} />}
+          onClick={handleClear}
+          style={{
+            flexShrink: 0,
+            width: 18,
+            height: 18,
+            minWidth: 18,
+            padding: 0,
+            color: token.colorTextQuaternary,
+          }}
+        />
+      )}
+    </>
+  )
+})
 
 const TaskItem = memo(({
   task,
@@ -207,7 +300,7 @@ const TaskItem = memo(({
         onMouseLeave={() => { setHovered(false); setDeleteConfirm(false) }}
         onDoubleClick={(e) => { if (!selectionMode) startEdit(e) }}
         style={{
-          padding: '8px 10px',
+          padding: '5px 10px',
           borderRadius: 6,
           cursor: isEditing ? 'text' : 'pointer',
           background: selectionMode
@@ -216,13 +309,13 @@ const TaskItem = memo(({
           border: active && !selectionMode ? `1px solid ${token.colorPrimaryBorder}` : (selected ? `1px solid ${token.colorPrimaryBorder}` : '1px solid transparent'),
           transition: 'all 0.15s',
           display: 'flex',
-          alignItems: 'flex-start',
+          alignItems: 'center',
           gap: 8,
           position: 'relative',
         }}
       >
         {selectionMode && (
-          <div style={{ flexShrink: 0, paddingTop: 1 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
             <Checkbox
               checked={!!selected}
               onChange={() => onToggleSelect?.(task.id)}
@@ -230,8 +323,8 @@ const TaskItem = memo(({
             />
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 0, paddingRight: hovered && !isEditing && !selectionMode ? (deleteConfirm ? 76 : 48) : 0, transition: 'padding-right 0.15s' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 24 }}>
             {streaming && (
               <span style={{
                 width: 6, height: 6, borderRadius: '50%',
@@ -249,29 +342,42 @@ const TaskItem = memo(({
                 size="small"
                 variant="filled"
                 onClick={(e) => e.stopPropagation()}
-                style={{ flex: 1, minWidth: 0, fontSize: 13, padding: '0 8px', height: 22 }}
+                style={{ flex: 1, minWidth: 0, fontSize: 14, padding: '0 8px', height: 24 }}
               />
             ) : (
-              <Text
-                strong={active}
-                ellipsis
-                style={{ fontSize: 13, flex: 1, minWidth: 0 }}
-              >
-                {task.title || t('workbench.untitledConv')}
-              </Text>
+              <>
+                <Text
+                  strong={active}
+                  ellipsis
+                  style={{ fontSize: 14, flex: 1, minWidth: 0 }}
+                >
+                  {task.title || t('workbench.untitledConv')}
+                </Text>
+                {/* 固定宽度时间槽：悬停时时间淡出、操作按钮原位淡入，标题不位移 */}
+                <span style={{ position: 'relative', width: 56, height: '100%', flexShrink: 0 }}>
+                  <span style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    fontSize: 12,
+                    color: token.colorTextTertiary,
+                    whiteSpace: 'nowrap',
+                    opacity: hovered && !isEditing && !selectionMode ? 0 : 1,
+                    transition: 'opacity 0.15s',
+                  }}>
+                    {formatTaskTime(task.last_message_at ?? task.created_at, t)}
+                  </span>
+                </span>
+              </>
             )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: token.colorTextTertiary }}>
-            <RobotOutlined style={{ fontSize: 10 }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.employee_name}</span>
-            <span>·</span>
-            <span style={{ flexShrink: 0 }}>{formatTime(task.last_message_at ?? task.created_at, t)}</span>
           </div>
         </div>
         <div
           style={{
             position: 'absolute',
-            top: 8,
+            top: '50%',
+            transform: 'translateY(-50%)',
             right: 10,
             opacity: hovered && !isEditing && !selectionMode ? 1 : 0,
             pointerEvents: hovered && !isEditing && !selectionMode ? 'auto' : 'none',
@@ -359,6 +465,46 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
+  // 侧栏宽度：支持拖拽调整并持久化
+  const [width, setWidth] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+      if (Number.isFinite(saved) && saved >= SIDEBAR_MIN_WIDTH && saved <= SIDEBAR_MAX_WIDTH) return saved
+    } catch {}
+    return SIDEBAR_DEFAULT_WIDTH
+  })
+  const [resizing, setResizing] = useState(false)
+  const sidebarRef = useRef<HTMLDivElement>(null)
+  const widthRef = useRef(width)
+  useEffect(() => { widthRef.current = width }, [width])
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setResizing(true)
+  }, [])
+
+  useEffect(() => {
+    if (!resizing) return
+    const onMouseMove = (e: MouseEvent) => {
+      const left = sidebarRef.current?.getBoundingClientRect().left ?? 0
+      setWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(e.clientX - left))))
+    }
+    const onMouseUp = () => {
+      setResizing(false)
+      try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(widthRef.current)) } catch {}
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [resizing])
+
   // 退出多选时清空选中
   const exitSelectionMode = useCallback(() => {
     setSelectionMode(false)
@@ -419,14 +565,16 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   }, [handleScroll])
 
   return (
-    <div style={{
-      width: 260,
+    <div ref={sidebarRef} style={{
+      width,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',
       borderRight: `1px solid ${token.colorBorderSecondary}`,
       background: token.colorBgContainer,
       height: '100%',
+      position: 'relative',
+      userSelect: resizing ? 'none' : undefined,
     }}>
       {/* 顶部操作区：单行整合 - 关闭面板 | 搜索框(内嵌筛选/多选) | 新建任务 */}
       <div style={{
@@ -504,39 +652,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
               onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary }}
             >
-              <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
-              <input
-                placeholder={t('tasks.searchPlaceholder')}
+              <DebouncedSearchInput
                 value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                style={{
-                  flex: 1,
-                  height: '100%',
-                  border: 'none',
-                  outline: 'none',
-                  background: 'transparent',
-                  fontSize: 12,
-                  padding: '0 6px',
-                  color: token.colorText,
-                  minWidth: 0,
-                }}
+                onChange={onSearchChange}
+                placeholder={t('tasks.searchPlaceholder')}
+                token={token}
               />
-              {searchQuery && (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined style={{ fontSize: 10 }} />}
-                  onClick={() => onSearchChange('')}
-                  style={{
-                    flexShrink: 0,
-                    width: 18,
-                    height: 18,
-                    minWidth: 18,
-                    padding: 0,
-                    color: token.colorTextQuaternary,
-                  }}
-                />
-              )}
               {/* 筛选按钮 - 内嵌搜索框右侧 */}
               <Dropdown
                 open={filterVisible}
@@ -773,6 +894,28 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           </>
         )}
       </div>
+
+      {/* 宽度拖拽手柄 */}
+      <div
+        onMouseDown={handleResizeStart}
+        onDoubleClick={() => {
+          setWidth(SIDEBAR_DEFAULT_WIDTH)
+          try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_DEFAULT_WIDTH)) } catch {}
+        }}
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: -2,
+          width: 5,
+          height: '100%',
+          cursor: 'col-resize',
+          zIndex: 10,
+          background: resizing ? token.colorPrimaryBorder : 'transparent',
+          transition: resizing ? 'none' : 'background 0.15s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = token.colorPrimaryBorder }}
+        onMouseLeave={(e) => { if (!resizing) e.currentTarget.style.background = 'transparent' }}
+      />
 
       <style>{`
         @keyframes pulse {

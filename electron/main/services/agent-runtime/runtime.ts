@@ -7,6 +7,7 @@ import MemoryRefinementService from '../memory-refinement.service'
 import WorkspaceManagerService from '../workspace-manager.service'
 import EmployeeAgentService from '../employee-agent.service'
 import EmployeeRegistryService from '../employee-registry.service'
+import LLMClientService from '../llm-client.service'
 import { interactionContext } from '../unified-interaction.service'
 import { broadcastRunEvent } from '../../ipc/agent-run-events'
 import { generateId } from '../common-utils'
@@ -885,6 +886,12 @@ class SubAgentRuntime {
       } finally {
         if (timer) clearTimeout(timer)
       }
+      // 等待超时而 run 仍未结束：转为后台通知模式（完成后向主管投递通知），
+      // 避免主管只拿到一次「未完成」结果后再也无法获知终态
+      if (!isTerminal(entry.run.status) && !entry.run.runInBackground) {
+        entry.run.runInBackground = true
+        this.persistRun(entry.run)
+      }
       return this.buildOutcome(entry.run)
     })
     return Promise.all(waiters)
@@ -916,6 +923,11 @@ class SubAgentRuntime {
     }
     if (run.status === 'cancelled') {
       return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '已取消', conversationId: run.conversationId }
+    }
+    // 未终态（等待超时、仍在排队/执行）：不是失败，交由调用方按 pending 语义呈现，
+    // 避免把「仍在运行」误报为执行失败（主管 LLM 与前端委托卡都会因此误判）
+    if (!isTerminal(run.status)) {
+      return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, pending: true, conversationId: run.conversationId }
     }
     return { runId: run.runId, employeeName: run.employeeName, status: run.status, success: false, error: run.error || '执行失败', conversationId: run.conversationId }
   }
@@ -1022,6 +1034,9 @@ class SubAgentRuntime {
       total.completionTokens = (total.completionTokens || 0) + (u.completionTokens || 0)
       total.totalTokens = (total.totalTokens || 0) + (u.totalTokens || 0)
       total.cachedTokens = (total.cachedTokens || 0) + (u.cachedTokens || 0)
+      if (u.generationMs !== undefined) {
+        total.generationMs = (total.generationMs || 0) + u.generationMs
+      }
     }
     return hasAny ? total : undefined
   }
@@ -1081,6 +1096,22 @@ class SubAgentRuntime {
           this.kickQueue()
         })
     }
+  }
+
+  /** 父会话绑定的默认模型（default_model_json）：委托子任务默认沿用发起会话的模型，provider 已失效时返回 null */
+  private async resolveParentConversationModel(conversationId: string): Promise<{ providerId: string; modelId: string } | null> {
+    if (!conversationId) return null
+    try {
+      const row = DatabaseService.getInstance().getDb()
+        .prepare('SELECT default_model_json FROM conversations WHERE id = ?')
+        .get(conversationId) as { default_model_json?: string } | undefined
+      const obj = JSON.parse(row?.default_model_json || '{}')
+      if (!obj?.providerId || !obj?.modelId) return null
+      const config = await LLMClientService.getInstance().getProviderConfig(obj.providerId)
+      if (!config) return null
+      return { providerId: obj.providerId, modelId: obj.modelId }
+    } catch { /* ignore parse/db error */ }
+    return null
   }
 
   private async executeRun(runId: string): Promise<void> {
@@ -1235,20 +1266,24 @@ class SubAgentRuntime {
     }
 
     try {
+      const parentModel = await this.resolveParentConversationModel(run.parentConversationId)
       const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
       const hasRunOverride = !!(run.providerId && run.modelId)
-      if (!resolved && !hasRunOverride) {
+      if (!resolved && !parentModel && !hasRunOverride) {
         subError = '无可用 LLM 提供商（请在设置中配置默认模型）'
       } else {
         let providerId = resolved?.providerId || ''
         let modelId = resolved?.modelId || ''
-        // 模型覆盖优先级：运行级显式覆盖（模板任务节点/运行指定）> 临时角色覆盖 > 全局默认
+        // 模型覆盖优先级：运行级显式覆盖（模板任务节点/运行指定）> 临时角色覆盖 > 父会话绑定模型（与主任务一致）> 场景默认
         if (hasRunOverride) {
           providerId = run.providerId!
           modelId = run.modelId!
         } else if (run.ephemeral?.providerId && run.ephemeral?.modelId) {
           providerId = run.ephemeral.providerId
           modelId = run.ephemeral.modelId
+        } else if (parentModel) {
+          providerId = parentModel.providerId
+          modelId = parentModel.modelId
         }
         const ws = WorkspaceManagerService.getInstance()
         if (run.conversationId) {
@@ -1364,7 +1399,7 @@ function mergeTokenUsage(a: AgentRunTokenUsage | undefined, b: AgentRunTokenUsag
   if (!a) return b ? { ...b } : undefined
   if (!b) return a
   const out: AgentRunTokenUsage = { ...a }
-  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens'] as const) {
+  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens', 'generationMs'] as const) {
     const val = b[key]
     if (val !== undefined) out[key] = (a[key] || 0) + val
   }

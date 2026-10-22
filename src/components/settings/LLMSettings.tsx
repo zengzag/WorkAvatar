@@ -77,7 +77,7 @@ export const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   vertex: { baseURL: '' },
   bedrock: { baseURL: '' },
   xai: { baseURL: 'https://api.x.ai/v1' },
-  'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1' },
+  'opencode-go': { baseURL: 'https://opencode.ai/inference/go/v1' },
 }
 
 // 解析 provider 的 models_json 字符串，统一处理异常与 category 默认值
@@ -262,7 +262,7 @@ const LLMSettings: React.FC = () => {
       category: 'chat',
       temperature: 0.7,
       max_tokens: 32 * 1024,
-      max_retry: 100,
+      max_retry: 400,
       context_window: 256 * 1024,
     })
     setModelModalVisible(true)
@@ -280,7 +280,7 @@ const LLMSettings: React.FC = () => {
       top_p: model.top_p,
       frequency_penalty: model.frequency_penalty,
       presence_penalty: model.presence_penalty,
-      max_retry: model.max_retry ?? 100,
+      max_retry: model.max_retry ?? 400,
       context_window: model.context_window,
       thinking_budget: model.thinking_budget,
       supports_image_input: model.supports_image_input,

@@ -53,6 +53,13 @@ export type PluginCapability =
   | { domain: 'data'; entities: PluginDataEntity[]; access: PluginDataAccess }
   | { domain: 'execute'; kinds: PluginExecuteKind[] }
   | { domain: 'kms'; query: PluginKmsQueryType[] }
+  | {
+      /**
+       * 模板任务运行（services.workflow）：驱动宿主内置的流程编排引擎，
+       * 用于模板任务（Workflow）插件按流程图逐节点执行数字员工/临时角色。
+       */
+      domain: 'workflow'
+    }
   | { domain: 'events'; subscribe?: string[]; publish?: boolean }
   | { domain: 'ui'; views: PluginViewPoint[] }
   | { domain: 'system'; features: PluginSystemFeature[] }
@@ -68,6 +75,12 @@ export type PluginCapability =
        * 或 `*.` 前缀通配（`*.doubao.com` 命中该域及其任意子域）。协议恒为 https。
        */
       origins: PluginWebviewOrigin[]
+      /**
+       * 允许插件在运行时追加用户自定义站点域名（经 `ctx.webview.allowOrigins` 注册，
+       * 仅精确主机名、恒 https）。声明为 true 后，插件才可把用户输入的网址交给宿主放行。
+       * 未声明时运行时注册调用会被拒绝。
+       */
+      allowUserOrigins?: boolean
     }
   | {
       // 插件协作：共享 KV + 跨插件 RPC
@@ -107,6 +120,20 @@ export interface PluginManifestEmployee {
   avatarType?: string
 }
 
+/**
+ * vendor 目录声明（构建期指令，宿主运行时不读取）。
+ * 用于把自带 code-split chunk / Web Worker / 二进制资源、无法单文件 bundle 的
+ * 第三方产物原样拷入插件目录（如 `vendor/xxx`），构建脚本 `--zip` 时一并打包。
+ */
+export interface PluginVendorEntry {
+  /** 源目录（相对插件根目录，通常指向 node_modules 内的包产物） */
+  from: string
+  /** 目标目录（相对插件根目录） */
+  to: string
+  /** 可选后处理脚本（相对插件根目录），默认导出 (destDir: string) => void，用于改写产物 */
+  patch?: string
+}
+
 export interface PluginManifest {
   /** 唯一 id：/^[a-z][a-z0-9-]{1,63}$/，不可用保留字 settings/tasks/employees */
   id: string
@@ -134,5 +161,11 @@ export interface PluginManifest {
   dependencies?: Record<string, string>
   /** 内置数字员工声明（激活成功后注册进员工库「插件」分组，用户可另存副本） */
   employees?: PluginManifestEmployee[]
+  /**
+   * vendor 目录声明（**构建期**指令，宿主运行时不读取）：
+   * 把无法单文件 bundle 的第三方产物（code-split chunk / Web Worker / 二进制资源）
+   * 原样拷入插件目录，随 `.wap` 一并分发。
+   */
+  vendor?: PluginVendorEntry[]
   nav?: PluginNavContribution
 }

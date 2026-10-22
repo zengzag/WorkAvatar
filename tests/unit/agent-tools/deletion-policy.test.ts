@@ -2,6 +2,25 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+
+// 单测不依赖真实 OS 沙箱：confine 透传，删除通道策略在沙箱之前生效
+vi.mock('../../../electron/main/services/sandbox.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/main/services/sandbox.service')>()
+  return {
+    ...actual,
+    default: {
+      getInstance: () => ({
+        confine: (input: any) => ({
+          program: input.program,
+          args: [...input.args],
+          env: {},
+          facts: { mode: input.mode, backend: 'none', enforcement: 'full', denied: false },
+          cleanup: () => {},
+        }),
+      }),
+    },
+  }
+})
 import { shellExecTool, DELETION_FORBIDDEN_HINT } from '../../../electron/main/services/agent/tools/shell-exec.tool'
 import { fileDeleteTool, residentFileTools } from '../../../electron/main/services/agent/tools/fs-tools'
 import { allBuiltinTools } from '../../../electron/main/services/agent/tools/index'
@@ -9,7 +28,7 @@ import { interactionContext } from '../../../electron/main/services/unified-inte
 
 /**
  * 删除通道策略：删除一律走 file_delete 工具，
- * shell_exec / javascript_exec 中的删除命令与删除脚本被硬拒绝（不受高权限模式影响）。
+ * shell_exec 中的删除命令与删除脚本被硬拒绝（不受高权限模式影响）。
  */
 
 function makeTempRoot(prefix = 'wa-del-'): string {
@@ -70,11 +89,19 @@ describe('shell_exec - 删除命令硬拒绝', () => {
     expect(result.error).toContain('file_delete')
   })
 
-  it('写命令不受删除禁令影响（区外无交互上下文时按原逻辑拒绝）', async () => {
-    const result = await runShell('Set-Content a.txt -Value x')
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('无交互上下文')
-    expect(result.error).not.toContain('file_delete')
+  it('写命令不再由文本分析决定：工作区内写入直接执行', async () => {
+    const ws = makeTempRoot('wa-write-')
+    try {
+      const result = await interactionContext.run(
+        { sessionId: 'write-1', employeeId: 'e1', workspacePath: ws } as never,
+        () => runShell('Set-Content a.txt -Value x', ws),
+      )
+      expect(result.error || '').not.toContain('file_delete')
+      expect(result.success, result.error).toBe(true)
+      expect(fs.existsSync(path.join(ws, 'a.txt'))).toBe(true)
+    } finally {
+      fs.rmSync(ws, { recursive: true, force: true })
+    }
   })
 })
 
@@ -250,79 +277,136 @@ describe('file_delete 工具', () => {
     expect(result.output).toContain('未匹配到文件的通配路径')
   })
 
-  it('工具以常驻工具注册，描述中声明删除通道唯一', () => {
+  it('工具以常驻工具注册，描述覆盖回收站与递归删除边界', () => {
     expect(fileDeleteTool.id).toBe('file_delete')
     expect(fileDeleteTool.onDemand).toBeFalsy()
-    expect(fileDeleteTool.description).toContain('file_delete')
+    expect(fileDeleteTool.description).toContain('trash')
+    expect(fileDeleteTool.description).toContain('recursive')
     expect(DELETION_FORBIDDEN_HINT).toContain('file_delete')
   })
 
-  it('已挂入常驻文件工具与内置工具注册表（员工默认 on，非按需）', () => {
+  it('已挂入常驻文件工具与内置工具注册表（file_edit 已并入常驻 files_edit）', () => {
     expect(residentFileTools.map(t => t.id)).toContain('file_delete')
+    expect(residentFileTools.map(t => t.id)).toContain('files_edit')
     const registered = allBuiltinTools.find(t => t.id === 'file_delete')
     expect(registered, 'file_delete 未注册进 allBuiltinTools').toBeDefined()
     expect(registered!.onDemand).toBeFalsy()
+    expect(allBuiltinTools.some(t => t.id === 'file_edit')).toBe(false)
+    expect(allBuiltinTools.find(t => t.id === 'files_edit')!.onDemand).toBeFalsy()
   })
 })
 
-describe('javascript_exec - 脚本内删除硬拒绝', () => {
+describe('file_copy - 复制文件/目录授权', () => {
   let ws: string
+  let outside: string
 
-  beforeEach(() => { ws = makeTempRoot('wa-js-del-') })
+  beforeEach(() => {
+    ws = makeTempRoot('wa-cp-ws-')
+    outside = makeTempRoot('wa-cp-out-')
+  })
   afterEach(() => {
-    vi.restoreAllMocks()
     fs.rmSync(ws, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
   })
 
-  async function runJs(code: string): Promise<ToolResult> {
-    const mod = await import('../../../electron/main/services/agent/tools/javascript-exec.tool')
-    return mod.javascriptExecTool.handler!({ code, working_dir: ws, timeout: 10 } as never) as Promise<ToolResult>
+  async function runCopy(args: Record<string, unknown>): Promise<ToolResult> {
+    const mod = await import('../../../electron/main/services/agent/tools/fs-tools')
+    return mod.fileCopyTool.handler!(args) as Promise<ToolResult>
   }
 
-  it('file.delete 被拒绝并引导使用 file_delete', async () => {
-    const target = path.join(ws, 'a.txt')
-    fs.writeFileSync(target, 'x')
-    const result = await withEmployeeWorkspace(ws, () => runJs(`await file.delete(${JSON.stringify(target)})`))
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('file_delete')
-    expect(fs.existsSync(target)).toBe(true)
-  })
-
-  it('fs 删除原语在预检查阶段被拒绝（不进入沙箱执行）', async () => {
-    const target = path.join(ws, 'b.txt')
-    fs.writeFileSync(target, 'x')
-    const result = await withEmployeeWorkspace(ws, () => runJs(`require('fs').unlinkSync(${JSON.stringify(target)})`))
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('file_delete')
-    expect(fs.existsSync(target)).toBe(true)
-  })
-
-  it('file["delete"] 计算属性写法同样被拒绝', async () => {
-    const target = path.join(ws, 'd.txt')
-    fs.writeFileSync(target, 'x')
-    const result = await withEmployeeWorkspace(ws, () => runJs(`await file["delete"](${JSON.stringify(target)})`))
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('file_delete')
-    expect(fs.existsSync(target)).toBe(true)
-  })
-
-  it('code_file 内容含删除时同样被拒绝', async () => {
-    const scriptFile = path.join(ws, 'gen.js')
-    const target = path.join(ws, 'c.txt')
-    fs.writeFileSync(target, 'x')
-    fs.writeFileSync(scriptFile, `await file.delete(${JSON.stringify(target)})\n`, 'utf-8')
-    const result = await withEmployeeWorkspace(ws, async () => {
-      const mod = await import('../../../electron/main/services/agent/tools/javascript-exec.tool')
-      return mod.javascriptExecTool.handler!({ code_file: scriptFile, working_dir: ws, timeout: 10 } as never) as Promise<ToolResult>
-    })
-    expect(result.success).toBe(false)
-    expect(result.error).toContain('file_delete')
-    expect(fs.existsSync(target)).toBe(true)
-  })
-
-  it('纯写入脚本不受影响', async () => {
-    const result = await withEmployeeWorkspace(ws, () => runJs('await file.createFolder("out")\nawait file.save("out/ok.txt", "hi")'))
+  it('工作区内复制文件成功（相对路径按工作区解析）', async () => {
+    const src = path.join(ws, 'a.txt')
+    fs.writeFileSync(src, 'hello')
+    const result = await withEmployeeWorkspace(ws, () => runCopy({ source: 'a.txt', destination: 'out/b.txt' }))
     expect(result.success, result.error).toBe(true)
-    expect(fs.existsSync(path.join(ws, 'out', 'ok.txt'))).toBe(true)
+    expect(fs.readFileSync(path.join(ws, 'out', 'b.txt'), 'utf-8')).toBe('hello')
+  })
+
+  it('目标为已存在目录时按源文件名复制进去', async () => {
+    const src = path.join(ws, 'report.md')
+    fs.writeFileSync(src, 'x')
+    fs.mkdirSync(path.join(ws, 'dist'))
+    const result = await withEmployeeWorkspace(ws, () => runCopy({ source: 'report.md', destination: 'dist' }))
+    expect(result.success, result.error).toBe(true)
+    expect(fs.existsSync(path.join(ws, 'dist', 'report.md'))).toBe(true)
+  })
+
+  it('目标已存在且未传 overwrite 时拒绝，传 overwrite 才覆盖', async () => {
+    const src = path.join(ws, 'src.txt')
+    const dst = path.join(ws, 'dst.txt')
+    fs.writeFileSync(src, 'new')
+    fs.writeFileSync(dst, 'old')
+
+    const refused = await withEmployeeWorkspace(ws, () => runCopy({ source: 'src.txt', destination: 'dst.txt' }))
+    expect(refused.success).toBe(false)
+    expect(refused.error).toContain('目标已存在')
+    expect(fs.readFileSync(dst, 'utf-8')).toBe('old')
+
+    const overwritten = await withEmployeeWorkspace(ws, () => runCopy({ source: 'src.txt', destination: 'dst.txt', overwrite: true }))
+    expect(overwritten.success, overwritten.error).toBe(true)
+    expect(fs.readFileSync(dst, 'utf-8')).toBe('new')
+  })
+
+  it('复制目录（递归）到新路径，并保留子目录结构', async () => {
+    fs.mkdirSync(path.join(ws, 'pkg', 'sub'), { recursive: true })
+    fs.writeFileSync(path.join(ws, 'pkg', 'a.txt'), 'A')
+    fs.writeFileSync(path.join(ws, 'pkg', 'sub', 'b.txt'), 'B')
+    const result = await withEmployeeWorkspace(ws, () => runCopy({ source: 'pkg', destination: 'dist/pkg-copy' }))
+    expect(result.success, result.error).toBe(true)
+    expect(result.output).toContain('已复制目录')
+    expect(fs.readFileSync(path.join(ws, 'dist', 'pkg-copy', 'a.txt'), 'utf-8')).toBe('A')
+    expect(fs.readFileSync(path.join(ws, 'dist', 'pkg-copy', 'sub', 'b.txt'), 'utf-8')).toBe('B')
+  })
+
+  it('目标为已存在目录时按源目录名复制进去', async () => {
+    fs.mkdirSync(path.join(ws, 'pkg'))
+    fs.writeFileSync(path.join(ws, 'pkg', 'a.txt'), 'A')
+    fs.mkdirSync(path.join(ws, 'out'))
+    const result = await withEmployeeWorkspace(ws, () => runCopy({ source: 'pkg', destination: 'out' }))
+    expect(result.success, result.error).toBe(true)
+    expect(fs.readFileSync(path.join(ws, 'out', 'pkg', 'a.txt'), 'utf-8')).toBe('A')
+  })
+
+  it('overwrite=true 整体替换已存在的目标目录', async () => {
+    fs.mkdirSync(path.join(ws, 'pkg'))
+    fs.writeFileSync(path.join(ws, 'pkg', 'new.txt'), 'new')
+    fs.mkdirSync(path.join(ws, 'out', 'pkg'), { recursive: true })
+    fs.writeFileSync(path.join(ws, 'out', 'pkg', 'old.txt'), 'old')
+
+    const refused = await withEmployeeWorkspace(ws, () => runCopy({ source: 'pkg', destination: 'out' }))
+    expect(refused.success).toBe(false)
+    expect(refused.error).toContain('目标已存在')
+    expect(fs.existsSync(path.join(ws, 'out', 'pkg', 'old.txt'))).toBe(true)
+
+    const replaced = await withEmployeeWorkspace(ws, () => runCopy({ source: 'pkg', destination: 'out', overwrite: true }))
+    expect(replaced.success, replaced.error).toBe(true)
+    expect(fs.readFileSync(path.join(ws, 'out', 'pkg', 'new.txt'), 'utf-8')).toBe('new')
+    expect(fs.existsSync(path.join(ws, 'out', 'pkg', 'old.txt'))).toBe(false)
+  })
+
+  it('源不存在、目录复制到自身/子目录、文件源与目标相同分别报错', async () => {
+    const missing = await withEmployeeWorkspace(ws, () => runCopy({ source: 'nope.txt', destination: 'x.txt' }))
+    expect(missing.success).toBe(false)
+    expect(missing.error).toContain('源路径不存在')
+
+    fs.mkdirSync(path.join(ws, 'pkg'))
+    const inner = await withEmployeeWorkspace(ws, () => runCopy({ source: 'pkg', destination: 'pkg/inner' }))
+    expect(inner.success).toBe(false)
+    expect(inner.error).toContain('子目录')
+
+    fs.writeFileSync(path.join(ws, 'same.txt'), 'x')
+    const same = await withEmployeeWorkspace(ws, () => runCopy({ source: 'same.txt', destination: 'same.txt' }))
+    expect(same.success).toBe(false)
+    expect(same.error).toContain('相同')
+  })
+
+  it('复制到工作区外在无交互上下文时拒绝且不产生文件', async () => {
+    const src = path.join(ws, 'a.txt')
+    fs.writeFileSync(src, 'x')
+    const result = await runCopy({ source: src, destination: path.join(outside, 'a.txt') })
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('无交互上下文')
+    expect(fs.existsSync(path.join(outside, 'a.txt'))).toBe(false)
   })
 })
+

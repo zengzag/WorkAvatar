@@ -11,6 +11,8 @@ export interface AgentRunTokenUsage {
   completionTokens?: number
   totalTokens?: number
   cachedTokens?: number
+  /** 流式输出耗时（ms）：首 token 到末 token，用于计算输出速度 */
+  generationMs?: number
 }
 
 export interface AgentRunResult {
@@ -125,6 +127,8 @@ export interface AgentRunOutcome {
   employeeName?: string
   status: AgentRunStatus
   success: boolean
+  /** 等待超时但运行尚未结束（仍在排队/执行）——不等于失败，须与 failed 区分 */
+  pending?: boolean
   output?: string
   error?: string
   tokenUsage?: AgentRunTokenUsage

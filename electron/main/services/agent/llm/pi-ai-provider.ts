@@ -24,6 +24,7 @@ import {
   LLMToolCallDelta,
 } from './types'
 import LLMLoggerService from '../../llm-logger.service'
+import { describeImageForLog } from '../../attachment.service'
 import { buildPiModel, normalizeApiFormat, resolvePiApi, resolvePiStreamFn } from './api-format'
 import { buildPiStreamOptions } from './pi-stream-options'
 
@@ -512,7 +513,7 @@ export class PiAIProvider implements ILLMProvider {
       } else if (Array.isArray(m.content)) {
         msg.content = m.content.map((part: LLMMessageContentPart) => {
           if (part.type === 'image_url') {
-            return { type: 'image_url', image_url: { url: '[image]' } }
+            return { type: 'image_url', image_url: { url: describeImageForLog(part.image_url?.url) } }
           }
           return part
         })

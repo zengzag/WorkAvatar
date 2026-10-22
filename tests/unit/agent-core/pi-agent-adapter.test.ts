@@ -164,11 +164,13 @@ describe('runPiAgentLoop / 消息转换', () => {
     expect(h.agentLoopCalls).toHaveLength(1)
     expect(h.agentLoopContinueCalls).toHaveLength(0)
     const [prompts, context] = h.agentLoopCalls[0]
-    expect(context.systemPrompt).toBe('S1\n\nS2')
+    // pi-ai 1.x：提示词与工具声明折叠为 transcript 首条 system 消息（不再走 context.systemPrompt）
+    expect(context.messages[0].role).toBe('system')
+    expect(context.messages[0].content).toBe('S1\n\nS2')
     expect(prompts).toHaveLength(1)
     expect(prompts[0].content).toBe('last question')
     // context 内的 user 不含最后一条
-    expect(context.messages.map((m: any) => m.role)).toEqual(['user', 'assistant', 'toolResult'])
+    expect(context.messages.map((m: any) => m.role)).toEqual(['system', 'user', 'assistant', 'toolResult'])
   })
 
   it('无 user 消息时走 agentLoopContinue 且 prompts 为空', async () => {
@@ -227,7 +229,7 @@ describe('runPiAgentLoop / 消息转换', () => {
       ],
     })
     await runPiAgentLoop(params)
-    const asst = h.agentLoopCalls[0][1].messages[0]
+    const asst = h.agentLoopCalls[0][1].messages[1]
     expect(asst.role).toBe('assistant')
     expect(asst.content[0]).toEqual({ type: 'text', text: '正文' })
     expect(asst.content[1]).toEqual({ type: 'thinking', thinking: '思考中', thinkingSignature: 'reasoning_content' })
@@ -240,7 +242,7 @@ describe('runPiAgentLoop / 消息转换', () => {
   it('assistant 空内容不产生 text part', async () => {
     const { params } = makeHarness({ messages: [systemMsg('S'), asstMsg(''), userMsg('q')] })
     await runPiAgentLoop(params)
-    expect(h.agentLoopCalls[0][1].messages[0].content).toEqual([])
+    expect(h.agentLoopCalls[0][1].messages[1].content).toEqual([])
   })
 
   it('tool 消息 → toolResult（空内容为 [] 且 toolCallId 兜底空串）', async () => {
@@ -248,7 +250,8 @@ describe('runPiAgentLoop / 消息转换', () => {
       messages: [systemMsg('S'), userMsg('u'), toolMsg('', undefined), userMsg('q')],
     })
     await runPiAgentLoop(params)
-    const [user1, tool1] = h.agentLoopCalls[0][1].messages
+    const [sys1, user1, tool1] = h.agentLoopCalls[0][1].messages
+    expect(sys1.role).toBe('system')
     expect(user1.role).toBe('user')
     expect(tool1).toMatchObject({ role: 'toolResult', toolCallId: '', toolName: '', content: [], isError: false })
   })
@@ -258,7 +261,7 @@ describe('runPiAgentLoop / 消息转换', () => {
       messages: [{ role: 'system', content: undefined as any }, userMsg('q')],
     })
     await runPiAgentLoop(params)
-    expect(h.agentLoopCalls[0][1].systemPrompt).toBe('')
+    expect(h.agentLoopCalls[0][1].messages[0]).toMatchObject({ role: 'system', content: '' })
   })
 })
 
@@ -484,17 +487,50 @@ describe('runPiAgentLoop / 事件转换与 token 累计', () => {
     expect(harness.agentContext.getIterationCount()).toBe(0)
     expect(startEvents).toEqual([{ tool: 'tool_a', args: { p: 1 } }])
     expect(endEvents).toEqual([{ tool: 'tool_a', success: true }])
-    expect(onToolCall).toHaveBeenCalledWith({ id: 'c1', name: 'tool_a', args: { p: 1 } })
+    expect(onToolCall).toHaveBeenCalledWith({ id: 'c1', name: 'tool_a', args: { p: 1 }, iteration: harness.agentContext.getIterationCount() })
     expect(onToolProgress.mock.calls.map(c => c[0].progress)).toEqual([0.5, 'raw-progress'])
     expect(onToolResult).toHaveBeenCalledWith({
-      name: 'tool_a', result: 'OUT', rawResult: { x: 1 },
-      generatedFiles: [{ path: 'f.docx' }], success: true,
+      name: 'tool_a', result: 'OUT', rawResult: { x: 1 }, resultRaw: undefined,
+      generatedFiles: [{ path: 'f.docx' }], images: undefined, success: true, isError: false,
     })
     expect(executed).toHaveLength(1)
     expect(executed[0].name).toBe('tool_a')
     expect(executed[0].args).toEqual({ p: 1 })
     expect(executed[0].result).toMatchObject({ success: true, output: 'OUT', toolName: 'tool_a' })
     expect(typeof executed[0].result.latencyMs).toBe('number')
+  })
+
+  it('tool_execution_end：LLM 原文与展示值不同时下发 resultRaw（失败工具可原样重建历史）', async () => {
+    const harness = makeHarness()
+    const onToolResult = vi.fn()
+    harness.params.callbacks = { onToolResult }
+    h.loopImpl = () => eventStream([
+      { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'shell_exec', args: {} },
+      {
+        type: 'tool_execution_end', toolCallId: 'c1', toolName: 'shell_exec', isError: false,
+        result: { details: { success: false, output: 'exit_code=1', error: '命令执行失败', llmContent: '[错误] 命令执行失败\n\nexit_code=1' } },
+      },
+    ])
+    await runPiAgentLoop(harness.params)
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({
+      result: 'exit_code=1',
+      resultRaw: '[错误] 命令执行失败\n\nexit_code=1',
+    }))
+  })
+
+  it('tool_execution_end：复制工具结果的展示值等于 LLM 原文时不下发 resultRaw（避免历史重复存储）', async () => {
+    const harness = makeHarness()
+    const onToolResult = vi.fn()
+    harness.params.callbacks = { onToolResult }
+    h.loopImpl = () => eventStream([
+      { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'file_read', args: {} },
+      {
+        type: 'tool_execution_end', toolCallId: 'c1', toolName: 'file_read', isError: false,
+        result: { details: { success: true, output: 'file body', llmContent: 'file body' } },
+      },
+    ])
+    await runPiAgentLoop(harness.params)
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({ result: 'file body', resultRaw: undefined }))
   })
 
   it('tool_execution_end 失败（isError）时 result 字段取 error', async () => {
@@ -614,7 +650,7 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(await config.transformContext(msgs)).toBe(msgs)
   })
 
-  it('超阈值（>80k 估算 token）时仅保留最近 6 条 toolResult，更早的截断', async () => {
+  it('超阈值（>80k 估算 token）时大块截断：只保留最近约 30k 估算 token 的 toolResult', async () => {
     const harness = makeHarness()
     await runPiAgentLoop(harness.params)
     const config = h.agentLoopCalls[0][2]
@@ -628,8 +664,8 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(out[0].content[0].text.startsWith('[Truncated] ')).toBe(true)
     expect(out[0].content[0].text).toContain('original 45000 chars, truncated to save context')
     expect(out[0].content[0].text.length).toBeLessThan(500)
-    // 最近 6 条完整保留
-    for (let i = 2; i < 8; i++) {
+    // 45000 字符 ≈ 12.8k 估算 token，低水位 30k → 只保留最新 2 条完整
+    for (let i = 6; i < 8; i++) {
       expect(out[i].content[0].text).toBe(big)
     }
   })
@@ -649,17 +685,124 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(out[1].content[0].text).toBe('short')
   })
 
-  it('超阈值但无 toolResult 时内容不变，仅返回浅拷贝', async () => {
+  it('超阈值但无 toolResult 时内容不变，原样返回', async () => {
     const harness = makeHarness()
     await runPiAgentLoop(harness.params)
     const config = h.agentLoopCalls[0][2]
     const msgs: any[] = [{ role: 'user', content: 'x'.repeat(300000) }]
     const out = await config.transformContext(msgs)
-    expect(out).not.toBe(msgs)
-    expect(out).toEqual(msgs)
+    expect(out).toBe(msgs)
   })
 
-  it('convertToLlm 对无图片的消息与其入参相等（视觉注入新建数组），shouldStopAfterTurn 按 maxIterations 计数', async () => {
+  it('裁剪切点在 run 内冻结：新增工具结果未再次超过高水位时不会前移边界', async () => {
+    const harness = makeHarness()
+    harness.params.trimHighWaterTokens = 2500
+    harness.params.trimLowWaterTokens = 500
+    await runPiAgentLoop(harness.params)
+    const config = h.agentLoopCalls[0][2]
+    const big = 'A'.repeat(800) // ≈228 token
+    const mk = (i: number) => ({
+      role: 'toolResult', toolCallId: `c${i}`, toolName: '', isError: false,
+      content: [{ type: 'text', text: big }],
+    })
+    const initial = Array.from({ length: 18 }, (_, i) => mk(i))
+    const out1 = await config.transformContext(initial)
+    // 低水位 500 → 只保留最新约 2 条完整；第 16 条仍完整，更早的已截断
+    expect(out1[15].content[0].text.startsWith('[Truncated] ')).toBe(true)
+    expect(out1[16].content[0].text).toBe(big)
+
+    // 新增一条后有效大小仍低于高水位：切点保持，第 16 条仍完整
+    const nineteen = [...initial, mk(18)]
+    const out2 = await config.transformContext(nineteen)
+    expect(out2[16].content[0].text).toBe(big)
+
+    // 再次超过高水位后整块前移：第 16 条被截断，最新一条始终保留
+    const twenty = [...nineteen, mk(19)]
+    const out3 = await config.transformContext(twenty)
+    expect(out3[16].content[0].text.startsWith('[Truncated] ')).toBe(true)
+    expect(out3[19].content[0].text).toBe(big)
+  })
+
+  it('裁剪切点跨 run 复用：新 run 首次请求不会重新放大截断范围', async () => {
+    const trimState = { cut: 0 }
+    const big = 'A'.repeat(800) // ≈228 token
+    const mk = (i: number) => ({
+      role: 'toolResult', toolCallId: `c${i}`, toolName: '', isError: false,
+      content: [{ type: 'text', text: big }],
+    })
+    const initial = Array.from({ length: 18 }, (_, i) => mk(i))
+
+    const harness1 = makeHarness()
+    harness1.params.trimState = trimState
+    harness1.params.trimHighWaterTokens = 2500
+    harness1.params.trimLowWaterTokens = 500
+    await runPiAgentLoop(harness1.params)
+    const config1 = h.agentLoopCalls[h.agentLoopCalls.length - 1][2]
+    const out1 = await config1.transformContext(initial)
+    expect(out1[16].content[0].text).toBe(big)
+    expect(trimState.cut).toBeGreaterThan(0)
+
+    const harness2 = makeHarness()
+    harness2.params.trimState = trimState
+    harness2.params.trimHighWaterTokens = 2500
+    harness2.params.trimLowWaterTokens = 500
+    await runPiAgentLoop(harness2.params)
+    const config2 = h.agentLoopCalls[h.agentLoopCalls.length - 1][2]
+    const out2 = await config2.transformContext([...initial, mk(18)])
+    // 切点未重置：第 16 条仍完整（若从 0 重新计算，会被截断）
+    expect(out2[16].content[0].text).toBe(big)
+  })
+
+  it('最新一条工具结果自身超过低水位时也不会被截断', async () => {
+    const harness = makeHarness()
+    harness.params.trimHighWaterTokens = 100
+    harness.params.trimLowWaterTokens = 20
+    await runPiAgentLoop(harness.params)
+    const config = h.agentLoopCalls[0][2]
+    const huge = 'H'.repeat(3000)
+    const msgs: any[] = [{
+      role: 'toolResult', toolCallId: 'c1', toolName: '', isError: false,
+      content: [{ type: 'text', text: huge }],
+    }]
+    const out = await config.transformContext(msgs)
+    expect(out).toBe(msgs)
+  })
+
+  it('requestTail 以 append-only user 消息追加在请求末尾（在循环提醒之前）', async () => {
+    const harness = makeHarness()
+    harness.params.requestTail = '[System-provided context · current task information]\n<workspace>/ws</workspace>'
+    harness.params.getLoopReminder = () => '<system-reminder>todo</system-reminder>'
+    await runPiAgentLoop(harness.params)
+    const config = h.agentLoopCalls[0][2]
+    const out = config.convertToLlm([{ role: 'user', content: 'q' }]) as any[]
+
+    expect(out).toHaveLength(3)
+    expect(out[0].content).toBe('q')
+    expect(out[1].content).toContain('<workspace>/ws</workspace>')
+    expect(out[2].content).toContain('<system-reminder>todo</system-reminder>')
+
+    // 同一个 run 的后续请求不再重复注入任务尾部（只保留循环提醒）
+    const second = config.convertToLlm([{ role: 'user', content: 'q' }]) as any[]
+    expect(second).toHaveLength(2)
+    expect(second[0].content).toBe('q')
+    expect(second[1].content).toContain('<system-reminder>todo</system-reminder>')
+    expect(second.some(m => m.content.includes('<workspace>/ws</workspace>'))).toBe(false)
+
+    // ask_user 返回代表新的用户输入：再次注入尾部
+    const askUserMsgs: any[] = [
+      { role: 'user', content: 'q' },
+      {
+        role: 'toolResult', toolCallId: 't-ask', toolName: 'ask_user', isError: false,
+        content: [{ type: 'text', text: '用户选择了: other' }],
+      },
+    ]
+    const third = config.convertToLlm(askUserMsgs) as any[]
+    expect(third).toHaveLength(4)
+    expect(third[2].content).toContain('<workspace>/ws</workspace>')
+    expect(third[3].content).toContain('<system-reminder>todo</system-reminder>')
+  })
+
+  it('convertToLlm 对无图片的消息与其入参相等（视觉注入新建数组），finishTurn 按 maxIterations 结束', async () => {
     const harness = makeHarness({ maxIterations: 2 })
     await runPiAgentLoop(harness.params)
     const config = h.agentLoopCalls[0][2]
@@ -684,9 +827,10 @@ describe('runPiAgentLoop / 上下文截断与停止条件', () => {
     expect(out).toHaveLength(2)
     expect(out[1].content).toEqual([{ type: 'text', text: '已读取图片' }, { type: 'text', text: expect.stringContaining('This model does not support image input') }])
     expect(config.toolExecution).toBe('sequential')
-    expect(config.shouldStopAfterTurn()).toBe(false)
-    expect(config.shouldStopAfterTurn()).toBe(true)
-    expect(config.shouldStopAfterTurn()).toBe(true)
+    // finishTurn：未达上限返回 undefined（正常调度），到达上限返回 end 结束本次 run
+    expect(config.finishTurn()).toBeUndefined()
+    expect(config.finishTurn()).toEqual({ action: 'end' })
+    expect(config.finishTurn()).toEqual({ action: 'end' })
   })
 
   it('enableThinking / sessionId 按需注入 loopConfig', async () => {
@@ -815,7 +959,18 @@ describe('wrapStreamWithLogging（经 streamFn 驱动）', () => {
       },
     ])
     const streamFn = await captureWrappedStream()
-    const wrapped: any = await streamFn(undefined, { systemPrompt: 'SYS', messages: [{ role: 'user', content: 'q' }], tools: [{ name: 'tool_a', description: 'd', parameters: {} }] }, { temperature: 0.5, maxTokens: 100 })
+    // pi-agent-core 1.x 传入的是已归一化 transcript：提示词/工具声明在首条 system 消息里
+    const wrapped: any = await streamFn(undefined, {
+      messages: [
+        {
+          role: 'system',
+          content: 'SYS',
+          toolsAdded: [{ name: 'tool_a', description: 'd', parameters: {} }],
+          timestamp: 0,
+        },
+        { role: 'user', content: 'q', timestamp: 0 },
+      ],
+    }, { temperature: 0.5, maxTokens: 100 })
 
     const received: any[] = []
     for await (const ev of wrapped) received.push(ev.type)

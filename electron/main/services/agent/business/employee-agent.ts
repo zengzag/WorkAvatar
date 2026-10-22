@@ -54,7 +54,7 @@ export class EmployeeAgent extends GenericAgent {
     }
 
     // memory / skills / 委托 / 能力清单不拼入 system prompt：
-    // 稳定能力块以 contextHead 锚定在 history 头部，任务块以 contextTail 放在 history 之后，
+    // 稳定能力块以 contextHead 锚定在 history 头部，易变任务块作为请求末尾追加文本注入，
     // system prompt 字节级稳定 → KV cache 前缀高命中。
     const prompt = buildEmployeeSystemPrompt({
       name: this.config.name || '数字员工',

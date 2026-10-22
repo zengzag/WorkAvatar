@@ -28,8 +28,6 @@ export interface StreamListenerDeps {
 let _persistentListenersCleanup: (() => void) | null = null
 let _persistentEmployeeId: string | null = null
 
-export const getPersistentListenersCleanup = () => _persistentListenersCleanup
-export const setPersistentListenersCleanup = (fn: (() => void) | null) => { _persistentListenersCleanup = fn }
 export const getPersistentEmployeeId = () => _persistentEmployeeId
 export const setPersistentEmployeeId = (id: string | null) => { _persistentEmployeeId = id }
 
@@ -57,6 +55,27 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
 
     const tt = tRef.current
 
+    /**
+     * 目标 assistant 消息可能因渲染进程重建、缓存被替换或会话重新加载而缺失。
+     * 此时补建占位消息，保证后续流式内容仍然可见，而不是被静默丢弃
+     * （表现为"LLM 输出突然不可见"，最后只剩一条空消息）。
+     */
+    const ensureAssistant = (
+      prev: MessageWithThought[],
+      streamState: ConversationStreamState
+    ): MessageWithThought[] => {
+      const id = streamState.assistantMessageId
+      if (!id || prev.some(m => m.id === id)) return prev
+      return [...prev, {
+        id,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+        segments: [],
+      }]
+    }
+
     const chunkCleanup = window.electronAPI.llm.onChunk((data: { sessionId: string; chunk?: string; chunks?: string[] }) => {
       const { sessionId } = data
       const chunk = data.chunks && data.chunks.length > 0 ? data.chunks.join('') : (data.chunk || '')
@@ -65,7 +84,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
@@ -98,7 +117,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
@@ -132,7 +151,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
@@ -186,13 +205,13 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; id: string; name: string; args: any }) => {
-      const { sessionId, id: toolCallId, name, args } = data
+    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; id: string; name: string; args: any; iteration?: number }) => {
+      const { sessionId, id: toolCallId, name, args, iteration } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
@@ -225,6 +244,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 toolCallId,
                 toolName: name,
                 toolArgs: args,
+                iteration,
                 instruction: args?.instruction ?? filteredSegs[existingIdx].instruction,
                 targetEmployeeId: args?.target_employee_id ?? filteredSegs[existingIdx].targetEmployeeId,
               }
@@ -249,13 +269,14 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolCallId,
               toolName: name,
               toolArgs: args,
+              iteration,
               instruction: args?.instruction,
               targetEmployeeId: args?.target_employee_id,
               delegationStatus: 'streaming',
               subSegments: [],
               isToolComplete: false,
-              // 委托段执行阶段默认展开，收尾时自动折叠（见下方各终态写入点）
-              collapsed: false,
+              // 委托段默认折叠，用户可手动展开查看子任务执行明细
+              collapsed: true,
               timestamp: Date.now(),
             })
             return { ...m, segments: filteredSegs }
@@ -275,6 +296,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolArgsRaw: undefined,
               isToolArgsStreaming: false,
               toolCallId,
+              iteration,
               isToolComplete: false,
             }
           } else {
@@ -292,6 +314,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolName: name,
               toolArgs: args,
               toolCallId,
+              iteration,
               isToolComplete: false,
               collapsed: true,
               timestamp: Date.now(),
@@ -302,13 +325,13 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => {
-      const { sessionId, name, result, rawResult, generatedFiles, images, success } = data
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => {
+      const { sessionId, name, result, rawResult, resultRaw, generatedFiles, images, success, isError } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           let segs = [...(m.segments || [])]
 
@@ -323,6 +346,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               segs[wrapperIdx] = {
                 ...segs[wrapperIdx],
                 toolResult: result,
+                toolResultRaw: resultRaw,
+                toolIsError: isError === true,
                 isToolComplete: true,
                 toolError: undefined,
                 completedAt: Date.now(),
@@ -357,8 +382,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                     delegationStatus: 'queued',
                     subSegments: [],
                     isToolComplete: false,
-                    // 委托段执行阶段默认展开，收尾时自动折叠
-                    collapsed: false,
+                    // 委托段默认折叠
+                    collapsed: true,
                     timestamp: Date.now(),
                   })
                 }
@@ -381,18 +406,23 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             // delegate 业务成功判断：优先从 rawResult.success（delegate.tool 返回的业务结果）
             // 顶层 success 是"工具调用是否成功"（基于 isError），不代表委派业务成功
             const isSuccess = rawResult?.success !== undefined ? !!rawResult.success : (success !== undefined ? success : true)
+            // pending：同步等待窗口内子任务未结束（仍在后台执行），不是失败——保持运行态，
+            // 终态由后续 run 事件（result/cancelled）确认
+            const isPending = rawResult?.pending === true
             const targetName = rawResult?.targetEmployeeName || segs[delIdx].targetEmployeeName
             segs[delIdx] = {
               ...segs[delIdx],
               delegationId: delId || segs[delIdx].delegationId,
               targetEmployeeName: targetName,
-              delegationStatus: isSuccess ? 'completed' : 'failed',
+              delegationStatus: isPending ? 'streaming' : (isSuccess ? 'completed' : 'failed'),
               resultSummary: typeof result === 'string' ? result : (rawResult?.output || rawResult?.error),
               toolResult: result,
+              toolResultRaw: resultRaw,
+              toolIsError: isError === true,
               isToolComplete: true,
-              toolError: isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined)),
+              toolError: isPending ? undefined : (isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined))),
               delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
-              completedAt: Date.now(),
+              completedAt: isPending ? undefined : Date.now(),
               collapsed: true,
             }
             return { ...m, segments: segs }
@@ -408,6 +438,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           segs[actualIndex] = {
             ...segs[actualIndex],
             toolResult: result,
+            toolResultRaw: resultRaw,
+            toolIsError: isError === true,
             toolResultImages: images && images.length > 0 ? images : undefined,
             isToolComplete: true,
             toolError: toolSuccess ? undefined : (typeof result === 'string' ? result : (rawResult?.error || undefined)),
@@ -425,7 +457,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
           let targetIndex = -1
@@ -691,7 +723,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       if (!streamState) return
 
       updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) => {
+        ensureAssistant(prev, streamState).map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           let segs = [...(m.segments || [])]
 
@@ -710,8 +742,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: 'queued',
               subSegments: [],
               isToolComplete: false,
-              // 委托段执行阶段默认展开，收尾时自动折叠
-              collapsed: false,
+              // 委托段默认折叠
+              collapsed: true,
               timestamp: Date.now(),
             }
             // 嵌套子任务（父委托段再派发）：挂到发起方委托段的 subSegments 内，随父卡递归渲染
@@ -801,7 +833,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: finalStatus === 'failed' ? (eventData?.error || s.toolError) : s.toolError,
               isToolComplete: true,
               completedAt: Date.now(),
-              collapsed: true,
             }))
             return { ...m, segments: segs }
           }
@@ -814,7 +845,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: eventData?.error || s.toolError,
               isToolComplete: true,
               completedAt: Date.now(),
-              collapsed: true,
             }))
             return { ...m, segments: segs }
           }
@@ -884,7 +914,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolComplete: true,
               toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolCancelled'),
               completedAt,
-              collapsed: true,
             }
           }
           return {
@@ -901,6 +930,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               completionTokens: apiTokenUsage.completionTokens ?? apiTokenUsage.completion_tokens,
               totalTokens: apiTokenUsage.totalTokens ?? apiTokenUsage.total_tokens,
               cachedTokens: apiTokenUsage.cachedTokens ?? apiTokenUsage.cached_tokens ?? apiTokenUsage.prompt_tokens_details?.cached_tokens ?? apiTokenUsage.prompt_cache_hit_tokens,
+              generationMs: apiTokenUsage.generationMs ?? apiTokenUsage.generation_ms,
             }
           : (totalChars > 0 ? { totalChars } : undefined)
         const savedAssistantMsg: MessageWithThought = {

@@ -106,9 +106,6 @@ export interface EmployeeDelegationConfig {
   acceptDelegation: boolean
 }
 
-/** 全局委托开关的 settings KV 键：值 '0'/'false' 关闭；未设置视为开启 */
-export const SETTING_DELEGATION_ENABLED = 'delegation_enabled'
-
 /**
  * 解析 delegation_json，容错缺失/非法 JSON，返回默认配置。
  * 缺省即开启委托能力（可派发临时子智能体/子智能体模板）；
@@ -231,19 +228,6 @@ export interface GeneratedFileInfo {
   ext: string
   size: number
   mtime: number
-}
-
-/**
- * 脚本触发权限确认时下发给渲染端的原始脚本内容。
- * 单独成字段而不拼进 message：长脚本会撑爆弹窗与系统通知文案，渲染端改用可滚动代码块展示。
- */
-export interface ScriptDisclosure {
-  /** 脚本语言标识（powershell / bash / javascript），仅用于代码块标注 */
-  language: string
-  /** 原始脚本内容 */
-  content: string
-  /** 内容是否已按上限截断（渲染端据此提示查看完整内容） */
-  truncated: boolean
 }
 
 /**

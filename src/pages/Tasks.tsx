@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import { Button, Typography, Spin, Tooltip, theme, App, Dropdown } from 'antd'
@@ -6,17 +6,22 @@ import type { MenuProps } from 'antd'
 import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined, SettingOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
+import BackgroundShellBar from '../components/workbench/BackgroundShellBar'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
-import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSidebar'
+import TaskSidebar, { formatTaskTime, type TaskWithEmployee } from '../components/tasks/TaskSidebar'
+import TaskWorkspacePanel from '../components/tasks/TaskWorkspacePanel'
+import { useTaskPanelStore } from '../stores/task-panel.store'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
+import EmployeeAvatar from '../components/common/EmployeeAvatar'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
+import { getActiveBranchData } from '../hooks/chat-helpers'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 import { subscribePendingTaskJump } from '../utils/pending-task-jump'
 import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import type { AvailableSkill } from '../components/workbench/ChatInput'
-import type { Employee } from '../types'
+import type { Employee, GeneratedFileInfo } from '../types'
 
 const { Paragraph } = Typography
 
@@ -25,6 +30,13 @@ const HorizontalDotsIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }
     <circle cx="2.5" cy="8" r="1.5" />
     <circle cx="8" cy="8" r="1.5" />
     <circle cx="13.5" cy="8" r="1.5" />
+  </svg>
+)
+
+const SidePanelIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
+  <svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth="1.3" style={style}>
+    <rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2" />
+    <line x1="10.2" y1="2.6" x2="10.2" y2="13.4" />
   </svg>
 )
 
@@ -46,10 +58,20 @@ const Tasks: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [showSidePanel, setShowSidePanel] = useState(true)
 
+  // 右侧工作区面板（文件 / 终端 / 产物预览）
+  const panelOpen = useTaskPanelStore((s) => s.open)
+  const panelExpanded = useTaskPanelStore((s) => s.expanded)
+  const openPanel = useTaskPanelStore((s) => s.openPanel)
+  const closePanel = useTaskPanelStore((s) => s.closePanel)
+  const resetPanel = useTaskPanelStore((s) => s.reset)
+
   // 分页相关状态
   const [loadedCount, setLoadedCount] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  // loadedCount 镜像：供 loadGlobalTasks 读取最新已加载条数，且不进入其依赖（避免刷新函数频繁变化）
+  const loadedCountRef = useRef(0)
+  useEffect(() => { loadedCountRef.current = loadedCount }, [loadedCount])
 
   // 任务模式：'new' = 新任务（居中输入框），'chat' = 对话模式
   const [taskMode, setTaskMode] = useState<'new' | 'chat'>('new')
@@ -98,12 +120,14 @@ const Tasks: React.FC = () => {
         setLoadedCount(arr.length)
         setHasMore(false)
       } else {
-        // 分页模式：加载 PAGE_SIZE 条
-        const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: 0 })
+        // 分页模式：保持当前已加载条数，避免刷新（如选中任务）后列表被截断回 PAGE_SIZE
+        // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"
+        const limit = Math.max(PAGE_SIZE, loadedCountRef.current)
+        const result = await window.electronAPI.conversation.listAll({ limit, offset: 0 })
         const arr = Array.isArray(result) ? result : []
         setGlobalTasks(arr)
         setLoadedCount(arr.length)
-        setHasMore(arr.length === PAGE_SIZE)
+        setHasMore(arr.length === limit)
       }
     } catch {
       setGlobalTasks([])
@@ -151,11 +175,16 @@ const Tasks: React.FC = () => {
     } catch {}
   }, [])
 
+  // 稳定引用：loadGlobalTasks 依赖 useFullLoad，直接放进 effect 依赖会导致
+  // 每次进入/退出搜索都重新拉员工与合集列表
+  const loadGlobalTasksRef = useRef(loadGlobalTasks)
+  useEffect(() => { loadGlobalTasksRef.current = loadGlobalTasks }, [loadGlobalTasks])
+
   useEffect(() => {
     loadEmployees()
-    loadGlobalTasks()
+    loadGlobalTasksRef.current()
     loadAllCollections()
-  }, [loadEmployees, loadGlobalTasks, loadAllCollections])
+  }, [loadEmployees, loadAllCollections])
 
   // 资料库合集增删改通知：实时刷新合集列表，避免新合集需重启才出现在输入框
   useEffect(() => {
@@ -169,10 +198,10 @@ const Tasks: React.FC = () => {
   useEffect(() => {
     const unsub = window.electronAPI.employee.onChanged(async () => {
       await loadEmployees()
-      await loadGlobalTasks()
+      await loadGlobalTasksRef.current()
     })
     return () => { unsub?.() }
-  }, [loadEmployees, loadGlobalTasks])
+  }, [loadEmployees])
 
   // 清理无效筛选选中态：filterEmployeeId / newTaskEmployeeId / currentEmployeeId  若不在员工列表中则重置
   useEffect(() => {
@@ -199,25 +228,28 @@ const Tasks: React.FC = () => {
     }
   }, [taskMode, employees, currentEmployeeId])
 
-  // 全文内容搜索：防抖 300ms 调用 searchGlobal
+  // 全文内容搜索：输入框侧已做防抖，这里直接请求；请求序号用于丢弃过期结果
+  const searchSeqRef = useRef(0)
   useEffect(() => {
     const trimmed = searchQuery.trim()
     if (!trimmed) {
       setContentMatchIds(null)
       return
     }
-    const timer = setTimeout(async () => {
-      try {
-        const results = await window.electronAPI.conversation.searchGlobal({
-          query: trimmed,
-          limit: 50,
-        })
+    const seq = ++searchSeqRef.current
+    window.electronAPI.conversation.searchGlobal({
+      query: trimmed,
+      limit: 50,
+    }).then((results) => {
+      if (seq !== searchSeqRef.current) return
+      // 检索结果作为低优先级更新，避免阻塞输入/流式渲染
+      startTransition(() => {
         setContentMatchIds(new Set(Array.isArray(results) ? results.map((r: any) => r.conversationId) : []))
-      } catch {
-        setContentMatchIds(new Set())
-      }
-    }, 300)
-    return () => clearTimeout(timer)
+      })
+    }).catch(() => {
+      if (seq !== searchSeqRef.current) return
+      startTransition(() => setContentMatchIds(new Set()))
+    })
   }, [searchQuery])
 
   // 使用 useEmployeeChat，传入 skipAutoInit 避免自动选择对话
@@ -277,6 +309,71 @@ const Tasks: React.FC = () => {
   // 稳定的场景默认模型（workbench 全局默认），作为未绑定模型对话的回退值。
   // 不使用可变的员工级 selectedLlmProviderId，避免 A 任务设置的模型串扰到未绑定的 B 任务
   const sceneDefaultModel = useMemo(() => getCachedSceneDefaultModel('workbench'), [])
+
+  // 工作区面板根目录：对话模式用任务工作区，新任务模式用员工工作区
+  const activeTask = useMemo(
+    () => globalTasks.find(t => t.id === activeConversationId),
+    [globalTasks, activeConversationId],
+  )
+  // 列表未包含当前任务（如通知跳转到分页外任务）时，单独取一次任务详情（工作区/标题）
+  const [fetchedConv, setFetchedConv] = useState<any>(null)
+  useEffect(() => {
+    if (taskMode !== 'chat' || !activeConversationId || activeTask?.workspace_path) {
+      setFetchedConv(null)
+      return
+    }
+    let cancelled = false
+    window.electronAPI.conversation.get(activeConversationId)
+      .then((conversation: any) => { if (!cancelled) setFetchedConv(conversation || null) })
+      .catch(() => { if (!cancelled) setFetchedConv(null) })
+    return () => { cancelled = true }
+  }, [taskMode, activeConversationId, activeTask])
+  // 顶部状态栏展示信息：任务标题 / 数字员工名称 / 最后活动时间
+  // activeTask 不在列表中时（通知/搜索跳转到分页外任务）回退到 fetchedConv
+  const statusConv = activeTask || fetchedConv
+  const statusEmployeeName = taskMode === 'chat'
+    ? (statusConv?.employee_name || employee?.name || '')
+    : (employees.find(e => e.id === newTaskEmployeeId)?.name || '')
+  const statusTimeText = taskMode === 'chat' && statusConv
+    ? formatTaskTime(statusConv.last_message_at ?? statusConv.created_at, t)
+    : ''
+  // 状态栏员工头像数据：对话模式用当前员工，新任务模式用所选员工
+  const statusEmployee = taskMode === 'chat'
+    ? employee
+    : employees.find(e => e.id === newTaskEmployeeId)
+  const panelRootPath = useMemo(() => {
+    if (taskMode === 'chat') {
+      return activeTask?.workspace_path || fetchedConv?.workspace_path || employee?.workspace_path || null
+    }
+    return employee?.workspace_path || null
+  }, [taskMode, activeTask, fetchedConv, employee])
+  // 终端会话按任务隔离：任务内 cd 状态与运行中命令互不干扰
+  const terminalId = taskMode === 'chat' && activeConversationId
+    ? `conv:${activeConversationId}`
+    : `emp:${currentEmployeeId || 'none'}`
+
+  // 侧边栏产物列表：聚合本任务消息中产物工具声明的文件，按最新调用倒序，同路径只保留最新一次
+  const taskArtifacts = useMemo(() => {
+    const latest = new Map<string, { file: GeneratedFileInfo; order: number; index: number }>()
+    let order = 0
+    for (const msg of messages) {
+      const segments = getActiveBranchData(msg).segments
+      if (!segments) continue
+      for (const seg of segments) {
+        const files = seg.generatedFiles?.length
+          ? seg.generatedFiles
+          : [...(seg.runResult?.generatedFiles || []), ...(seg.runResult?.autoDetectedFiles || [])]
+        order++
+        files.forEach((file, index) => latest.set(file.path, { file, order, index }))
+      }
+    }
+    return Array.from(latest.values())
+      .sort((a, b) => b.order - a.order || a.index - b.index)
+      .map(item => item.file)
+  }, [messages])
+
+  // 切换任务时清理预览标签，避免面板展示上一个任务的文件
+  useEffect(() => { resetPanel() }, [activeConversationId, taskMode, resetPanel])
 
   // 从数字员工"快速任务"跳转而来：?new=1&employee=<id> → 打开新任务模式并预选员工
   const appliedQueryRef = useRef<string | null>(null)
@@ -461,6 +558,20 @@ const Tasks: React.FC = () => {
   const clearNewTaskDraft = useCallback(() => {
     if (newTaskDraftKey) {
       try { localStorage.removeItem(newTaskDraftKey) } catch {}
+    }
+  }, [newTaskDraftKey])
+
+  // 新任务草稿 getter：直接读 localStorage，保证 ChatInput 重新挂载/员工首次确定时
+  // 恢复的是新任务草稿，而不是上一个任务残留的编辑内容
+  const getNewTaskDraft = useCallback(() => {
+    if (!newTaskDraftKey) return ''
+    try {
+      const raw = localStorage.getItem(newTaskDraftKey)
+      if (!raw) return ''
+      const data = JSON.parse(raw)
+      return typeof data.content === 'string' ? data.content : ''
+    } catch {
+      return ''
     }
   }, [newTaskDraftKey])
 
@@ -799,7 +910,8 @@ const Tasks: React.FC = () => {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
       {/* 主体 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {showSidePanel && (
+        {/* 全屏预览模式下隐藏任务列表与对话栏，侧边栏占满 */}
+        {!panelExpanded && showSidePanel && (
           <TaskSidebar
             tasks={filteredTasks}
             activeTaskId={taskMode === 'new' ? null : activeConversationId}
@@ -824,37 +936,83 @@ const Tasks: React.FC = () => {
           />
         )}
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}>
-          {!showSidePanel && (
-            <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 20, display: 'flex', gap: 6 }}>
-              <Tooltip title={t('workbench.historyConv')}>
-                <Button type="text" size="small"
-                  icon={<MenuUnfoldOutlined style={{ fontSize: 14 }} />}
-                  onClick={() => setShowSidePanel(true)}
-                  style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
-                />
-              </Tooltip>
-              <Tooltip title={t('tasks.newTask')}>
-                <Button type="text" size="small"
-                  icon={<PlusOutlined style={{ fontSize: 14 }} />}
-                  onClick={handleNewTask}
-                  style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
-                />
-              </Tooltip>
+        {!panelExpanded && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {/* 顶部状态栏：侧边栏展开/新建任务 + 任务标题/员工/时间 + 右侧操作区 */}
+          <div style={{
+            flexShrink: 0, height: 40, display: 'flex', alignItems: 'center', gap: 8,
+            padding: '0 12px',
+          }}>
+            {!showSidePanel && (
+              <>
+                <Tooltip title={t('workbench.historyConv')}>
+                  <Button type="text" size="small"
+                    icon={<MenuUnfoldOutlined style={{ fontSize: 14 }} />}
+                    onClick={() => setShowSidePanel(true)}
+                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
+                  />
+                </Tooltip>
+                <Tooltip title={t('tasks.newTask')}>
+                  <Button type="text" size="small"
+                    icon={<PlusOutlined style={{ fontSize: 14 }} />}
+                    onClick={handleNewTask}
+                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
+                  />
+                </Tooltip>
+              </>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+              <span title={statusConv?.title} style={{
+                fontSize: 13, fontWeight: 600, color: token.colorText,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+              }}>
+                {statusConv?.title || t('tasks.newTask')}
+              </span>
+              {statusEmployeeName && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                  {statusEmployee ? (
+                    <EmployeeAvatar
+                      avatarIcon={statusEmployee.avatar_icon}
+                      avatarColor={statusEmployee.avatar_color}
+                      avatarType={statusEmployee.avatar_type}
+                      employeeId={statusEmployee.id}
+                      source={statusEmployee.source}
+                      size={15}
+                    />
+                  ) : (
+                    <RobotOutlined style={{ fontSize: 12, color: token.colorTextSecondary }} />
+                  )}
+                  <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{statusEmployeeName}</span>
+                </span>
+              )}
+              {statusTimeText && (
+                <span style={{ fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }}>{statusTimeText}</span>
+              )}
             </div>
-          )}
-          {taskMode === 'chat' && (
-            <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6, alignItems: 'center' }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
               {/* 插件视图注入点：任务对话页头部操作区 */}
-              <PluginViewSlot view="chat.header" />
-              <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
+              {taskMode === 'chat' && <PluginViewSlot view="chat.header" />}
+              {taskMode === 'chat' && (
+                <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
+                  <Button type="text" size="small"
+                    icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}
+                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
+                  />
+                </Dropdown>
+              )}
+              <Tooltip title={panelOpen ? t('workbench.closePanel') : t('workbench.panelOpen')}>
                 <Button type="text" size="small"
-                  icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}
-                  style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
+                  icon={<SidePanelIcon style={{ fontSize: 15 }} />}
+                  onClick={() => { panelOpen ? closePanel() : openPanel() }}
+                  style={{
+                    color: panelOpen ? token.colorPrimary : token.colorTextSecondary,
+                    background: panelOpen ? token.colorFillSecondary : undefined,
+                    width: 28, height: 28, minWidth: 28, borderRadius: 6,
+                  }}
                 />
-              </Dropdown>
+              </Tooltip>
             </div>
-          )}
+          </div>
           {taskMode === 'new' ? (
             // 新任务模式：居中输入框（使用带缓存的回调，切换页面回来可恢复）
             <div style={{
@@ -883,7 +1041,8 @@ const Tasks: React.FC = () => {
                 onMinimalModeChange={handleToggleMinimalMode}
                 canToggleMinimalMode={true}
                 conversationId={activeConversationId}
-                getInitialDraft={getInputDraft}
+                getInitialDraft={getNewTaskDraft}
+                draftRestoreKey={newTaskDraftKey}
                 onDraftChange={handleDraftChangeWithCache}
                 availableSkills={availableSkills}
                 centerMode={true}
@@ -947,6 +1106,8 @@ const Tasks: React.FC = () => {
                   <div ref={messagesEndRef} />
                 </div>
               )}
+              {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}
+              <BackgroundShellBar conversationId={activeConversationId ?? undefined} />
               <ChatInput
                 onSend={handleSendWithReset}
                 onStop={handleStop}
@@ -976,7 +1137,17 @@ const Tasks: React.FC = () => {
               />
             </>
           )}
-        </div>
+          </div>
+        )}
+
+        {panelOpen && (
+          <TaskWorkspacePanel
+            rootPath={panelRootPath}
+            terminalId={terminalId}
+            artifacts={taskArtifacts}
+            onClose={closePanel}
+          />
+        )}
       </div>
 
       <style>{workbenchStyle}</style>

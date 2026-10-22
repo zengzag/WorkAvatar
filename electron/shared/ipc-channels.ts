@@ -1,6 +1,9 @@
 export { IPC_CHANNELS } from './channels'
 export type {
   WorkspaceOpenInExplorerParams,
+  WorkspaceListFilesParams,
+  WorkspaceFileEntry,
+  WorkspaceListFilesResult,
 } from './channels/workspace'
 export type {
   EmployeeListParams,
@@ -47,12 +50,22 @@ export type {
   ToolMode,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
+  WebSearchMode,
+  SearchApiProviderId,
+  SearchApiProviderInfo,
+  SearchApiStatus,
+  SearchApiSetKeyParams,
+  SearchApiProviderParams,
 } from './channels/tool'
 export type {
   SettingsGetParams,
   SettingsSetParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
+  StorageCategoryKey,
+  StorageCategoryUsage,
+  StorageUsageResult,
+  StoragePathParams,
 } from './channels/app'
 export type {
   KMSAddDirParams,
@@ -115,15 +128,20 @@ export type {
   AttachmentSaveResult,
 } from './channels/attachment'
 export type {
-  FileChangeKind,
-  SnapshotListParams,
-  SnapshotRevertParams,
-  FileChangeItem,
-  SnapshotRevertResult,
-} from './channels/snapshot'
+  ShellBgStatus,
+  ShellBgListParams,
+  ShellBgKillParams,
+  ShellBgKillResult,
+  ShellBgTaskItem,
+} from './channels/shell-bg'
 export type {
   SubAgentProfileCreateParams,
   SubAgentProfileUpdateParams,
   SubAgentProfileResult,
 } from './channels/subagent'
+export type {
+  TerminalExecParams,
+  TerminalExecResult,
+  TerminalEvent,
+} from './channels/terminal'
 export type { SubAgentProfile } from './types'

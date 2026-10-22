@@ -103,6 +103,19 @@ describe('buildPiStreamOptions', () => {
     })
   })
 
+  it('anthropic-messages 形态同样透传会话路由头（缺失会被 opencode 网关拒绝）', () => {
+    const opts = buildPiStreamOptions({
+      providerType: 'opencode-go',
+      apiFormat: 'anthropic-messages',
+      sessionId: 's1',
+      maxTokens: 8192,
+      streaming: true,
+    })
+    expect(opts.headers).toEqual({ 'x-opencode-client': 'workavatar', 'x-opencode-session': 's1' })
+    expect(opts.thinkingEnabled).toBe(true)
+    expect(opts.maxTokens).toBe(8192)
+  })
+
   it('reasoningEffort / sessionId / timeoutMs 透传，未设置时不出现多余键', () => {
     const opts = buildPiStreamOptions({
       providerType: 'opencode-go',

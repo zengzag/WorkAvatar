@@ -1,24 +1,38 @@
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { Worker } from 'worker_threads'
-import { createLogger } from './logger'
+import { randomUUID } from 'crypto'
+import { fork, type ChildProcess } from 'child_process'
+import { createLogger, LoggerBackend } from './logger'
 import PathService from './path.service'
 import mainUiI18n from './ui-i18n.service'
 
 const logger = createLogger('OCR')
 
 /**
- * OCR 服务：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，运行在独立 Worker 线程中。
+ * OCR 服务：基于 PaddleOCR v6 tiny + onnxruntime-node 本地推理，运行在独立子进程中。
  *
- * Worker 线程用于隔离 onnxruntime-native 原生崩溃，避免拖垮主进程。
- * 任何失败（Worker 启动失败、初始化失败、识别失败、Worker 崩溃）都会：
+ * 必须独立进程（而非 Worker 线程）运行，两点原因：
+ *   1. 隔离 onnxruntime-native 原生崩溃，避免拖垮主进程
+ *   2. 隔离 onnxruntime.dll：语音插件借用的 sherpa-onnx 自带同名 onnxruntime.dll，
+ *      同一进程内 Windows 只会加载其中一份，后加载方会以
+ *      "The operating system cannot run %1" 失败（仅当语音识别先于 OCR 使用时出现）
+ *
+ * 任何失败（子进程启动失败、初始化失败、识别失败、子进程崩溃）都会：
  *   1. 写入错误日志
  *   2. 弹窗提示用户
  *   3. 抛出错误由调用方处理
  */
 interface OCROptions {
   language?: string
+}
+
+/** 传给 OCR 子进程的启动参数（经 argv JSON 传递） */
+interface OcrWorkerConfig {
+  dataDir: string
+  isDev: boolean
+  resourcesDir: string
+  logFilePath: string | null
 }
 
 interface OCRBlock {
@@ -94,17 +108,27 @@ type WorkerInMessage = WorkerResultMessage | WorkerErrorMessage | WorkerReadyMes
 
 // ── OCR Service ────────────────────────────────────────────────
 
+/** OCR 引擎（ONNX 模型）常驻约数百 MB，空闲后回收，下次识别再按需拉起 */
+const OCR_IDLE_TERMINATE_MS = 10 * 60 * 1000
+const OCR_IDLE_CHECK_INTERVAL_MS = 60 * 1000
+
 class OCRService {
   private static instance: OCRService
   private initPromise: Promise<void> | null = null
 
-  private ocrWorker: Worker | null = null
+  private ocrWorker: ChildProcess | null = null
   private workerReady = false
   private pendingRequests = new Map<string, {
     resolve: (value: any) => void
     reject: (reason: any) => void
   }>()
   private msgIdCounter = 0
+  /** 排队中的识别任务数（含等待 Worker 初始化的任务） */
+  private activeTasks = 0
+  private lastUsedAt = 0
+  private idleTimer: NodeJS.Timeout | null = null
+  /** 回收中的 Worker：新请求需等回收完成后再重新初始化，避免与终止流程竞争 */
+  private terminatePromise: Promise<void> | null = null
 
   /** 识别任务串行队列：同一时刻只跑一张图，避免并发推理争抢 CPU 拖慢彼此 */
   private taskQueue: Promise<unknown> = Promise.resolve()
@@ -130,9 +154,9 @@ class OCRService {
 
   private async doInitialize(): Promise<void> {
     const modelDir = this.getPaddleOcrModelDir()
-    const detPath = path.join(modelDir, 'PP-OCRv5_mobile_det_infer.onnx')
-    const recPath = path.join(modelDir, 'PP-OCRv5_mobile_rec_infer.onnx')
-    const dictPath = path.join(modelDir, 'ppocrv5_dict.txt')
+    const detPath = path.join(modelDir, 'PP-OCRv6_tiny_det_infer.onnx')
+    const recPath = path.join(modelDir, 'PP-OCRv6_tiny_rec_infer.onnx')
+    const dictPath = path.join(modelDir, 'ppocrv6_tiny_dict.txt')
 
     if (!fs.existsSync(detPath) || !fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
       const msg = mainUiI18n.t('ocrModelMissing')
@@ -143,7 +167,9 @@ class OCRService {
 
     try {
       await this.spawnAndInitWorker()
-      logger.info('PaddleOCR v5 mobile engine initialized (Worker)')
+      this.lastUsedAt = Date.now()
+      this.startIdleTimer()
+      logger.info('PaddleOCR v6 tiny engine initialized (Worker)')
     } catch (err) {
       const msg = mainUiI18n.t('ocrWorkerInitFailed')
       logger.error(msg, err)
@@ -154,7 +180,7 @@ class OCRService {
 
   private getPaddleOcrModelDir(): string {
     const resourcesDir = PathService.getInstance().getResourcesDir()
-    return path.join(resourcesDir, 'paddleocr', 'ppocr_v5_mobile')
+    return path.join(resourcesDir, 'paddleocr', 'ppocr_v6_tiny')
   }
 
   // ── Worker 生命周期 ──────────────────────────────────────────
@@ -163,13 +189,28 @@ class OCRService {
     const workerPath = path.join(__dirname, 'ocr-worker.js')
     const pathService = PathService.getInstance()
 
-    this.ocrWorker = new Worker(workerPath, {
-      workerData: {
-        dataDir: pathService.getDataDir(),
-        isDev: pathService.getIsDev(),
-        resourcesDir: pathService.getResourcesDir(),
-      },
+    const workerConfig: OcrWorkerConfig = {
+      dataDir: pathService.getDataDir(),
+      isDev: pathService.getIsDev(),
+      resourcesDir: pathService.getResourcesDir(),
+      // 子进程复用主进程日志文件，避免多进程日志碎片
+      logFilePath: LoggerBackend.getInstance().getLogFilePath(),
+    }
+
+    // 以 Electron 二进制充当 Node 运行时启动独立进程（生产环境无独立 node，
+    // 且 app.asar 内的脚本依赖 Electron 的 asar 支持）
+    const child = fork(workerPath, [JSON.stringify(workerConfig)], {
+      execPath: process.execPath,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      // 不继承 --inspect 等参数，避免子进程抢占父进程的调试端口
+      execArgv: [],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     })
+    this.ocrWorker = child
+
+    // 子进程日志文件由其自身写入，这里只把输出转到父进程控制台（dev 可见）
+    child.stdout?.on('data', (chunk: Buffer) => process.stdout.write(chunk))
+    child.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk))
 
     this.ocrWorker.on('message', (msg: WorkerInMessage) => {
       this.handleWorkerMessage(msg)
@@ -192,6 +233,8 @@ class OCRService {
       const timeout = setTimeout(() => {
         this.ocrWorker!.off('message', readyHandler)
         reject(new Error('OCR Worker startup timeout'))
+        // 启动超时的子进程必须回收，否则会常驻占用内存
+        this.resetStuckWorker()
       }, 30_000)
 
       const readyHandler = (msg: WorkerInMessage) => {
@@ -246,7 +289,7 @@ class OCRService {
 
     // 清理 Worker 引用
     if (this.ocrWorker) {
-      try { this.ocrWorker.terminate() } catch { /* ignore */ }
+      try { this.ocrWorker.kill() } catch { /* ignore */ }
       this.ocrWorker = null
     }
 
@@ -274,21 +317,52 @@ class OCRService {
     this.ocrWorker = null
     this.workerReady = false
     this.initPromise = null
+    this.stopIdleTimer()
 
     for (const [, pending] of this.pendingRequests) {
       pending.reject(new Error('OCR Worker terminated after request timeout'))
     }
     this.pendingRequests.clear()
 
-    worker.terminate().catch(() => { /* ignore */ })
+    worker.kill()
     logger.warn('OCR Worker 已因请求超时被重建')
+  }
+
+  /** 启动空闲回收定时器：模型内存占用大，长时间不用不应持续常驻 */
+  private startIdleTimer(): void {
+    if (this.idleTimer) return
+    this.idleTimer = setInterval(() => {
+      void this.terminateIfIdle()
+    }, OCR_IDLE_CHECK_INTERVAL_MS)
+    this.idleTimer.unref?.()
+  }
+
+  private stopIdleTimer(): void {
+    if (!this.idleTimer) return
+    clearInterval(this.idleTimer)
+    this.idleTimer = null
+  }
+
+  private async terminateIfIdle(): Promise<void> {
+    if (!this.ocrWorker || !this.workerReady) {
+      this.stopIdleTimer()
+      return
+    }
+    if (this.activeTasks > 0 || this.pendingRequests.size > 0) return
+    if (Date.now() - this.lastUsedAt < OCR_IDLE_TERMINATE_MS) return
+    logger.info('OCR Worker 空闲超时，回收子进程以释放内存')
+    await this.terminate()
   }
 
   /** 串行执行识别任务：排队等待不计入超时，超时只衡量本次请求真正执行的时间 */
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    this.activeTasks++
     const run = this.taskQueue.then(task, task)
     this.taskQueue = run.catch(() => { /* 单次失败不阻断队列 */ })
-    return run
+    return run.finally(() => {
+      this.activeTasks--
+      this.lastUsedAt = Date.now()
+    })
   }
 
   private sendToWorker<T = WorkerInMessage>(msg: WorkerOutMessage, timeoutMs = 60_000): Promise<T> {
@@ -317,7 +391,7 @@ class OCRService {
       })
 
       try {
-        this.ocrWorker!.postMessage(msg)
+        this.ocrWorker!.send(msg)
       } catch (err) {
         this.pendingRequests.delete(id)
         clearTimeout(timeout)
@@ -343,6 +417,9 @@ class OCRService {
       throw new Error(`Image file not found: ${imagePath}`)
     }
 
+    // 空闲回收进行中：等回收结束再重新初始化，避免拿到已销毁的 Worker
+    if (this.terminatePromise) await this.terminatePromise
+
     return this.enqueue(async () => {
       // 确保 PaddleOCR 已尝试初始化（Worker 超时被重建后，这里会重新拉起）
       await this.initialize()
@@ -359,7 +436,8 @@ class OCRService {
   }
 
   async recognizeBuffer(imageBuffer: Buffer, options?: OCROptions): Promise<OCRResult> {
-    const tempPath = path.join(os.tmpdir(), `ocr_${Date.now()}.png`)
+    // 文件名带随机后缀：同毫秒内的并发识别不会互相覆盖、误删临时文件
+    const tempPath = path.join(os.tmpdir(), `ocr_${Date.now()}_${randomUUID()}.png`)
     try {
       await fs.promises.writeFile(tempPath, imageBuffer)
       return await this.recognize(tempPath, options)
@@ -373,18 +451,30 @@ class OCRService {
   }
 
   async terminate(): Promise<void> {
-    if (this.ocrWorker) {
-      try {
-        const msg: WorkerTerminateMessage = { type: 'terminate', id: this.nextId() }
-        await this.sendToWorker(msg, 5_000).catch(() => { /* Worker may already be dead */ })
-        await this.ocrWorker.terminate()
-      } catch (err) {
-        logger.debug('OCR Worker terminate error:', err)
-      }
-      this.ocrWorker = null
-      this.workerReady = false
+    if (this.terminatePromise) return this.terminatePromise
+    this.terminatePromise = this.doTerminate().finally(() => {
+      this.terminatePromise = null
+    })
+    return this.terminatePromise
+  }
+
+  private async doTerminate(): Promise<void> {
+    this.stopIdleTimer()
+    if (!this.ocrWorker) {
       this.initPromise = null
+      this.workerReady = false
+      return
     }
+    try {
+      const msg: WorkerTerminateMessage = { type: 'terminate', id: this.nextId() }
+      await this.sendToWorker(msg, 5_000).catch(() => { /* Worker may already be dead */ })
+      this.ocrWorker.kill()
+    } catch (err) {
+      logger.debug('OCR Worker terminate error:', err)
+    }
+    this.ocrWorker = null
+    this.workerReady = false
+    this.initPromise = null
   }
 
   isPaddleOcrAvailable(): boolean {

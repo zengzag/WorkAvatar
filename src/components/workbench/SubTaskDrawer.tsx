@@ -15,7 +15,7 @@ interface SubTaskDrawerProps {
 const SubTaskDrawer: React.FC<SubTaskDrawerProps> = ({ open, segments, getToolDisplayName, onClose }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  // 抽屉内独立的展开/折叠状态（默认展开便于查看详情，不写入消息段）
+  // 抽屉内独立的展开/折叠状态（默认折叠，展开状态不写入消息段）
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const handleToggle = useCallback((_msgId: string, segId: string) => {

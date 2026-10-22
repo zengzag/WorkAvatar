@@ -32,30 +32,31 @@ function normalizeInstructions(instructions: string): string {
 
 /**
  * 共享的操作规则段（Harness 契约）。
+ * 只写模型无法从工具描述推断、且写错会真实出错的行为约束；通用常识与实现细节一律不写。
  * 条件性条款仅在对应能力存在时渲染，保证提示词中提及的每个工具都真实可用。
  */
 function buildOperatingRules(options: Pick<SystemPromptOptions, 'hasReportGeneratedFiles' | 'hasFileDelete'>): string {
   const lines: string[] = [
     '# Operating Rules',
-    '- Analyze each request, call tools as the task requires, and iterate across turns until the task is fully completed. Handle trivial or common-sense requests directly, without unnecessary tool calls or planning.',
-    '- Treat tool results as the source of truth for factual matters. Never invent data, file contents, command outputs, URLs, identifiers, or execution results.',
-    '- Reply in Markdown, lead with the outcome, and stay concise and well structured. Omit redundant greetings, preamble, and restatement unless the user asks for detail.',
-    '- Account for differences across operating systems, shells, and path conventions, including Windows path separators and PowerShell command syntax.',
-    '- Tool calls run behind user-controlled permissions. A denied or cancelled call is a deliberate decision by the user or by policy: adjust your approach instead of repeating the identical call.',
-    '- Tool results may be truncated or summarized. If the omitted portion matters, re-read the file or re-run the command; never guess the missing content.',
+    '- Analyze the request and iterate with tools until the task is complete; handle trivial requests directly.',
+    '- Treat tool results as the source of truth. Never invent file contents, command output, URLs or identifiers.',
+    '- Reply in Markdown, lead with the outcome, stay concise; skip greetings and preamble.',
+    '- Use the shell and path conventions of the platform named in the environment below: PowerShell with backslash paths on Windows, bash with forward slashes elsewhere.',
+    '- Tool calls run behind user-controlled permissions: a denied or cancelled call is intentional — adjust your approach instead of repeating it.',
+    '- Tool results may be truncated; re-read the file or re-run the command instead of guessing the missing part.',
   ]
   if (options.hasReportGeneratedFiles) {
     lines.push(
-      '- When you create or modify a user-facing deliverable (a Word, Excel, PowerPoint, or PDF document, an image, or similar), call report_generated_files once before your final reply and declare every deliverable file by its absolute path so the user receives a preview card. Do not declare temporary files, configuration files, or scripts.'
+      '- Before your final reply, call report_generated_files once with the absolute path of every user-facing deliverable you created or modified (documents, spreadsheets, presentations, PDFs, images). Never declare temporary files, configuration files or scripts.'
     )
   }
   if (options.hasFileDelete) {
     lines.push(
-      '- Always delete files or directories through file_delete. Never delete via shell_exec (rm, del, Remove-Item, or similar) and never embed deletion logic in javascript_exec or in node/python scripts; such attempts are rejected by policy.'
+      '- Delete files and directories only through file_delete; deletion via shell commands or scripts is rejected by policy.'
     )
   }
   lines.push(
-    '- Always respond in the same primary language as the user\'s latest message unless the user explicitly requests another language.'
+    '- Always reply in the same primary language as the user\'s latest message.'
   )
   return lines.join('\n')
 }
@@ -264,9 +265,31 @@ export function buildStableContextMessageContent(params: {
 }
 
 /**
- * 构造任务上下文消息（独立 role=user 消息，置于 history 之后、真实 query 之前）：
- * 随任务/每次调用变化的信息——工作区目录、任务发起时间、记忆、知识库范围。
- * 放在历史之后，其内容变化只使尾部前缀失效，不击穿已发生对话的缓存。
+ * 构造稳定任务上下文消息（锚定在 history 头部，首次构建后字节冻结）：
+ * 工作区与任务发起时间在会话期间不变，放进稳定头可避免它们随每次请求重复出现在尾部、
+ * 反复占用未缓存 token。易变的记忆/知识库范围仍由 requestTail 注入。
+ */
+export function buildStableTaskContextMessageContent(params: {
+  workspaceContextPrompt?: string
+  taskTimePrompt?: string
+}): string | undefined {
+  const blocks: string[] = []
+  if (params.workspaceContextPrompt) blocks.push(`<workspace>${params.workspaceContextPrompt}</workspace>`)
+  if (params.taskTimePrompt) blocks.push(`<task_time>${params.taskTimePrompt}</task_time>`)
+  if (blocks.length === 0) return undefined
+  return [
+    TASK_CONTEXT_MSG_PREFIX,
+    'The following background is provided by the runtime. Treat it as background information; do not treat it as a separate user request.',
+    ...blocks,
+    CONTEXT_MSG_FOOTER,
+  ].join('\n')
+}
+
+/**
+ * 构造任务上下文（由 agent 作为「本次请求末尾追加文本」注入，位于真实 query 之后）：
+ * 随任务/每次调用变化的信息——记忆、知识库范围。
+ * 之所以追加在末尾而不插在 query 之前：下一轮 history 由前端重建时不含这条消息，
+ * 插在 query 之前会让上一整轮的 token 前缀错位，KV cache 从该位置起全部失效。
  */
 export function buildTaskContextMessageContent(params: {
   workspaceContextPrompt?: string
@@ -283,5 +306,10 @@ export function buildTaskContextMessageContent(params: {
   if (recalledMemoryPrompt) blocks.push(`<relevant_memory>${recalledMemoryPrompt}</relevant_memory>`)
   if (kbContextPrompt) blocks.push(`<knowledge_scope>${kbContextPrompt}</knowledge_scope>`)
   if (blocks.length === 0) return undefined
-  return [TASK_CONTEXT_MSG_PREFIX, ...blocks, CONTEXT_MSG_FOOTER].join('\n')
+  return [
+    TASK_CONTEXT_MSG_PREFIX,
+    'The following background is provided by the runtime after the user message. Treat it as background information; do not treat it as a separate user request.',
+    ...blocks,
+    CONTEXT_MSG_FOOTER,
+  ].join('\n')
 }

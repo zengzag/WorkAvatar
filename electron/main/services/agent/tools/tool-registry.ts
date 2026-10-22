@@ -38,23 +38,30 @@ export class ToolRegistry {
     return Array.from(this.functionMappings.values())
   }
 
-  /** 返回所有按需工具（不在 LLM tools 数组中，通过 invoke_tool 调用） */
+  /** 返回所有按需工具（不在 LLM tools 数组中，通过 invoke_tool 调用）。
+   *  按名称排序：该列表会进入稳定上下文头，注册顺序（插件/MCP 加载时序）变化不能影响提示词字节。 */
   getOnDemandTools(): ToolDefinition[] {
-    return Array.from(this.functionMappings.values()).filter(t => t.onDemand)
+    return Array.from(this.functionMappings.values())
+      .filter(t => t.onDemand)
+      .sort((a, b) => a.name.localeCompare(b.name))
   }
 
   getOpenAISchemas(): OpenAIToolDefinition[] {
     // 连 function 一层一起浅拷贝：调用方就地改 function.name 不会污染注册表内部 schema；
-    // parameters 保持引用共享，避免每次调用深拷贝整个 schema 的开销
-    return this.openaiFunctionSchemas.map(s => ({ ...s, function: { ...s.function } }))
+    // parameters 保持引用共享，避免每次调用深拷贝整个 schema 的开销。
+    // 按名称排序：tools 数组参与系统消息前缀缓存，插件加载顺序变化不能导致整段缓存失效。
+    return this.openaiFunctionSchemas
+      .map(s => ({ ...s, function: { ...s.function } }))
+      .sort((a, b) => a.function.name.localeCompare(b.function.name))
   }
 
   getOpenAISchemasByNames(names: string[]): OpenAIToolDefinition[] {
     const nameSet = new Set(names)
-    // 与 getOpenAISchemas 一致：返回副本，避免调用方就地修改污染注册表内部 schema
+    // 与 getOpenAISchemas 一致：返回副本并按名称排序，避免调用方就地修改污染注册表
     return this.openaiFunctionSchemas
       .filter(s => nameSet.has(s.function.name))
       .map(s => ({ ...s, function: { ...s.function } }))
+      .sort((a, b) => a.function.name.localeCompare(b.function.name))
   }
 
   unregisterTool(name: string): boolean {

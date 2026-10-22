@@ -2,6 +2,7 @@ import type { ToolDefinition, ToolHandlerContext } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import AttachmentService from '../../attachment.service'
+import { resolveToolPath } from './fs-shared'
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp', 'gif'])
 const MAX_FILE_SIZE = 6 * 1024 * 1024
@@ -17,11 +18,11 @@ export const readImageTool: ToolDefinition = {
   name: 'read_image',
   title: '读取图片',
   summary: '读取本地图片供视觉模型直接查看图片内容。',
-  description: '读取本地图片文件，把图片视觉内容提供给模型直接查看（需要当前模型支持图片输入）。适合识别布局、图表、颜色等非文字信息；若只关注图片中的文字，优先使用 ocr_image。支持 png/jpg/jpeg/bmp/tiff/webp/gif 格式，单文件不超过 6MB。',
+  description: 'Read a local image and hand its visual content to the model (requires an image-capable model). Use it for layout, charts and colours; if you only need the text in the image, prefer ocr_image. Supports png/jpg/jpeg/bmp/tiff/webp/gif, up to 6MB.',
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '图片文件绝对路径' },
+      path: { type: 'string', description: 'Image file path (absolute, or relative to the workspace)' },
     },
     required: ['path'],
   },
@@ -30,7 +31,7 @@ export const readImageTool: ToolDefinition = {
       const imagePath = String(args.path || '').trim()
       if (!imagePath) return { success: false, error: '图片路径不能为空' }
 
-      const resolved = path.resolve(imagePath)
+      const resolved = resolveToolPath(imagePath)
       if (!fs.existsSync(resolved)) return { success: false, error: `图片文件不存在: ${imagePath}` }
 
       const stats = fs.statSync(resolved)

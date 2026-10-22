@@ -1,7 +1,26 @@
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+
+// 单测不依赖真实 OS 沙箱：confine 透传，保留纯函数
+vi.mock('../../../electron/main/services/sandbox.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/main/services/sandbox.service')>()
+  return {
+    ...actual,
+    default: {
+      getInstance: () => ({
+        confine: (input: any) => ({
+          program: input.program,
+          args: [...input.args],
+          env: {},
+          facts: { mode: input.mode, backend: 'none', enforcement: 'full', denied: false },
+          cleanup: () => {},
+        }),
+      }),
+    },
+  }
+})
 import { parseHeredoc, runCommandPlatform, truncateOutput, IS_WINDOWS } from '../../../electron/main/services/agent/tools/exec-shared'
 
 /** 补充 exec-shared 未覆盖分支（stdin 语义见 exec-shared/stdin.test.ts） */

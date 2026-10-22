@@ -78,8 +78,8 @@ const msg = (partial: Partial<MessageWithThought>): MessageWithThought =>
   ({ id: 'm1', role: 'user', content: '', ...partial }) as MessageWithThought
 
 describe('chat-helpers / 常量与缓存工厂', () => {
-  it('常量取值稳定（缓存上限 60）', () => {
-    expect(MESSAGES_CACHE_MAX_SIZE).toBe(60)
+  it('常量取值稳定（缓存上限 8）', () => {
+    expect(MESSAGES_CACHE_MAX_SIZE).toBe(8)
     expect(MIN_LOADING_DISPLAY_MS).toBe(120)
     expect(CONVERSATION_PAGE_SIZE).toBe(20)
     expect(SCROLL_BOTTOM_THRESHOLD_PX).toBe(10)
@@ -280,6 +280,7 @@ describe('chat-helpers / buildEnrichedHistory 分支与压缩边界', () => {
           {
             type: 'delegation',
             id: 'd1',
+            toolCallId: 'call_dg',
             delegationId: 'dg1',
             targetEmployeeId: 'e1',
             instruction: '写报告',
@@ -318,7 +319,7 @@ describe('chat-helpers / buildEnrichedHistory 分支与压缩边界', () => {
         role: 'assistant',
         segments: [
           { type: 'tool_call', id: 's1', toolName: 'file_read', toolArgs: {} },
-          { type: 'delegation', id: 'd1', delegationId: 'dg1', delegationStatus: 'streaming' },
+          { type: 'delegation', id: 'd1', toolCallId: 'call_dg', delegationId: 'dg1', delegationStatus: 'streaming' },
         ],
       } as any),
     ])
@@ -371,6 +372,105 @@ describe('chat-helpers / buildEnrichedHistory 分支与压缩边界', () => {
     ])
     expect(out).toHaveLength(1)
     expect(out[0]).toMatchObject({ content: '前后', toolCalls: undefined })
+  })
+
+  it('不同 iteration 的连续工具轮次拆成多条 assistant 消息（还原真实 transcript 边界）', () => {
+    const out = buildEnrichedHistory([
+      msg({
+        id: 'a',
+        role: 'assistant',
+        segments: [
+          { type: 'tool_call', id: 's1', toolName: 'file_write', toolArgs: { p: 'a' }, iteration: 1 },
+          { type: 'tool_call', id: 's2', toolName: 'shell_exec', toolArgs: { c: 'x' }, iteration: 2 },
+        ],
+      } as any),
+    ])
+    expect(out).toHaveLength(2)
+    expect(out[0].toolCalls!.map(c => c.name)).toEqual(['file_write'])
+    expect(out[1].toolCalls!.map(c => c.name)).toEqual(['shell_exec'])
+  })
+
+  it('同一 iteration 的工具调用仍归入同一条 assistant 消息', () => {
+    const out = buildEnrichedHistory([
+      msg({
+        id: 'a',
+        role: 'assistant',
+        segments: [
+          { type: 'tool_call', id: 's1', toolName: 't1', toolArgs: {}, iteration: 3 },
+          { type: 'tool_call', id: 's2', toolName: 't2', toolArgs: {}, iteration: 3 },
+        ],
+      } as any),
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0].toolCalls).toHaveLength(2)
+  })
+
+  it('工具结果原文 resultRaw 透传，重建时优先于展示值', () => {
+    const out = buildEnrichedHistory([
+      msg({
+        id: 'a',
+        role: 'assistant',
+        segments: [
+          {
+            type: 'tool_call',
+            id: 's1',
+            toolName: 'shell_exec',
+            toolArgs: {},
+            toolResult: 'exit_code=1',
+            toolResultRaw: '[错误] 命令执行失败\n\nexit_code=1',
+            isToolComplete: true,
+          },
+        ],
+      } as any),
+    ])
+    expect(out[0].toolCalls![0]).toMatchObject({
+      result: 'exit_code=1',
+      resultRaw: '[错误] 命令执行失败\n\nexit_code=1',
+    })
+  })
+
+  it('delegation 段优先使用真实 toolCallId / toolArgs / toolResult', () => {
+    const out = buildEnrichedHistory([
+      msg({
+        id: 'a',
+        role: 'assistant',
+        segments: [
+          { type: 'tool_call', id: 's1', toolName: 'file_read', toolArgs: {} },
+          {
+            type: 'delegation',
+            id: 'd1',
+            toolCallId: 'call_abc',
+            delegationId: 'dg1',
+            toolName: 'delegate_to_employee',
+            toolArgs: { target_employee_id: 'e1', instruction: '做A', run_in_background: true },
+            toolResult: '已完成A',
+            toolResultRaw: '已完成A（原文）',
+            delegationStatus: 'completed',
+          },
+        ],
+      } as any),
+    ])
+    const call = out[1].toolCalls![0]
+    expect(call.id).toBe('call_abc')
+    expect(call.args).toEqual({ target_employee_id: 'e1', instruction: '做A', run_in_background: true })
+    expect(call.result).toBe('已完成A')
+    expect(call.resultRaw).toBe('已完成A（原文）')
+  })
+
+  it('无 toolCallId 的委托卡（launch_agents 并行子任务）不回放为伪造的工具调用', () => {
+    const out = buildEnrichedHistory([
+      msg({
+        id: 'a',
+        role: 'assistant',
+        segments: [
+          { type: 'tool_call', id: 's1', toolName: 'launch_agents', toolArgs: { tasks: [1, 2] }, toolResult: '已派发', isToolComplete: true },
+          { type: 'delegation', id: 'run1', runId: 'r1', delegationId: 'r1', groupRunId: 'g1', parallelTotal: 2, delegationStatus: 'completed' },
+          { type: 'delegation', id: 'run2', runId: 'r2', delegationId: 'r2', groupRunId: 'g1', parallelTotal: 2, delegationStatus: 'completed' },
+        ],
+      } as any),
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0].toolCalls!.map(c => c.name)).toEqual(['launch_agents'])
   })
 
   it('空消息数组返回空', () => {

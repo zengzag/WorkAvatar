@@ -30,6 +30,23 @@ export function resolveModelName(config: LLMProviderConfig, modelIdentifier: str
   return modelIdentifier
 }
 
+/** 解析模型上下文窗口（token）：优先 context_window，其次 max_tokens×4，最后 256k 兜底 */
+export function resolveContextWindowTokens(modelConfig: LLMModelConfig | null | undefined): number {
+  if (!modelConfig) return 256 * 1024
+  return modelConfig.context_window ?? (modelConfig.max_tokens ? modelConfig.max_tokens * 4 : 256 * 1024)
+}
+
+/**
+ * 工具结果裁剪水位（token）：按模型真实上下文窗口比例计算，避免固定 80k 在长上下文模型上过早截断。
+ * 高水位触发整块裁剪，低水位决定保留量；两者的差值提供滞后区间，避免边界逐请求前移。
+ */
+export function resolveToolResultTrimThresholds(contextWindowTokens: number): { high: number; low: number } {
+  return {
+    high: Math.max(8000, Math.floor(contextWindowTokens * 0.75)),
+    low: Math.max(2000, Math.floor(contextWindowTokens * 0.3)),
+  }
+}
+
 /** 构建请求头（Authorization + extra_headers） */
 export function buildHeaders(config: LLMProviderConfig): Record<string, string> {
   const headers: Record<string, string> = {

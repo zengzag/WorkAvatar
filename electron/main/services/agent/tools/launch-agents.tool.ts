@@ -5,6 +5,13 @@ import { resolveDelegationTarget } from './subagent-tools'
 
 /** 单次并行派发的最大子任务数 */
 const MAX_TASKS = 5
+/** 委托链深度上限（与 delegate.tool / 运行时保持一致） */
+const MAX_DELEGATION_DEPTH = 2
+/**
+ * await_agents 最长等待窗口。必须严格小于工具层超时（300s）：
+ * 否则中间件先超时会抛出原始「工具超时」，而子任务仍在后台运行，主管误判为失败。
+ */
+const MAX_AWAIT_MS = 280_000
 
 /**
  * 并行编排工具对：
@@ -20,58 +27,50 @@ export const launchAgentsTool: ToolDefinition = {
   name: 'launch_agents',
   title: '并行派发子任务',
   summary: '拆解多个独立子任务并行派发，立即返回 runIds（可临时角色）',
-  description: `将一个任务拆解为多个相互独立的子任务，并行派发执行。适用于需要多名执行者同时分工（如同时调研多份资料、并行生成多个文档）的复杂任务。
-适用信号：存在 2 个及以上相互独立、可并行的子任务。应一次把全部独立子任务发出（并发派发），不要逐个派发；随后用 await_agents 收拢结果。子任务之间存在依赖时改用 delegate_to_employee 串行。
-参数：
-- tasks: 子任务数组（1-${MAX_TASKS} 个），每项包含：
-  - 执行者三选一：target_employee_id（已有员工，从上下文信息 [DELEGATION] 段选择）/ ephemeral_role（临时子智能体，字段同 delegate_to_employee）/ subagent_profile_id（模板 id）
-  - instruction: 该子任务指令
-  - context_files: 可选，上下文文件绝对路径列表（最多 10 个）
-  - task_items: 可选，该子任务的台账要点（子任务需逐项收尾）
-- run_in_background: 可选，true 时全部后台执行（跳过 await 也行，完成后经 read_run_notifications 获取）
-返回：runIds 数组 + 各任务派发结果。**默认调用后立即继续**，随后用 await_agents 等待全部完成并聚合结果。
-限制：不能委托给自己；委托深度上限 2 层（主任务→子任务→子子任务，子子任务不得再派发）；子任务之间不应有依赖（有依赖请改用 delegate_to_employee 串行）。`,
+  description: `Fan out several independent sub-tasks in one call and get their runIds back immediately. Use it whenever 2+ sub-tasks are genuinely independent: emit them all in a single call rather than one by one, then collect the results with await_agents. Use delegate_to_employee instead when sub-tasks depend on each other.
+
+Hard limits: never delegate to yourself; delegation depth is capped at ${MAX_DELEGATION_DEPTH} levels; tasks must not depend on each other.`,
   parameters: {
     type: 'object',
     properties: {
       tasks: {
         type: 'array',
-        description: `子任务数组（最多 ${MAX_TASKS} 个）`,
+        description: `Independent sub-tasks (max ${MAX_TASKS})`,
         items: {
           type: 'object',
           properties: {
-            target_employee_id: { type: 'string', description: '三选一：已有数字员工 id' },
+            target_employee_id: { type: 'string', description: 'Executor option 1 of 3: an existing employee id' },
             ephemeral_role: {
               type: 'object',
               properties: {
-                name: { type: 'string', description: '简洁职责名' },
-                description: { type: 'string', description: '可选说明' },
-                system_prompt: { type: 'string', description: '自包含角色提示词' },
-                tools: { type: 'array', items: { type: 'string' }, description: '可选工具 id 白名单' },
-                skills: { type: 'array', items: { type: 'string' }, description: '可选技能 id 列表' },
-                provider_id: { type: 'string', description: '可选供应商 id（需与 model_id 成对）' },
-                model_id: { type: 'string', description: '可选模型 id' },
+                name: { type: 'string', description: 'Short duty name' },
+                description: { type: 'string', description: 'Optional note' },
+                system_prompt: { type: 'string', description: 'Self-contained role prompt' },
+                tools: { type: 'array', items: { type: 'string' }, description: 'Optional host builtin tool id allowlist' },
+                skills: { type: 'array', items: { type: 'string' }, description: 'Optional skill id list' },
+                provider_id: { type: 'string', description: 'Optional provider id (pair with model_id)' },
+                model_id: { type: 'string', description: 'Optional model id' },
               },
               required: ['name', 'system_prompt'],
-              description: '三选一：临时子智能体规格',
+              description: 'Executor option 2 of 3: a one-off sub-agent spec',
             },
-            subagent_profile_id: { type: 'string', description: '三选一：子智能体模板 id' },
-            instruction: { type: 'string', description: '该子任务指令' },
+            subagent_profile_id: { type: 'string', description: 'Executor option 3 of 3: a reusable sub-agent profile id' },
+            instruction: { type: 'string', description: 'Self-contained instruction for this sub-task' },
             context_files: {
               type: 'array',
               items: { type: 'string' },
-              description: '可选，上下文文件绝对路径（最多 10 个）',
+              description: 'Optional absolute context file paths (max 10)',
             },
             task_items: {
               type: 'array',
               items: { type: 'string' },
-              description: '可选，该子任务的台账要点',
+              description: 'Optional checklist for this sub-task',
             },
           },
           required: ['instruction'],
         },
       },
-      run_in_background: { type: 'boolean', description: '可选，true 时全部后台执行' },
+      run_in_background: { type: 'boolean', description: 'Dispatch all sub-tasks in the background' },
     },
     required: ['tasks'],
   },
@@ -87,20 +86,20 @@ export const awaitAgentsTool: ToolDefinition = {
   name: 'await_agents',
   title: '等待子任务完成',
   summary: '等待一组子任务（runIds）完成并聚合结果',
-  description: `等待 launch_agents 派发的一组子任务全部完成（或超时、部分失败），聚合返回每个子任务的结构化结果（结果摘要 + 生成文件清单 + token 用量）。
-参数：
-- run_ids: launch_agents / delegate_to_employee 返回的子任务 runId 数组
-- timeout_seconds: 可选，最长等待秒数（默认 280）
-返回：按传入顺序排列的每个子任务结果数组。子任务失败不阻断其他子任务；请基于返回的文件清单向用户汇总（不要把子任务完整过程复述给用户）。`,
+  description: `Wait for runIds returned by launch_agents / delegate_to_employee and aggregate their results (summary + generated files + token usage).
+
+Each entry is ✓ completed, ⏳ still running, or ✗ failed. ⏳ is NOT a failure — those runs keep going in the background; call await_agents again or read the notice via read_run_notifications. A failed run does not block the others. Summarize from the returned results and file lists instead of replaying the sub-agents' traces to the user.
+
+timeout_seconds defaults to 280 and is capped at 280.`,
   parameters: {
     type: 'object',
     properties: {
       run_ids: {
         type: 'array',
         items: { type: 'string' },
-        description: 'launch_agents / delegate_to_employee 返回的子任务 runId 数组',
+        description: 'runIds returned by launch_agents / delegate_to_employee',
       },
-      timeout_seconds: { type: 'number', description: '可选，最长等待秒数（默认 280）' },
+      timeout_seconds: { type: 'number', description: 'Max wait in seconds (default 280, max 280)' },
     },
     required: ['run_ids'],
   },
@@ -198,22 +197,30 @@ async function handleAwaitAgents(args: Record<string, any>): Promise<any> {
     return { success: false, error: 'run_ids 不能为空' }
   }
   const timeoutSec = typeof args.timeout_seconds === 'number' && args.timeout_seconds > 0
-    ? Math.min(args.timeout_seconds * 1000, 5 * 60 * 1000)
-    : 280000
+    ? Math.min(args.timeout_seconds * 1000, MAX_AWAIT_MS)
+    : MAX_AWAIT_MS
 
   const runtime = SubAgentRuntime.getInstance()
   const outcomes = await runtime.awaitRuns(runIds, timeoutSec)
 
   const lines: string[] = []
+  const pendingIds: string[] = []
   for (const o of outcomes) {
     if (o.success) {
       lines.push(`[✓ ${o.runId}] ${firstLine(o.output || '已完成')}`)
+    } else if (o.pending) {
+      pendingIds.push(o.runId)
+      lines.push(`[⏳ ${o.runId}] 仍在执行中（尚未结束，未失败也未取消）`)
     } else {
       lines.push(`[✗ ${o.runId}] ${o.error || '执行失败'}`)
     }
   }
+  if (pendingIds.length > 0) {
+    lines.push('仍在执行中的子任务不是失败：请勿向用户报告失败。可用 await_agents 再次等待或 get_subagent_status 查询，完成后会收到通知（read_run_notifications）。')
+  }
   return {
-    success: outcomes.some(o => o.success),
+    // 仍在执行的子任务不算失败（已结束的成功子任务同样满足）
+    success: outcomes.some(o => o.success || o.pending),
     output: lines.join('\n'),
     results: outcomes,
   }

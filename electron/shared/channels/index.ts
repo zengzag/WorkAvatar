@@ -9,8 +9,9 @@ import { MCP_CHANNELS } from './mcp'
 import { PLUGIN_CHANNELS } from './plugin'
 import { NOTIFY_CHANNELS } from './notification'
 import { ATTACHMENT_CHANNELS } from './attachment'
-import { SNAPSHOT_CHANNELS } from './snapshot'
+import { SHELL_BG_CHANNELS } from './shell-bg'
 import { SUBAGENT_CHANNELS } from './subagent'
+import { TERMINAL_CHANNELS } from './terminal'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -24,8 +25,9 @@ export const IPC_CHANNELS = {
   ...PLUGIN_CHANNELS,
   ...NOTIFY_CHANNELS,
   ...ATTACHMENT_CHANNELS,
-  ...SNAPSHOT_CHANNELS,
+  ...SHELL_BG_CHANNELS,
   ...SUBAGENT_CHANNELS,
+  ...TERMINAL_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -39,5 +41,6 @@ export * from './mcp'
 export * from './plugin'
 export * from './notification'
 export * from './attachment'
-export * from './snapshot'
+export * from './shell-bg'
 export * from './subagent'
+export * from './terminal'

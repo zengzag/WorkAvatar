@@ -1,7 +1,26 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+
+// 单测不依赖真实 OS 沙箱：把 confine 换成透传，保留纯函数（拒绝识别等）
+vi.mock('../../../electron/main/services/sandbox.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/main/services/sandbox.service')>()
+  return {
+    ...actual,
+    default: {
+      getInstance: () => ({
+        confine: (input: any) => ({
+          program: input.program,
+          args: [...input.args],
+          env: {},
+          facts: { mode: input.mode, backend: 'none', enforcement: 'full', denied: false },
+          cleanup: () => {},
+        }),
+      }),
+    },
+  }
+})
 
 /**
  * 二次审核回归：runCommandPlatform 的 stdin 关闭语义。

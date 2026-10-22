@@ -81,6 +81,7 @@ export type {
   PluginIpc,
   PluginPaths,
   PluginMainModule,
+  PluginWebviewApi,
 } from './context'
 export type {
   PluginRouteDefinition,

@@ -151,12 +151,12 @@ export const webFetchTool: ToolDefinition = {
   id: 'web_fetch',
   name: 'web_fetch',
   title: '网页获取',
-  description: '获取指定URL的网页内容，提取为纯文本。支持限制最大字符数。',
+  description: 'Fetch a URL and return the page content as plain text.',
   parameters: {
     type: 'object',
     properties: {
-      url: { type: 'string', description: '要获取的网页URL' },
-      max_chars: { type: 'number', description: '最大字符数（默认10000）', minimum: 100, maximum: 50000 }
+      url: { type: 'string', description: 'Page URL to fetch' },
+      max_chars: { type: 'number', description: 'Max characters to return (default 10000)', minimum: 100, maximum: 50000 }
     },
     required: ['url']
   },

@@ -11,10 +11,10 @@ import Module from 'module'
 
 const state = vi.hoisted(() => ({
   resourcesDir: '',
-  workers: [] as any[],
+  children: [] as any[],
 }))
 
-const { FakeWorker } = vi.hoisted(() => {
+const { FakeChild } = vi.hoisted(() => {
   class TinyEmitter {
     private handlers: Record<string, Array<(...args: any[]) => void>> = {}
     on(ev: string, cb: (...args: any[]) => void): this {
@@ -31,14 +31,14 @@ const { FakeWorker } = vi.hoisted(() => {
     }
   }
 
-  class FakeWorker extends TinyEmitter {
+  class FakeChild extends TinyEmitter {
     posted: any[] = []
-    terminated = false
-    terminate = vi.fn(async () => {
-      if (this.terminated) return 0
-      this.terminated = true
+    killed = false
+    kill = vi.fn(() => {
+      if (this.killed) return true
+      this.killed = true
       queueMicrotask(() => this.emit('exit', 1))
-      return 1
+      return true
     })
 
     constructor() {
@@ -46,7 +46,7 @@ const { FakeWorker } = vi.hoisted(() => {
       queueMicrotask(() => this.emit('message', { type: 'ready' }))
     }
 
-    postMessage(msg: any): void {
+    send(msg: any): void {
       this.posted.push(msg)
       if (msg.type === 'init') {
         queueMicrotask(() =>
@@ -65,10 +65,16 @@ const { FakeWorker } = vi.hoisted(() => {
       }
     }
   }
-  return { FakeWorker }
+  return { FakeChild }
 })
 
-vi.mock('worker_threads', () => ({ Worker: FakeWorker }))
+vi.mock('child_process', () => ({
+  fork: () => {
+    const child = new FakeChild()
+    state.children.push(child)
+    return child
+  },
+}))
 
 vi.mock('../../../electron/main/services/path.service', () => ({
   default: {
@@ -97,7 +103,7 @@ import OCRService from '../../../electron/main/services/ocr.service'
 
 beforeEach(() => {
   state.resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-ocr-'))
-  state.workers.length = 0
+  state.children.length = 0
   ;(OCRService as any).instance = undefined
   dialogMock.showErrorBox.mockClear()
 })
@@ -109,11 +115,11 @@ afterEach(() => {
 
 /** 放置模型三件套，使初始化通过 */
 function seedModels(): string {
-  const dir = path.join(state.resourcesDir, 'paddleocr', 'ppocr_v5_mobile')
+  const dir = path.join(state.resourcesDir, 'paddleocr', 'ppocr_v6_tiny')
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'PP-OCRv5_mobile_det_infer.onnx'), 'x')
-  fs.writeFileSync(path.join(dir, 'PP-OCRv5_mobile_rec_infer.onnx'), 'x')
-  fs.writeFileSync(path.join(dir, 'ppocrv5_dict.txt'), 'x')
+  fs.writeFileSync(path.join(dir, 'PP-OCRv6_tiny_det_infer.onnx'), 'x')
+  fs.writeFileSync(path.join(dir, 'PP-OCRv6_tiny_rec_infer.onnx'), 'x')
+  fs.writeFileSync(path.join(dir, 'ppocrv6_tiny_dict.txt'), 'x')
   return dir
 }
 
@@ -156,12 +162,14 @@ describe('OCRService / recognize', () => {
   it('recognizeBuffer：写临时文件识别后清理', async () => {
     seedModels()
     const svc = OCRService.getInstance()
+    // 只校验本次调用留下的临时文件：系统临时目录可能残留其它运行/崩溃进程的文件
+    const before = new Set(fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ocr_')))
     const result = await svc.recognizeBuffer(Buffer.from('fake-png'))
     expect(result.text).toBe('识别文本')
 
-    // 临时文件已删除
-    const tmpFiles = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ocr_'))
-    expect(tmpFiles).toHaveLength(0)
+    // 本次产生的临时文件已删除
+    const leftover = fs.readdirSync(os.tmpdir()).filter(f => f.startsWith('ocr_') && !before.has(f))
+    expect(leftover).toHaveLength(0)
   })
 
   it('Worker 返回 error：错误被包装并弹窗', async () => {
@@ -171,9 +179,9 @@ describe('OCRService / recognize', () => {
 
     const svc = OCRService.getInstance()
     await svc.initialize()
-    const worker = (svc as any).ocrWorker as FakeWorker
-    const origPost = worker.postMessage.bind(worker)
-    worker.postMessage = (msg: any) => {
+    const worker = (svc as any).ocrWorker as FakeChild
+    const origPost = worker.send.bind(worker)
+    worker.send = (msg: any) => {
       if (msg.type === 'recognize') {
         queueMicrotask(() =>
           worker.emit('message', { type: 'error', id: msg.id, error: '识别失败' })
@@ -195,7 +203,7 @@ describe('OCRService / Worker 异常', () => {
     const svc = OCRService.getInstance()
     await svc.initialize()
     const worker = (svc as any).ocrWorker as any
-    worker.postMessage = vi.fn() // 识别请求不回复
+    worker.send = vi.fn() // 识别请求不回复
 
     const promise = svc.recognize(image)
     await vi.waitFor(
@@ -221,7 +229,7 @@ describe('OCRService / Worker 异常', () => {
       await svc.initialize()
 
       // Worker 对识别消息不回复，模拟原生推理卡死
-      ;(svc as any).ocrWorker.postMessage = vi.fn()
+      ;(svc as any).ocrWorker.send = vi.fn()
       const promise = svc.recognize(image)
       for (let i = 0; i < 6; i++) await Promise.resolve()
       expect((svc as any).pendingRequests.size).toBe(1)

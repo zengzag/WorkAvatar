@@ -9,7 +9,7 @@ import { createToolPermissionGate } from '../tools/tool-permission'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
-import { runPiAgentLoop } from './pi-agent-adapter'
+import { runPiAgentLoop, type ToolResultTrimState } from './pi-agent-adapter'
 import { COMPACTION_INSTRUCTION } from './compaction-prompt'
 import { generateId } from '../../common-utils'
 import { createLogger } from '../../logger'
@@ -59,6 +59,8 @@ export abstract class BaseAgent {
   /** runStream 令牌：finally 仅在自己仍是最新 run 时才清锁（signal 引用对比在复用同一 signal 时会误判） */
   private _runToken: number = 0
   private _lastKnownPromptTokens: number | undefined
+  /** 工具结果裁剪切点：跨 run 复用（同一会话），避免每个新 user turn 首次请求重新放大截断范围 */
+  private toolResultTrimState: ToolResultTrimState = { cut: 0 }
 
   constructor(config: AgentConfig, options?: BaseAgentOptions) {
     this.config = this.normalizeConfig(config)
@@ -175,6 +177,7 @@ export abstract class BaseAgent {
 
       // run 级覆盖优先：插件注入的 system 只作用于本轮，不写 agent 缓存（避免污染后续会话）
       const systemPrompt = options.systemPromptOverride ?? this.buildSystemPrompt(options)
+      const requestTailTokens = this.estimateRequestTailTokens(options.requestTail)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
@@ -182,7 +185,7 @@ export abstract class BaseAgent {
         {
           lastKnownPromptTokens: this._lastKnownPromptTokens,
           headAnchors: options.contextHead,
-          tailContext: options.contextTail,
+          requestTailTokens,
         }
       )
 
@@ -200,7 +203,7 @@ export abstract class BaseAgent {
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
-      const result = await this.executeLoop(messages, activeTools, maxIterations)
+      const result = await this.executeLoop(messages, activeTools, maxIterations, options.requestTail)
 
       this.context.setState('completed')
       this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
@@ -271,6 +274,7 @@ export abstract class BaseAgent {
 
       // run 级覆盖优先：插件注入的 system 只作用于本轮，不写 agent 缓存（避免污染后续会话）
       const systemPrompt = options.systemPromptOverride ?? this.buildSystemPrompt(options)
+      const requestTailTokens = this.estimateRequestTailTokens(options.requestTail)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
@@ -278,7 +282,7 @@ export abstract class BaseAgent {
         {
           lastKnownPromptTokens: this._lastKnownPromptTokens,
           headAnchors: options.contextHead,
-          tailContext: options.contextTail,
+          requestTailTokens,
         }
       )
 
@@ -296,7 +300,7 @@ export abstract class BaseAgent {
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
-      const streamMetadata = await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal)
+      const streamMetadata = await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal, options.requestTail)
 
       // aborted 走正常返回路径（pi-agent-adapter 已捕获 AbortError），仍透传 tokenUsage/contextStats
       this.context.setState(streamMetadata?.aborted ? 'aborted' : 'completed')
@@ -441,7 +445,8 @@ export abstract class BaseAgent {
   private async executeLoop(
     messages: Message[],
     tools: OpenAIToolDefinition[],
-    maxIterations: number
+    maxIterations: number,
+    requestTail?: string
   ): Promise<AgentResponse> {
     let content = ''
     let reasoningContent = ''
@@ -457,6 +462,8 @@ export abstract class BaseAgent {
       eventEmitter: this.eventEmitter,
       agentContext: this.context,
       sessionId: this.config.sessionId,
+      requestTail,
+      trimState: this.toolResultTrimState,
       getLoopReminder: (turn: number) => this.buildLoopReminder(turn, maxIterations),
       onToolCallExecuted: async (toolName, args, result) => {
         usedToolCalls.push({
@@ -491,7 +498,8 @@ export abstract class BaseAgent {
     tools: OpenAIToolDefinition[],
     maxIterations: number,
     callbacks: AgentRunStreamCallbacks,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    requestTail?: string
   ): Promise<AgentResponseMetadata & { aborted?: boolean; abortReason?: string }> {
     const { tokenUsage, aborted, abortReason } = await runPiAgentLoop({
       config: this.config,
@@ -504,6 +512,8 @@ export abstract class BaseAgent {
       agentContext: this.context,
       signal,
       sessionId: this.config.sessionId,
+      requestTail,
+      trimState: this.toolResultTrimState,
       getLoopReminder: (turn: number) => this.buildLoopReminder(turn, maxIterations),
       onToolCallExecuted: this.onToolCallExecuted.bind(this),
       onPromptTokens: (tokens) => {
@@ -513,8 +523,8 @@ export abstract class BaseAgent {
       callbacks: {
         onChunk: callbacks.onChunk,
         onThought: callbacks.onThought,
-        onToolCall: ({ id, name, args }) => {
-          callbacks.onToolCall?.({ id, name, args })
+        onToolCall: ({ id, name, args, iteration }) => {
+          callbacks.onToolCall?.({ id, name, args, iteration })
         },
         onToolCallDelta: callbacks.onToolCallDelta,
         onToolResult: callbacks.onToolResult,
@@ -546,6 +556,12 @@ export abstract class BaseAgent {
 
     const fn = (logger as any)[level] ?? logger.info
     fn.call(logger, `[${this.name}:${action}]`, data)
+  }
+
+  /** 请求末尾追加文本的 token 估算（仅用于挤压 history 预算） */
+  private estimateRequestTailTokens(requestTail?: string): number {
+    if (!requestTail) return 0
+    return this.memoryManager.estimateTokens([{ role: 'user', content: requestTail }])
   }
 
   private formatMessagesForSummary(messages: Message[]): string {

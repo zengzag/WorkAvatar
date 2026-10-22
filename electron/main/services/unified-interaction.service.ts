@@ -3,7 +3,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
 import mainUiI18n from './ui-i18n.service'
-import type { ThinkingLevel, ScriptDisclosure, DiffDisclosure } from '../../shared/types'
+import type { ThinkingLevel, DiffDisclosure } from '../../shared/types'
 
 /** 用户交互默认超时（5 分钟），工具层 timeoutMs 需大于此值以保证内层先触发 */
 export const INTERACTION_TIMEOUT_MS = 300000
@@ -29,8 +29,6 @@ export interface InteractionRequest {
   source?: string
   /** 目录级授权范围：前端据此展示"始终允许此文件夹"按钮，授权结果由 FilePermissionService 缓存 */
   dirScope?: string
-  /** 脚本执行确认：渲染端以可滚动代码块展示原始脚本内容（脚本触发的确认才有） */
-  script?: ScriptDisclosure
   /** 文件改动预览（unified diff）：渲染端按行前缀着色展示 */
   diff?: DiffDisclosure
   /**

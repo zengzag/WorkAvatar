@@ -46,17 +46,18 @@ class LoggerBackend {
 
   /**
    * 初始化日志文件。主进程在启动早期调用一次。
-   * Worker 线程通过 workerData.logFilePath 复用主进程的日志文件。
+   * Worker 线程通过 workerData.logFilePath、独立子进程通过 logFilePath 参数
+   * 复用主进程的日志文件，避免多进程日志碎片。
    */
-  init(dataDir?: string): void {
+  init(dataDir?: string, logFilePath?: string): void {
     if (this.initialized) return
 
     try {
-      // Worker 模式：优先使用主线程传入的 logFilePath
-      if (!isMainThread && (workerData as any)?.logFilePath) {
-        this.logFilePath = (workerData as any).logFilePath as string
+      if (dataDir) this.dataDir = dataDir
+      const sharedLogFilePath = logFilePath ?? (isMainThread ? null : (workerData as any)?.logFilePath)
+      if (sharedLogFilePath) {
+        this.logFilePath = sharedLogFilePath
       } else if (dataDir) {
-        this.dataDir = dataDir
         const logDir = path.join(dataDir, this.APP_LOG_SUBDIR)
         if (!fs.existsSync(logDir)) {
           fs.mkdirSync(logDir, { recursive: true })

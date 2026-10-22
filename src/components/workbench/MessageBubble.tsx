@@ -15,6 +15,8 @@ import {
   SearchOutlined,
   CompressOutlined,
   ApartmentOutlined,
+  FileTextOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -26,6 +28,7 @@ import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import { markdownComponents } from './markdown-components'
 import { sanitizePluginIconHtml } from '../../utils/sanitize-icon'
+import { formatMessageDateTime } from '../../utils/format'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
 import SubTaskDrawer from './SubTaskDrawer'
@@ -62,7 +65,7 @@ const ModelSwitchPopover: React.FC<{
   }, [providers, searchText])
 
   const content = (
-    <div style={{ width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 168, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
         prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -80,8 +83,8 @@ const ModelSwitchPopover: React.FC<{
           return (
             <div key={provider.id}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextTertiary }}>
-                <RobotOutlined style={{ fontSize: 10 }} />
-                <span>{provider.name}</span>
+                <RobotOutlined style={{ fontSize: 10, flexShrink: 0 }} />
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.name}</span>
                 {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
                 {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
               </div>
@@ -95,6 +98,9 @@ const ModelSwitchPopover: React.FC<{
                     cursor: 'pointer',
                     fontSize: 12,
                     color: token.colorText,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
                     transition: 'background 0.15s',
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.background = token.colorBgTextHover }}
@@ -128,6 +134,119 @@ const formatNum = (n: number | undefined | null): string => {
   return n.toLocaleString('en-US')
 }
 
+/** 用户消息中的文件路径标记（由输入框文件令牌转换而来） */
+type UserContentPart = { type: 'text'; value: string } | { type: 'path'; value: string }
+
+const PATH_TAG_RE = /<path>([\s\S]*?)<\/path>/g
+
+/** 还原发送时对路径做的 XML 转义（& 需最后处理，避免二次解码） */
+const decodeXmlEntities = (s: string): string =>
+  s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+
+/** 拆分用户消息：<path> 标签转为文件标签，其余保持纯文本 */
+const parseUserContent = (content: string): UserContentPart[] => {
+  const parts: UserContentPart[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  PATH_TAG_RE.lastIndex = 0
+  while ((match = PATH_TAG_RE.exec(content)) !== null) {
+    if (match.index > lastIndex) parts.push({ type: 'text', value: content.slice(lastIndex, match.index) })
+    parts.push({ type: 'path', value: decodeXmlEntities(match[1]) })
+    lastIndex = PATH_TAG_RE.lastIndex
+  }
+  if (lastIndex < content.length) parts.push({ type: 'text', value: content.slice(lastIndex) })
+  return parts
+}
+
+const getBaseName = (path: string): string => {
+  const segments = path.split(/[\\/]/).filter(Boolean)
+  return segments[segments.length - 1] || path
+}
+
+/** 用户消息中的文件标签：点击用系统程序打开，悬停显示"定位到文件夹"入口 */
+const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
+  const { token } = theme.useToken()
+  const { t } = useTranslation()
+  const { message: messageApi } = App.useApp()
+  const [hovered, setHovered] = useState(false)
+  const [revealHovered, setRevealHovered] = useState(false)
+  const name = useMemo(() => getBaseName(path), [path])
+
+  const handleOpen = useCallback(async () => {
+    try {
+      const res = await window.electronAPI?.kms?.openFile(path)
+      if (res?.error) messageApi.error(`${t('workbench.openWithSystemFailed')}: ${res.error}`)
+    } catch (err: any) {
+      messageApi.error(err?.message || t('workbench.openWithSystemFailed'))
+    }
+  }, [path, messageApi, t])
+
+  const handleReveal = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    window.electronAPI?.kms?.openFileDir(path)
+  }, [path])
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title={path}
+      onClick={handleOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpen() } }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setRevealHovered(false) }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 6px',
+        margin: '0 2px',
+        maxWidth: 260,
+        verticalAlign: 'middle',
+        borderRadius: 6,
+        cursor: 'pointer',
+        fontSize: 13,
+        lineHeight: '20px',
+        userSelect: 'none',
+        background: hovered ? token.colorPrimaryBgHover : token.colorPrimaryBg,
+        border: `1px solid ${hovered ? token.colorPrimaryBorderHover : token.colorPrimaryBorder}`,
+        color: token.colorPrimary,
+        transition: 'background 0.15s ease, border-color 0.15s ease',
+      }}
+    >
+      <FileTextOutlined style={{ fontSize: 12, flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      <span
+        role="button"
+        tabIndex={-1}
+        title={t('workbench.openInExplorer')}
+        onClick={handleReveal}
+        onMouseEnter={() => setRevealHovered(true)}
+        onMouseLeave={() => setRevealHovered(false)}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 14,
+          height: 14,
+          flexShrink: 0,
+          borderRadius: 3,
+          cursor: 'pointer',
+          color: revealHovered ? token.colorPrimary : token.colorTextTertiary,
+          background: revealHovered ? token.colorPrimaryBgHover : 'transparent',
+          opacity: hovered ? 1 : 0,
+          transition: 'opacity 0.15s ease, color 0.15s ease, background 0.15s ease',
+        }}
+      >
+        <FolderOpenOutlined style={{ fontSize: 12 }} />
+      </span>
+    </span>
+  )
+}
+
+const CONTEXT_RING_RADIUS = 6
+const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS
+
 const ContextUsageInline: React.FC<{
   stats?: any
   isCompacting: boolean
@@ -139,7 +258,7 @@ const ContextUsageInline: React.FC<{
   const maxTokens = stats?.maxTokens ?? 0
   const percent = maxTokens > 0 ? Math.round((tokenCount / maxTokens) * 100) : 0
 
-  const percentColor = percent > 80 ? token.colorError : percent > 50 ? token.colorWarning : token.colorTextTertiary
+  const percentColor = percent > 80 ? token.colorError : percent > 50 ? token.colorWarning : token.colorTextSecondary
 
   return (
     <Tooltip
@@ -164,12 +283,31 @@ const ContextUsageInline: React.FC<{
       <div style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 4,
         cursor: 'pointer',
       }}>
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {t('workbench.contextUsage', { defaultValue: '上下文' })}:
-        </Text>
+        <svg
+          width={14}
+          height={14}
+          viewBox="0 0 16 16"
+          style={{ display: 'block', flexShrink: 0 }}
+          aria-label={`${t('workbench.contextUsage')}: ${percent}%`}
+        >
+          <circle cx={8} cy={8} r={CONTEXT_RING_RADIUS} fill="none" stroke={token.colorFillSecondary} strokeWidth={2} />
+          {percent > 0 && (
+            <circle
+              cx={8}
+              cy={8}
+              r={CONTEXT_RING_RADIUS}
+              fill="none"
+              stroke={percentColor}
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeDasharray={`${(Math.min(percent, 100) / 100) * CONTEXT_RING_CIRCUMFERENCE} ${CONTEXT_RING_CIRCUMFERENCE}`}
+              transform="rotate(-90 8 8)"
+            />
+          )}
+        </svg>
         <Text style={{ fontSize: 11, color: percentColor, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
           {percent}%
         </Text>
@@ -199,7 +337,9 @@ const MessageBubble: React.FC<{
   hideMessageActions?: boolean
   /** 当前数字员工，用于助手消息展示其真实头像（无则回退默认机器人图标） */
   assistantEmployee?: Employee | null
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee }) => {
+  /** 当前对话平均输出速度（tok/s），展示在用量弹窗中 */
+  conversationTokensPerSec?: number
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee, conversationTokensPerSec }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -263,6 +403,12 @@ const MessageBubble: React.FC<{
       ? ensureSegments({ ...msg, content: displayContent, segments: displaySegments, thought: displayThought, isError: displayIsError, isStreaming: displayIsStreaming })
       : msg
   , [msg, displayContent, displaySegments, displayThought, displayIsError, displayIsStreaming])
+
+  // 用户消息中的 <path> 段落渲染为文件标签，避免原始路径文本夹杂在消息里
+  const userContentParts = useMemo(
+    () => (msg.role === 'user' ? parseUserContent(msg.content) : []),
+    [msg.role, msg.content]
+  )
 
   // 本消息内包含的子任务（delegation 段），用于消息底部的子任务入口图标
   const delegationSegs = useMemo<MessageSegment[]>(() =>
@@ -378,7 +524,11 @@ const MessageBubble: React.FC<{
                 wordBreak: 'break-word',
                 lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorText, fontSize: 15 }}>{msg.content}</Text>
+                {userContentParts.map((part, index) => (
+                  part.type === 'text'
+                    ? <Text key={index} style={{ color: token.colorText, fontSize: 15 }}>{part.value}</Text>
+                    : <UserPathChip key={index} path={part.value} />
+                ))}
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     <Image.PreviewGroup items={msg.images}>
@@ -524,7 +674,7 @@ const MessageBubble: React.FC<{
                       key={`${action.pluginId}:${action.id}`}
                       type="text"
                       size="small"
-                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(action.icon) }} style={{ display: 'inline-flex' }} /> : undefined}
+                      icon={action.icon ? <span className="dm-plugin-action-icon" dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(action.icon) }} style={{ display: 'inline-flex' }} /> : undefined}
                       title={t(action.title, { ns: action.pluginId, defaultValue: action.title })}
                       onClick={() => runMessageAction(action)}
                     />
@@ -579,7 +729,7 @@ const MessageBubble: React.FC<{
                     {currentBranchModelLabel}
                   </Tag>
                 )}
-                <TokenUsageDisplay tokenUsage={displayTokenUsage} />
+                <TokenUsageDisplay tokenUsage={displayTokenUsage} tokensPerSec={conversationTokensPerSec} />
                 {isLastAssistantMessage && (
                   <ContextUsageInline
                     stats={contextStats}
@@ -587,6 +737,9 @@ const MessageBubble: React.FC<{
                     onCompact={onCompact}
                   />
                 )}
+                <Text style={{ fontSize: 11, color: token.colorTextTertiary, fontVariantNumeric: 'tabular-nums' }}>
+                  {formatMessageDateTime(msg.timestamp, t)}
+                </Text>
               </div>
             )}
           </div>
@@ -611,6 +764,7 @@ export default memo(MessageBubble, (prev, next) => {
     && prev.assistantEmployee === next.assistantEmployee
     && prev.isLastAssistantMessage === next.isLastAssistantMessage
     && prev.contextStats === next.contextStats
+    && prev.conversationTokensPerSec === next.conversationTokensPerSec
     && prev.isCompacting === next.isCompacting
     && prev.onCompact === next.onCompact
 })

@@ -13,6 +13,11 @@ export const TOOL_CHANNELS = {
   SEARCH_OPEN_WINDOW: 'tool:search-open-window',
   SEARCH_CLOSE_WINDOW: 'tool:search-close-window',
 
+  // 搜索 API（DeepSeek / Tavily / Brave）：查询配置状态、加密保存/清除密钥
+  SEARCH_API_GET_STATUS: 'tool:search-api-get-status',
+  SEARCH_API_SET_KEY: 'tool:search-api-set-key',
+  SEARCH_API_CLEAR_KEY: 'tool:search-api-clear-key',
+
   SKILL_REGISTRY_LIST: 'skill-registry:list',
   SKILL_REGISTRY_INSTALL: 'skill-registry:install',
   SKILL_REGISTRY_UNINSTALL: 'skill-registry:uninstall',
@@ -62,4 +67,32 @@ export interface SearchOpenWindowParams {
 
 export interface SearchCloseWindowParams {
   engine: string
+}
+
+/** 网络搜索后端：browser=本地浏览器抓取，api=第三方搜索 API */
+export type WebSearchMode = 'browser' | 'api'
+
+/** 支持的搜索 API 服务商 */
+export type SearchApiProviderId = 'deepseek' | 'tavily' | 'brave'
+
+export interface SearchApiProviderInfo {
+  id: SearchApiProviderId
+  name: string
+  /** 是否已保存可用的 API Key */
+  hasKey: boolean
+}
+
+export interface SearchApiStatus {
+  mode: WebSearchMode
+  provider: SearchApiProviderId
+  providers: SearchApiProviderInfo[]
+}
+
+export interface SearchApiSetKeyParams {
+  provider: SearchApiProviderId
+  apiKey: string
+}
+
+export interface SearchApiProviderParams {
+  provider: SearchApiProviderId
 }

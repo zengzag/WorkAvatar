@@ -243,8 +243,8 @@ describe('generic-chat / chatStream 参数透传', () => {
           { id: 't2', type: 'function', function: { name: 'read', arguments: '{"p":"a"}' } },
         ],
       },
-      { role: 'tool', toolCallId: 't1', content: '{"hits":1}' },
-      { role: 'tool', toolCallId: 't2', content: '工具执行完成，无返回值' },
+      { role: 'tool', toolCallId: 't1', content: JSON.stringify({ hits: 1 }, null, 2), isError: false },
+      { role: 'tool', toolCallId: 't2', content: '工具执行完成，无返回值', isError: false },
     ])
   })
 
@@ -276,7 +276,7 @@ describe('generic-chat / chatStream 参数透传', () => {
     await service.chatStream(cfg({ conversationId: 'c-skill2', useSkills: false }), [{ role: 'user', content: 'q' }], cbs as any)
     const args = mockState.created[0].runStream.mock.calls[0][0]
     expect(args.useSkills).toBe(false)
-    expect(args.maxIterations).toBe(100)
+    expect(args.maxIterations).toBe(400)
   })
 
   it('AbortSignal 透传给 agent', async () => {

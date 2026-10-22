@@ -1,6 +1,7 @@
-import { Typography, theme } from 'antd'
+import { Typography, theme, Tooltip } from 'antd'
+import { BarChartOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { memo } from 'react'
+import { Fragment, memo } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
@@ -14,6 +15,14 @@ const { Text } = Typography
 const formatNumber = (n: number | undefined | null): string => {
   if (n === undefined || n === null) return ''
   return n.toLocaleString('en-US')
+}
+
+/** Token 数粗略格式化：9,634 → 9.6K；2,340,123 → 2.3M */
+const formatCompactNumber = (n: number): string => {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1).replace(/\.0$/, '')}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, '')}K`
+  return String(n)
 }
 
 /**
@@ -39,14 +48,16 @@ export function resolveModelLabel(
 
 /**
  * Token 用量展示块。从 MessageBubble / MultiChatPanel 抽取的共享逻辑。
+ * tokensPerSec：当前对话的平均输出速度（tok/s），由调用方按整个会话聚合后传入。
  */
-export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }> = ({ tokenUsage }) => {
+export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined; tokensPerSec?: number }> = ({ tokenUsage, tokensPerSec }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
   if (!tokenUsage) return null
 
-  if (tokenUsage.totalTokens === undefined && tokenUsage.totalChars !== undefined) {
+  if (tokenUsage.totalTokens === undefined) {
+    if (tokenUsage.totalChars === undefined) return null
     return (
       <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
         {t('workbench.outputChars')}: {formatNumber(tokenUsage.totalChars)}
@@ -54,26 +65,58 @@ export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }>
     )
   }
 
-  if (tokenUsage.totalTokens === undefined) return null
+  const { promptTokens, completionTokens, cachedTokens } = tokenUsage
+  // 部分供应商不返回 total，用输入+输出兜底
+  const totalTokens = tokenUsage.totalTokens > 0
+    ? tokenUsage.totalTokens
+    : (promptTokens ?? 0) + (completionTokens ?? 0)
+
+  const details: Array<[string, string]> = []
+  if (promptTokens !== undefined) {
+    details.push([t('workbench.promptTokens'), formatNumber(promptTokens)])
+  }
+  if (completionTokens !== undefined) {
+    details.push([t('workbench.completionTokens'), formatNumber(completionTokens)])
+  }
+  if (cachedTokens != null && cachedTokens > 0) {
+    details.push([t('workbench.cachedTokens'), formatNumber(cachedTokens)])
+    details.push([
+      t('workbench.cacheHitRate'),
+      `${promptTokens ? ((cachedTokens / promptTokens) * 100).toFixed(1) : '0.0'}%`,
+    ])
+  }
+  if (tokensPerSec !== undefined && Number.isFinite(tokensPerSec) && tokensPerSec > 0) {
+    details.push([t('workbench.avgOutputSpeed'), `${tokensPerSec.toFixed(1)} tok/s`])
+  }
 
   return (
-    <>
-      {tokenUsage.promptTokens !== undefined && (
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {t('workbench.promptTokens')}: {formatNumber(tokenUsage.promptTokens)}
-          {tokenUsage.cachedTokens != null && tokenUsage.cachedTokens > 0 && (
-            <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-              {' '}({t('workbench.cachedTokens')}: {formatNumber(tokenUsage.cachedTokens)})
-            </Text>
-          )}
-        </Text>
-      )}
-      {tokenUsage.completionTokens !== undefined && (
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {t('workbench.completionTokens')}: {formatNumber(tokenUsage.completionTokens)}
-        </Text>
-      )}
-    </>
+    <Tooltip
+      title={details.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '2px 16px', fontSize: 12 }}>
+          {details.map(([label, value]) => (
+            <Fragment key={label}>
+              <span style={{ color: token.colorTextTertiary }}>{label}</span>
+              <span style={{ color: token.colorText, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{value}</span>
+            </Fragment>
+          ))}
+        </div>
+      ) : undefined}
+    >
+      <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        fontSize: 11,
+        color: token.colorTextTertiary,
+        cursor: 'default',
+      }}>
+        <BarChartOutlined style={{ fontSize: 12 }} />
+        <span>{t('workbench.usage')}</span>
+        <span style={{ color: token.colorTextSecondary, fontVariantNumeric: 'tabular-nums' }}>
+          {formatCompactNumber(totalTokens)}
+        </span>
+      </span>
+    </Tooltip>
   )
 }
 

@@ -2,6 +2,11 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
   WorkspaceOpenInExplorerParams,
+  WorkspaceListFilesParams,
+  WorkspaceListFilesResult,
+  TerminalExecParams,
+  TerminalExecResult,
+  TerminalEvent,
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
@@ -16,6 +21,7 @@ import type {
   AttachmentSaveResult,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
+  StorageCategoryKey,
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
@@ -75,18 +81,35 @@ import type {
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
-  FileChangeItem,
-  SnapshotRevertResult,
+  ShellBgKillResult,
+  ShellBgTaskItem,
   SubAgentProfile,
   SubAgentProfileCreateParams,
   SubAgentProfileUpdateParams,
   SubAgentProfileResult,
+  SearchApiStatus,
+  SearchApiSetKeyParams,
+  SearchApiProviderId,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
   workspace: {
     openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
     deleteTaskDir: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_TASK_DIR, path),
+    listFiles: (params: WorkspaceListFilesParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_FILES, params) as Promise<WorkspaceListFilesResult>,
+  },
+
+  // 任务侧边栏终端：命令级执行（非 PTY），cwd 由主进程延续
+  terminal: {
+    exec: (params: TerminalExecParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_EXEC, params) as Promise<TerminalExecResult>,
+    stop: (terminalId: string) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_STOP, { terminalId }),
+    onEvent: (callback: (event: TerminalEvent) => void) => {
+      const handler = (_event: any, payload: TerminalEvent) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.TERMINAL_EVENT, handler)
+      return () => { ipcRenderer.removeListener(IPC_CHANNELS.TERMINAL_EVENT, handler) }
+    },
   },
 
   employee: {
@@ -191,8 +214,8 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.LLM_THOUGHT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_THOUGHT, handler)
     },
-    onToolCall: (callback: (data: { sessionId: string; id: string; name: string; args: any }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; id: string; name: string; args: any }) => callback(data)
+    onToolCall: (callback: (data: { sessionId: string; id: string; name: string; args: any; iteration?: number }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; id: string; name: string; args: any; iteration?: number }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
@@ -201,8 +224,8 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
     },
-    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => callback(data)
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
     },
@@ -233,8 +256,10 @@ const electronAPI = {
     setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
-    getLogSize: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_LOG_SIZE),
     clearLogs: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_LOGS),
+    // 存储占用分类统计 / 打开指定分类目录（文件型分类在资源管理器中定位）
+    getStorageUsage: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_STORAGE_USAGE),
+    openStoragePath: (key: StorageCategoryKey) => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_STORAGE_PATH, { key }),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
     // 防休眠：查询/设置"窗口未全部关闭时禁止系统熄屏/休眠"
@@ -298,6 +323,15 @@ const electronAPI = {
     getEngines: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_GET_ENGINES),
     open: (engine: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_OPEN_WINDOW, { engine }),
     close: (engine: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_CLOSE_WINDOW, { engine }),
+  },
+
+  searchApi: {
+    // 搜索后端配置状态（模式、当前服务商、各服务商是否已配置密钥）
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_API_GET_STATUS) as Promise<SearchApiStatus>,
+    // 保存/清除 API Key（主进程加密存储，渲染层不可回读明文）
+    setKey: (params: SearchApiSetKeyParams) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_API_SET_KEY, params),
+    clearKey: (provider: SearchApiProviderId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SEARCH_API_CLEAR_KEY, { provider }),
   },
 
   skillRegistry: {
@@ -473,12 +507,17 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_SET_TASK_PERMISSION, params),
   },
 
-  // 工作区文件改动快照：列出任务内改动记录与回滚
-  snapshot: {
-    list: (conversationId: string) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_LIST, { conversationId }) as Promise<FileChangeItem[]>,
-    revert: (conversationId: string, ids?: string[]) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SNAPSHOT_REVERT, { conversationId, ids }) as Promise<SnapshotRevertResult>,
+  // 后台终端任务：列出当前会话运行中的长跑命令并手动终止（agent 异常中止后的用户侧兜底）
+  shellBg: {
+    list: (conversationId?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SHELL_BG_LIST, { conversationId }) as Promise<ShellBgTaskItem[]>,
+    kill: (taskId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SHELL_BG_KILL, { taskId }) as Promise<ShellBgKillResult>,
+    onChanged: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.SHELL_BG_CHANGED, handler)
+      return () => { ipcRenderer.removeListener(IPC_CHANNELS.SHELL_BG_CHANGED, handler) }
+    },
   },
 
   // 宿主通用通知（自动化完成 / ask_user 交互等）：插件通知（日历提醒）经插件桥广播，不占宿主通道

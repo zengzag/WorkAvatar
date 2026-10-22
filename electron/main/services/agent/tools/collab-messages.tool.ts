@@ -16,16 +16,14 @@ export const sendMessageTool: ToolDefinition = {
   name: 'send_message',
   title: '发送消息给子任务',
   summary: '向运行中的子任务发送一条消息，对方可用 read_messages 读取',
-  description: `向指定的、正在运行的子任务（runId，launch_agents/delegate 返回）发送一条消息，用于补充新要求或调整执行方向。对方子会话在后续执行中可调用 read_messages 查看。
-参数：
-- run_id: 目标子任务的 runId
-- message: 消息内容（数量不限）
-限制：仅对运行中/排队中的子任务有效；已结束的 run 无法接收。`,
+  description: `Send one message to a running sub-task (runId from launch_agents / delegate_to_employee), e.g. to add a requirement or redirect its work. The sub-task reads it with read_messages.
+
+Only running or queued sub-tasks can receive messages; a finished run cannot.`,
   parameters: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: '目标子任务的 runId' },
-      message: { type: 'string', description: '消息内容' },
+      run_id: { type: 'string', description: 'runId of the target sub-task' },
+      message: { type: 'string', description: 'Message content' },
     },
     required: ['run_id', 'message'],
   },
@@ -40,7 +38,7 @@ export const readMessagesTool: ToolDefinition = {
   name: 'read_messages',
   title: '读取接收到的消息',
   summary: '读取主管或协作方通过 send_message 发来的消息',
-  description: `读取本子任务收到的消息（发送方通过 send_message 发送的补充指令/说明）。读取后视为已读，后续再调用只会返回新消息。若任务目标有变化，应先读取再执行。`,
+  description: 'Read the messages this sub-task received. Reading marks them as read, so later calls return only new ones. Check for messages before acting when the task objective may have changed.',
   parameters: {
     type: 'object',
     properties: {},

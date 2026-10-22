@@ -10,9 +10,11 @@ export const APP_CHANNELS = {
 
   APP_GET_VERSION: 'app:get-version',
   APP_OPEN_LOG_DIR: 'app:open-log-dir',
-  APP_GET_LOG_SIZE: 'app:get-log-size',
   APP_CLEAR_LOGS: 'app:clear-logs',
   APP_CLEAR_ALL_DATA: 'app:clear-all-data',
+  // 存储占用量化：分类统计数据目录占用、打开指定分类目录
+  APP_GET_STORAGE_USAGE: 'app:get-storage-usage',
+  APP_OPEN_STORAGE_PATH: 'app:open-storage-path',
   // 前台防休眠：应用处于前台时禁止系统自动熄屏/休眠（查询/设置开关）
   POWER_SAVE_GET: 'power-save:get',
   POWER_SAVE_SET: 'power-save:set',
@@ -64,5 +66,48 @@ export interface AppShowSaveDialogParams {
   defaultPath?: string
   buttonLabel?: string
   filters?: Array<{ name: string; extensions: string[] }>
+}
+
+/**
+ * 存储分类键，与主进程统计口径一一对应（避免渲染层传任意路径）。
+ * - `dataDir` 仅用于"打开数据目录"，不参与占用统计
+ * - `other` 为数据目录下未被识别的顶层条目聚合
+ */
+export type StorageCategoryKey =
+  | 'dataDir'
+  | 'mainDb'
+  | 'kmsDb'
+  | 'attachments'
+  | 'workspaces'
+  | 'skills'
+  | 'pluginData'
+  | 'plugins'
+  | 'logs'
+  | 'other'
+
+export interface StorageCategoryUsage {
+  key: StorageCategoryKey
+  bytes: number
+  /** 展示用主路径（可能是目录或文件） */
+  path: string
+  /** 目录型分类直接打开目录；文件型分类在资源管理器中定位 */
+  isFile: boolean
+  /** 是否提供"打开/定位"操作（`other` 为聚合项，不可打开） */
+  canOpen: boolean
+  /** 是否可清理 */
+  cleanable: boolean
+}
+
+export interface StorageUsageResult {
+  dataDir: string
+  totalBytes: number
+  categories: StorageCategoryUsage[]
+  /** 所在磁盘可用/总容量；读取失败为 null */
+  diskFreeBytes: number | null
+  diskTotalBytes: number | null
+}
+
+export interface StoragePathParams {
+  key: StorageCategoryKey
 }
 

@@ -25,44 +25,44 @@ export const askUserTool: ToolDefinition = {
   id: 'ask_user',
   name: 'ask_user',
   title: '询问用户',
-  description: '向用户发起交互：confirm(确认)、select(选择)、input(文本输入)。',
+  description: 'Ask the user interactively and wait for the answer: confirm / select / input.',
   parameters: {
     type: 'object',
     properties: {
       type: {
         type: 'string',
         enum: ['confirm', 'select', 'input'],
-        description: '交互类型：confirm(确认)、select(选择)、input(输入)'
+        description: 'Interaction type: confirm / select / input'
       },
       message: {
         type: 'string',
-        description: '向用户展示的消息内容'
+        description: 'Message shown to the user'
       },
       title: {
         type: 'string',
-        description: '对话框标题（可选）'
+        description: 'Dialog title (optional)'
       },
       options: {
         type: 'array',
-        description: '选项列表（仅select类型使用），每项包含label(显示文本)、value(值)、description(可选描述)、danger(可选，是否为危险选项)',
+        description: 'Choices (select only): each item is {label, value, description?, danger?}',
         items: {
           type: 'object',
           properties: {
-            label: { type: 'string', description: '选项显示文本' },
-            value: { type: 'string', description: '选项值' },
-            description: { type: 'string', description: '选项描述（可选）' },
-            danger: { type: 'boolean', description: '是否为危险选项（可选）' }
+            label: { type: 'string', description: 'Option text' },
+            value: { type: 'string', description: 'Option value' },
+            description: { type: 'string', description: 'Optional note' },
+            danger: { type: 'boolean', description: 'Mark as a dangerous option' }
           },
           required: ['label', 'value']
         }
       },
       default_value: {
         type: 'string',
-        description: '默认值（可选）'
+        description: 'Default value (optional)'
       },
       placeholder: {
         type: 'string',
-        description: '输入框占位符（仅input类型使用，可选）'
+        description: 'Input placeholder (input only, optional)'
       },
     },
     required: ['type', 'message']

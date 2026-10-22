@@ -1,27 +1,40 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { interactionContext } from '../../../electron/main/services/unified-interaction.service'
+
+// 单测不依赖真实 OS 沙箱：confine 透传，保留纯函数；facts 可由用例改写以覆盖沙箱分支
+const sandboxFacts = vi.hoisted(() => ({
+  current: { mode: 'workspace-write', backend: 'none', enforcement: 'full', denied: false } as Record<string, unknown>,
+}))
+vi.mock('../../../electron/main/services/sandbox.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../electron/main/services/sandbox.service')>()
+  return {
+    ...actual,
+    default: {
+      getInstance: () => ({
+        confine: (input: any) => ({
+          program: input.program,
+          args: [...input.args],
+          env: {},
+          facts: { ...sandboxFacts.current, mode: input.mode },
+          cleanup: () => {},
+        }),
+      }),
+    },
+  }
+})
 import { shellExecTool } from '../../../electron/main/services/agent/tools/shell-exec.tool'
-import { javascriptExecTool } from '../../../electron/main/services/agent/tools/javascript-exec.tool'
+import UnifiedInteractionService, { interactionContext } from '../../../electron/main/services/unified-interaction.service'
 
 /**
- * shell_exec / javascript_exec 的非安全分支覆盖
- * （删除禁令见 deletion-policy.test.ts，危险模式见 shell-exec-dangerous.test.ts，沙箱逃逸见 javascript-sandbox-escape.test.ts）。
+ * shell_exec 的非安全分支覆盖
+ * （删除禁令见 deletion-policy.test.ts，危险模式见 shell-exec-dangerous.test.ts）。
  */
 
 type ToolResult = { success: boolean; output?: any; error?: string; stdout?: string; stderr?: string }
 
 const shell = (args: any): Promise<ToolResult> => shellExecTool.handler!(args) as Promise<ToolResult>
-const jsExec = (args: any): Promise<ToolResult> => javascriptExecTool.handler!(args) as Promise<ToolResult>
-
-function withWorkspace<T>(ws: string, fn: () => Promise<T>, sessionId = 'exec-branch'): Promise<T> {
-  return interactionContext.run(
-    { sessionId, employeeId: 'e1', workspacePath: ws } as never,
-    async () => fn(),
-  ) as Promise<T>
-}
 
 describe('agent/tools/shell-exec / 参数校验与输出组装', () => {
   let dir: string
@@ -93,131 +106,116 @@ describe('agent/tools/shell-exec / 参数校验与输出组装', () => {
     expect(shellExecTool.onDemand).toBe(false)
     expect(shellExecTool.timeoutMs).toBe(310000)
     expect(shellExecTool.parameters.required).toEqual(['command'])
+    expect(Object.keys(shellExecTool.parameters.properties)).toContain('full_access')
   })
 })
 
-describe('agent/tools/javascript-exec / 参数与错误分支', () => {
+describe('agent/tools/shell-exec / 沙箱分支', () => {
+  let dir: string
+  const defaultFacts = { mode: 'workspace-write', backend: 'none', enforcement: 'full', denied: false }
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-sbx-'))
+    sandboxFacts.current = { ...defaultFacts, backend: 'windows-acl', enforcement: 'partial' }
+  })
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
+    sandboxFacts.current = defaultFacts
+  })
+
+  it('元信息标注沙箱后端与模式', async () => {
+    const res = await shell({ command: 'node -e "console.log(\'META\')"', working_dir: dir, timeout: 20 })
+    expect(res.success, res.error).toBe(true)
+    expect(String(res.output)).toContain('sandbox=windows-acl/workspace-write')
+  }, 30000)
+
+  it.skipIf(process.platform !== 'win32')('越界写入被拒：返回沙箱说明并引导 file_copy', async () => {
+    const res = await shell({
+      command: 'node -e "console.error(\'ERROR: Access to the path is denied.\'); process.exit(1)"',
+      working_dir: dir,
+      timeout: 20,
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toBe('命令尝试写入工作区外，已被文件沙箱拒绝')
+    expect(String(res.output)).toContain('file_copy')
+  }, 30000)
+
+  it.skipIf(process.platform !== 'win32')('运行器故障优先于拒绝判定：不误报为越界写入', async () => {
+    const res = await shell({
+      command: 'node -e "console.error(\'workavatar-sandbox: GetNamedSecurityInfoW failed (Win32 5): Access is denied.\'); process.exit(127)"',
+      working_dir: dir,
+      timeout: 20,
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('沙箱运行器故障')
+    expect(String(res.output)).toContain('命令未执行')
+  }, 30000)
+})
+
+describe('agent/tools/shell-exec / full_access 临时提权', () => {
   let dir: string
 
-  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-js-')) })
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-hp-')) })
   afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }) })
 
-  it('未提供 code / code_file 时报错', async () => {
-    const res = await jsExec({ working_dir: dir })
+  function spyRequest(response: Record<string, unknown>) {
+    return vi.spyOn(UnifiedInteractionService.getInstance(), 'request').mockResolvedValue(response as never)
+  }
+
+  it('无交互上下文时拒绝执行', async () => {
+    const res = await shell({ command: 'node -e "void 0"', working_dir: dir, full_access: true })
     expect(res.success).toBe(false)
-    expect(res.error).toBe('请提供 code 或 code_file 参数')
+    expect(res.error).toContain('无交互上下文')
   })
 
-  it('code 为空白同样视为未提供', async () => {
-    const res = await jsExec({ code: '   ', working_dir: dir })
-    expect(res.success).toBe(false)
-    expect(res.error).toBe('请提供 code 或 code_file 参数')
-  })
-
-  it('code_file 不存在 / 是目录 / 内容为空分别报错', async () => {
-    const missing = await jsExec({ code_file: path.join(dir, 'nope.js'), working_dir: dir })
-    expect(missing.success).toBe(false)
-    expect(missing.error).toContain('代码文件不存在')
-
-    const asDir = await jsExec({ code_file: dir, working_dir: dir })
-    expect(asDir.success).toBe(false)
-    expect(asDir.error).toContain('路径不是文件')
-
-    const emptyFile = path.join(dir, 'empty.js')
-    fs.writeFileSync(emptyFile, '   \n  ', 'utf-8')
-    const empty = await jsExec({ code_file: emptyFile, working_dir: dir })
-    expect(empty.success).toBe(false)
-    expect(empty.error).toBe('代码文件内容为空')
-  })
-
-  it('code_file 优先于 code', async () => {
-    const file = path.join(dir, 'prefer.js')
-    fs.writeFileSync(file, 'console.log("FROM-FILE")', 'utf-8')
-    const res = await jsExec({ code: 'console.log("FROM-CODE")', code_file: file, working_dir: dir })
-    expect(res.success, res.error).toBe(true)
-    expect(String(res.output)).toContain('FROM-FILE')
-    expect(String(res.output)).not.toContain('FROM-CODE')
-  })
-
-  it('语法错误在执行前返回，带行号与修复建议', async () => {
-    const res = await jsExec({ code: 'const a = ;', working_dir: dir })
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('语法错误（未执行）：')
-    expect(res.error).toContain('位置: 第 1 行')
-    expect(res.error).toContain('代码上下文：')
-    expect(res.error).toContain('修复建议:')
-  })
-
-  it('成功执行：输出成功标记与 stdout 段', async () => {
-    const res = await jsExec({ code: 'console.log("JS-OK", 1 + 1)', working_dir: dir })
-    expect(res.success, res.error).toBe(true)
-    expect(String(res.output)).toContain('[javascript_exec] 执行成功')
-    expect(String(res.output)).toContain('--- stdout ---')
-    expect(String(res.output)).toContain('JS-OK 2')
-  })
-
-  it('运行时错误：返回失败标记与错误信息', async () => {
-    const res = await jsExec({ code: 'console.log("before"); throw new Error("runtime-boom")', working_dir: dir })
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('runtime-boom')
-    expect(String(res.output)).toContain('[javascript_exec] 执行失败')
-    expect(String(res.output)).toContain('before')
-  })
-
-  it('未注入的模块（os）被拒绝并给出可用模块清单', async () => {
-    const res = await jsExec({ code: 'const os = require("os"); console.log(os.hostname())', working_dir: dir })
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('Module "os" is not available')
-    expect(res.error).toContain('Available modules:')
-  })
-
-  it('时区/异步超时：未在超时内完成的代码被中断', async () => {
-    const res = await jsExec({ code: 'await new Promise(r => setTimeout(r, 5000))', working_dir: dir, timeout: 1 })
-    expect(res.success).toBe(false)
-    expect(res.error).toContain('执行超时')
-  }, 20000)
-
-  it('工作区外敏感环境变量不暴露给沙箱', async () => {
-    process.env.WA_FAKE_SECRET = 'TOP-SECRET-VALUE'
+  it('用户确认后以完整访问执行，且弹窗只针对本次命令', async () => {
+    const spy = spyRequest({ id: '', confirmed: true, cancelled: false })
     try {
-      const res = await jsExec({
-        code: 'console.log("SECRET=" + typeof process.env.WA_FAKE_SECRET); console.log("PATH=" + (typeof process.env.PATH))',
-        working_dir: dir,
+      const res = await interactionContext.run(
+        { sessionId: 'hp-1', employeeId: 'e1', workspacePath: dir, highPermission: false } as never,
+        () => shell({ command: 'node -e "console.log(\'ELEVATED\')"', working_dir: dir, full_access: true }),
+      )
+      expect(res.success, res.error).toBe(true)
+      expect(String(res.output)).toContain('ELEVATED')
+      expect(String(res.output)).toContain('sandbox=full-access')
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy.mock.calls[0][0]).toMatchObject({
+        source: 'security:sandbox_elevation',
+        forced: true,
+        type: 'confirm',
       })
-      expect(String(res.output)).toContain('SECRET=undefined')
-      expect(String(res.output)).toContain('PATH=string')
     } finally {
-      delete process.env.WA_FAKE_SECRET
+      spy.mockRestore()
     }
   })
 
-  it('file.save 在工作区内可直接写入（父目录需先用 createFolder 建）', async () => {
-    await withWorkspace(dir, async () => {
-      const res = await jsExec({
-        code: 'await file.createFolder("out")\nawait file.save("out/ok.txt", "hi")\nconsole.log("SAVED")',
-        working_dir: dir,
-      })
+  it('用户拒绝时命令不执行', async () => {
+    const spy = spyRequest({ id: '', confirmed: false, cancelled: true })
+    try {
+      const res = await interactionContext.run(
+        { sessionId: 'hp-2', employeeId: 'e1', workspacePath: dir, highPermission: false } as never,
+        () => shell({ command: 'node -e "console.log(\'SHOULD-NOT-RUN\')"', working_dir: dir, full_access: true }),
+      )
+      expect(res.success).toBe(false)
+      expect(res.error).toContain('未授权')
+      expect(String(res.output || '')).not.toContain('SHOULD-NOT-RUN')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('高权限模式下已是完整访问，不再弹窗', async () => {
+    const spy = spyRequest({ id: '', confirmed: false, cancelled: true })
+    try {
+      const res = await interactionContext.run(
+        { sessionId: 'hp-3', employeeId: 'e1', workspacePath: dir, highPermission: true } as never,
+        () => shell({ command: 'node -e "console.log(\'FULL\')"', working_dir: dir, full_access: true }),
+      )
       expect(res.success, res.error).toBe(true)
-      expect(fs.readFileSync(path.join(dir, 'out', 'ok.txt'), 'utf-8')).toBe('hi')
-    })
-  })
-
-  it('file.exists 可判断工作区内文件是否存在', async () => {
-    fs.writeFileSync(path.join(dir, 'there.txt'), 'x', 'utf-8')
-    await withWorkspace(dir, async () => {
-      const res = await jsExec({
-        code: 'console.log("THERE=" + file.exists("there.txt")); console.log("NOWHERE=" + file.exists("nope.txt"))',
-        working_dir: dir,
-      })
-      expect(String(res.output)).toContain('THERE=true')
-      expect(String(res.output)).toContain('NOWHERE=false')
-    })
-  })
-
-  it('工具元信息：按需、无必填参数、310s 超时', () => {
-    expect(javascriptExecTool.id).toBe('javascript_exec')
-    expect(javascriptExecTool.onDemand).toBe(true)
-    expect(javascriptExecTool.timeoutMs).toBe(310000)
-    expect(javascriptExecTool.parameters.required).toEqual([])
+      expect(String(res.output)).toContain('FULL')
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
