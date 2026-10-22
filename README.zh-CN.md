@@ -1,102 +1,80 @@
-# WorkAvatar
-
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.6.0-blue)
-![Electron](https://img.shields.io/badge/Electron-44-green)
-![React](https://img.shields.io/badge/React-19-blue)
-![TypeScript](https://img.shields.io/badge/TypeScript-7-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+# WorkAvatar
+
+### 能自己动手干活的 AI 数字员工，跑在你自己的电脑上。
+
+WorkAvatar 是一个开源的 AI 智能体桌面应用。你可以创建自己的数字员工：它有固定的角色、模型和工具集，能自己规划步骤、调用工具、读写本地文件，最后把结果交给你。笔记、日历、语音识别、自动化、模板任务和 AI 网页聚合都以插件形式提供，可以单独关掉，也可以换成自己写的。
+
+[![Stars](https://img.shields.io/github/stars/zengzag/WorkAvatar?style=flat-square&color=yellow)](https://github.com/zengzag/WorkAvatar/stargazers)
+[![Release](https://img.shields.io/github/v/release/zengzag/WorkAvatar?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
+[![Downloads](https://img.shields.io/github/downloads/zengzag/WorkAvatar/total?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0aa?style=flat-square)](#快速上手)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](#参与贡献)
+
+[**下载 Windows 版**](https://github.com/zengzag/WorkAvatar/releases/latest) · [主要特点](#主要特点) · [功能](#功能) · [插件开发](plugin-sdk/PROTOCOL.md) · [从源码构建](#从源码构建)
 
 [English](README.md) | **简体中文**
 
-</div>
+<img src="images/agent-chat.gif" alt="数字员工规划任务、读取文件并写出结果" width="92%" />
 
-WorkAvatar 是一款以**数字员工智能体**为核心的桌面应用。每个数字员工都是一个可独立工作的 AI 角色，有自己的指令、默认模型和工具集，能够自主规划步骤、调用工具、读写本地文件并完成任务。两大特色能力支撑它更好地工作：**本地资料库检索引擎**让员工能快速查阅你电脑上的文档，**可扩展插件系统**让应用能力可以持续生长。
+</div>
 
 ---
 
-## 目录
+## 主要特点
 
-- [数字员工](#数字员工)
-- [本地资料库](#本地资料库)
-- [插件生态](#插件生态)
-- [快速上手](#快速上手)
-- [适合哪些场景](#适合哪些场景)
-- [开发者](#开发者)
+WorkAvatar 的重心不在聊天，而在让 AI 在你的电脑上真正做事：读文件、写文件、执行命令、查资料。为此做了几件具体的事情：
 
----
-
-## 数字员工
-
-<div align="center">
-  <img src="images/agent-chat.gif" alt="数字员工工作中" width="88%" />
-</div>
-
-数字员工是 WorkAvatar 的核心。你可以创建任意数量的员工，每个员工有独立的角色指令、默认模型、工具集和记忆。
-
-描述一个任务，员工就会规划步骤、自主调用工具。整个执行过程以对话形式实时呈现——你能看到它在想什么、读了哪些文件、写了什么内容、遇到了什么问题。
-
-<div align="center">
-  <img src="images/employees.png" alt="数字员工管理" width="88%" />
-</div>
-
-**工具集** — 覆盖文件读写编辑复制删除、Shell 命令、网页搜索（本地浏览器或搜索 API：DeepSeek / Tavily / Brave）、图片识别、以及 Word/Excel/PPT 文档生成。你可以按员工单独配置每个工具的可用状态，也可以接入外部 MCP 服务。
-
-**文件安全** — 所有文件操作统一走权限检查。**Shell 命令由操作系统级沙箱强制约束**（Windows 受限令牌 + 目录 ACL / macOS Seatbelt）：默认可读全部、只可写当前任务工作区与私有临时目录，越界写入会被内核直接拒绝，命令随即失败；需要交付到用户目录时用 `file_copy` 复制文件或目录（目录递归复制，工作区外会弹一次授权，可授权整个文件夹）。确实必须写全局位置时（例如安装共享库），命令可带 `full_access` 参数主动申请**仅本次**的完整访问，弹窗确认后才会执行。文件工具在授权工作区内自由读写，工作区外或敏感文件（如 `.env`、私钥、`.git`）需要确认，并提供变更 diff 预览。
-
-**子任务委托** — 员工可以把工作拆成子任务交给其他员工，并行或顺序执行，最多两层（主任务→子任务→子子任务）。每个子任务在独立工作区运行，只把结果摘要返回，不污染主员工上下文。委托默认开启，可在「数字员工设置 → 委托」中按员工单独开关（内置/插件员工是专家执行者，不扮演主管），并内置 `explore`（只读检索）与 `general`（全能力执行）两个子智能体角色。
-
-**记忆与技能** — 跨任务记忆让员工记住之前的偏好和教训；Skills 以 Markdown 格式定义专项能力，员工可按需加载。应用内置知识搜索助手和插件开发助手，各插件也可以提供自己的员工。
+- **资料留在本地。** 文档解析、分词、索引和检索都在本机完成。只有任务实际需要的文件内容，才会发给你配置的模型服务。
+- **命令跑在系统沙箱里。** Windows 使用受限令牌加目录 ACL，macOS 使用 Seatbelt。读取不受限制，写入只能落在任务工作区和私有临时目录；越界写入会被内核拒绝，命令直接失败。
+- **功能以插件形式交付。** 笔记、日历、语音识别、自动化、模板任务、AI 网页聚合都是独立插件，可以单独启停、删除或替换，改动即时生效，不需要重启。
+- **资料库加进来就能搜。** 关键词检索不用等向量化完成；向量、摘要和知识卡片在后台只为你常用的文件生成。
 
 ---
 
-## 本地资料库
+## 功能
 
-<div align="center">
-  <img src="images/kms-search.gif" alt="本地资料库检索" width="88%" />
-</div>
+### 数字员工
 
-资料库让数字员工能快速查阅你电脑上的文档——项目资料、合同、报告、会议纪要，都可以加进资料库。
+每个员工有独立的角色指令、默认模型、工具集和记忆。你描述任务，它自己规划步骤、调用工具，整个过程显示在对话里：在做什么、打开了哪个文件、写了什么、在哪里出错。
 
-**即加即用** — 把文件夹加入资料库，立即就能按关键词搜索，无需等待向量化完成。索引会自动跟踪文件变化，支持增量重建。
+<img src="images/employees.png" alt="数字员工管理" width="92%" />
 
-**混合检索** — 搜索同时跑三条路径：全文关键词、语义向量、文件名匹配，然后合并排序。可在混合 / 关键词 / 语义 / 文件名四种模式间切换，也可以按文件类型、时间范围、目录、合集过滤结果。
+- **工具** — 文件读写、编辑、复制、删除，Shell 命令，网页搜索（本地浏览器或 DeepSeek / Tavily / Brave API），图片识别，Word / Excel / PPT 文档生成。工具可以按员工单独配置，也可以接入外部 MCP 服务。
+- **子任务委托** — 把工作拆成子任务交给其他员工，可并行也可顺序，最多两层。每个子任务在独立工作区运行，只把结果摘要交回，主员工的上下文不会被过程细节占满。内置 `explore`（只读检索）和 `general`（全能力执行）两个子智能体角色。
+- **记忆与技能** — 跨任务记忆保留你的偏好和之前踩过的坑；Skills 用 Markdown 定义专项能力，按需加载。内置知识搜索助手和插件开发助手。
+- **文件权限** — 文件工具在任务工作区内自由读写。工作区之外，或涉及 `.env`、私钥、`.git` 这类敏感文件时，会先弹出确认并给出变更 diff。产物用 `file_copy` 交付到指定位置，文件和整个文件夹都只需授权一次。确实需要写全局位置时（比如安装共享库），命令可以带 `full_access` 针对本次申请，确认后才会执行。
 
-**冷热分层渐进式增强** — 常用文件（被频繁打开或命中）后台自动晋升，增加段落摘要、语义向量和知识卡片；冷门文件保持轻量索引，资源消耗与使用量成正比。这意味着资料库第一天就可用，用得越多越聪明。
+### 本地资料库
 
-**合集** — 你可以把主题相关的文件归为一个合集，每个合集自动生成摘要和目录，便于按主题浏览，或作为任务上下文交给员工。
+<img src="images/kms-search.gif" alt="跨本地文档的混合检索" width="92%" />
 
-**离线优先** — 文档解析、分词、索引和搜索都在本地完成。即使模型服务不可用，关键词搜索依然可用。支持的格式包括 PDF、Word、Excel、PPT、Markdown、纯文本、HTML，以及本地 OCR 识别的图片。
+把文件夹加入资料库，员工就能直接搜到里面的项目资料、合同、报告和会议纪要。
 
-**对外服务** — 资料库内置 MCP 服务，绑定 127.0.0.1 并使用生成的访问令牌，本机其他 MCP 兼容应用可以调用它的搜索能力。
+- **混合检索** — 全文关键词、语义向量、文件名匹配三条路径并行，再合并成统一排序。可以在混合 / 关键词 / 语义 / 文件名四种模式间切换，也可以按文件类型、时间范围、目录或合集过滤。
+- **渐进式增强** — 经常打开或被命中的文件，会在后台补上段落摘要、向量和知识卡片；冷门文件保持轻量索引，开销随实际使用量增长。
+- **合集** — 把主题相关的文件归为一组，自动生成摘要和目录，既能按主题浏览，也能作为上下文交给员工。
+- **可以离线** — 解析、分词、索引和搜索都在本地。模型服务不可用时，关键词检索照常工作。支持 PDF、Word、Excel、PPT、Markdown、纯文本、HTML，以及经本地 OCR 处理的图片。
+- **内置 MCP 服务** — 在 `127.0.0.1` 上把检索能力开放给本机其他 MCP 客户端，访问需要令牌。
 
----
+### 插件生态
 
-## 插件生态
+<img src="images/plugins.gif" alt="启用与管理插件" width="92%" />
 
-<div align="center">
-  <img src="images/plugins.gif" alt="插件管理" width="88%" />
-</div>
+插件可以在应用里添加导航页、设置项、聊天工具栏、Agent 工具、MCP 工具和快捷键，也可以提供自己的数字员工。插件自动跟随应用的明暗主题和语言，数据存放在独立的 SQLite 库里；启用、禁用、导入、删除、升级都在设置页完成，不用重启。
 
-WorkAvatar 从一开始就是插件化的。笔记、日历、语音识别、自动化、数据模型、文档编辑、模板任务、AI 助手聚合页——这些能力全部以插件形式交付。启用、禁用、导入、删除、升级都在设置页完成，即时生效，无需重启。
+应用内置**插件开发助手**，可以让数字员工在应用内帮你写完一个插件并安装。分享出去的插件包是 `.wap` 格式。
 
-插件可以添加导航页、设置项、聊天工具栏，也可以提供自己的数字员工和工具。插件自动跟随应用的明暗主题和语言设置。
-
-应用内置**插件开发助手**——你可以直接让数字员工在应用内开发一个插件并安装。他人分享的 `.wap` 插件包也可以导入使用。
-
-### 内置插件一览
-
-| 插件 | 说明 |
+| 插件 | 它能做什么 |
 |------|------|
-| **笔记** | Markdown 笔记，文件以 `.md` 存储在本地文件夹，便于和同步服务及其他编辑器配合使用。三栏布局：文件树、编辑器、大纲，支持分屏预览和全文检索。 |
-| **日历 & 待办** | 月 / 周 / 日视图，支持重复事件和提醒，可选单向同步 Outlook。数字员工可应要求创建和编辑事件。 |
-| **语音识别** | 基于 sherpa-onnx 的离线识别。录音时实时字幕、浮窗字幕，录音结束自动生成会议纪要。 |
-| **自动化** | 按日 / 周 / 月定时运行数字员工任务，失败自动重试，完成后通知。每次运行可追溯到对应的任务会话。 |
-| **数据模型** | 在画布上设计数据库表结构，支持 DBML 导入导出。也可以通过对话让员工帮你设计模型。 |
-| **文档编辑** | Word 级保真度 `.docx` 编辑器，支持导入导出、PDF 导出、版本快照。AI 助手可以在编辑器上直接改写、替换、插入、删除、重排、调整样式。界面为中文。 |
-| **模板任务** | 可视化画布上搭建多步工作流——智能体、评审、条件分支、循环、并行、人工节点，带通过 / 不通过判定和轮次控制。内置模板设计助手，可把一段需求描述转成可运行模板。 |
-| **AI 助手聚合页** | 把豆包、DeepSeek 等第三方 AI 网站内嵌到应用中，单页 / 双页 / 标签页多种布局，各自独立的登录态；也可添加任意自定义 https 网页。使用受对应网站服务条款约束。 |
+| **笔记** | Markdown 笔记直接存成 `.md`，同步服务和其他编辑器都能直接用。文件树、编辑器、大纲三栏，支持分屏预览和全文检索。 |
+| **日历 & 待办** | 月 / 周 / 日视图，支持重复事件和提醒，可选单向同步 Outlook。员工可以按你的要求创建和修改事件。 |
+| **语音识别** | 基于 sherpa-onnx 的离线识别，录音时显示实时字幕和浮窗字幕，录音结束后自动生成会议纪要。 |
+| **自动化** | 按日 / 周 / 月定时运行员工任务，失败自动重试，完成后通知。每次运行都能追溯回对应会话。 |
+| **模板任务** | 在画布上搭建多步工作流，支持智能体、评审、条件、循环、并行、人工节点，带通过 / 不通过判定和轮次控制。内置模板设计助手，能把一段需求描述变成可运行的模板。 |
+| **AI 助手聚合页** | 把豆包、DeepSeek 等第三方 AI 网站内嵌进应用，支持单页、双页、标签页布局，各站点登录态隔离；也可以添加任意 HTTPS 网页。使用受对应网站的服务条款约束。 |
 
 <div align="center">
   <table><tr>
@@ -114,73 +92,155 @@ WorkAvatar 从一开始就是插件化的。笔记、日历、语音识别、自
 
 ## 快速上手
 
-首次启动时引导向导会带你完成模型服务配置、第一个数字员工创建和资料库基本操作。
+### 安装应用
 
-手动操作也只需三步：
+从 [Releases](https://github.com/zengzag/WorkAvatar/releases/latest) 下载最新版本（Windows 10/11 安装包）。macOS 请[从源码构建](#从源码构建)。
 
-1. **添加资料库** — 左侧导航进入「资料库 → 文档管理」，添加本机文件夹，索引自动建立并持续同步。
-2. **搜索文档** — 顶部搜索框输入关键词，在混合 / 关键词 / 语义 / 文件名模式间切换，按类型或时间过滤。
-3. **开始对话** — 切到「数字员工」，选一个员工（或新建），描述你的任务。员工会按需检索资料库、把产出写入任务独立工作区；点任务右上角的侧边栏按钮可查看工作区文件、打开终端、就地预览产物。
+首次启动会有一个引导向导，带你配置模型服务、创建第一个员工、把文件夹加进资料库。也可以跳过，之后在「设置 → 通用」里重新运行。
+
+### 第一次使用
+
+1. **添加资料库** — 在「资料库 → 文档管理」里添加文件夹，索引会自动建立并持续同步。
+2. **搜一下** — 在顶部搜索框输入关键词，按需切换混合 / 关键词 / 语义 / 文件名模式。
+3. **交一个任务** — 进入「数字员工」，选一个员工（或新建），描述任务。它会按需检索资料库，把产出写进任务的独立工作区；点任务右上角的侧边栏按钮，可以查看工作区文件、打开终端、就地预览产物。
+
+### 从源码构建
+
+**要求：** Windows 10/11 或 macOS、Node.js 24+、npm 11+。
+
+```bash
+git clone --recurse-submodules https://github.com/zengzag/WorkAvatar.git
+cd WorkAvatar
+npm install
+npm run dev        # 开发模式
+npm run build      # 生产构建
+```
+
+已经克隆过的话，用 `git submodule update --init --recursive` 拉取插件源码。
+
+> Electron 42 起不再在 `npm install` 时下载二进制，首次运行 `npm run dev`（或 `npx install-electron`）时才按需下载。网络受限时可以保留仓库 `.npmrc` 里的 `electron_mirror`，或自行设置环境变量 `ELECTRON_MIRROR`。
 
 ---
 
 ## 适合哪些场景
 
-- 让 AI 在**本地文档**上工作——合同比对、报告起草、项目资料检索，不上传云端。
-- 给团队或个人搭一个**可长期复用的 AI 员工**，角色、工具、记忆都可定制。
-- 把重复性工作交给**自动化**按计划执行，比如每天早上自动生成晨会纪要。
-- 需要时把本机资料库通过 **MCP 服务**开放给其他 AI 应用调用。
+| 场景 | WorkAvatar 怎么做 |
+|------|------|
+| **本地文档工作** | 合同比对、报告起草、项目调研，直接在你自己的文件夹上做，不用先把资料传到网盘。 |
+| **长期使用的团队员工** | 角色、工具和记忆都固定下来，团队可以反复把同类工作交给它。 |
+| **定时后台任务** | 每天自动生成晨报、每周汇总，结果写回对应会话。 |
+| **把检索开放出去** | 通过内置 MCP 服务，让本机其他 AI 客户端也能搜你的文档。 |
+| **内部工具插件** | 把内部流程打包成插件，带上导航页、设置项和 Agent 工具。 |
 
 ---
 
-## 开发者
+## 插件开发
 
-### 插件开发
+一个插件就是一个文件夹：`manifest.json`、CommonJS 主进程入口、可选的 ESM 渲染端入口和语言文件。能力需要显式声明，宿主会在调用时检查，未声明的服务拿不到。
 
-插件协议、API 文档和示例项目已随仓库提供：
+```json
+{
+  "id": "my-plugin",
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "engine": ">=0.2.0",
+  "main": "dist/main/index.cjs",
+  "renderer": "dist/renderer/index.js",
+  "ipc": ["list-things"],
+  "capabilities": [
+    { "domain": "data", "entities": ["conversations"], "access": "read" },
+    { "domain": "execute", "kinds": ["llm-chat"] },
+    { "domain": "ui", "views": ["chat.toolbar", "settings.tab"] }
+  ]
+}
+```
 
-- 插件协议规范：[plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
-- 插件 API 参考：[plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
-- 插件能力矩阵：[plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
-- 插件开发打包教程：[plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
-- 示例插件：[plugins/examples/hello-world/](plugins/examples/hello-world/)
+```ts
+import type { PluginContext } from '@workavatar/plugin-sdk'
 
-### 技术栈
+export async function activate(ctx: PluginContext): Promise<void> {
+  ctx.ipc.handle('list-things', () => ctx.storage.openSqlite('index').prepare('SELECT * FROM things').all())
+
+  ctx.contributions.registerAgentTools([{
+    id: 'my_thing_lookup',
+    name: 'my_thing_lookup',
+    title: '查询插件数据',
+    description: '按关键字查询插件数据',
+    parameters: { type: 'object', properties: { keyword: { type: 'string' } } },
+    handler: (args) => `查询 ${args.keyword} 的结果`,
+    onDemand: true,
+  }])
+}
+```
+
+- 协议规范：[plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
+- API 参考：[plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
+- 能力矩阵：[plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
+- 开发打包教程：[plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
+- 最小示例：[plugins/examples/hello-world/](plugins/examples/hello-world/)
+
+插件里的 React、ReactDOM、antd、i18next 由宿主通过 `__WA_HOST__` 注入，不需要自己安装，也不会出现多个 React 实例的问题。
+
+---
+
+## 架构
+
+WorkAvatar 基于 Electron，智能体运行时、界面和插件宿主分别放在不同层。
+
+- **主进程** — 智能体运行时（规划、工具执行、委托）、模型供应商、资料库（SQLite FTS5 + sqlite-vec）、文件权限服务和 Shell 沙箱。
+- **渲染端** — React 19 和 Ant Design 界面、流式对话状态，插件页面通过 `plugin://` 协议加载。
+- **插件** — 每个插件独立的 SQLite 库、显式能力声明、`plugin:<id>:` IPC 命名空间，启停不需要重启。
+- **模型** — 支持 OpenAI、Azure、DeepSeek、通义千问、智谱、火山引擎、小米、LM Studio 以及任意 OpenAI 兼容端点，接口协议支持 Chat Completions、Responses 和 Anthropic Messages。
 
 | 分类 | 技术 |
 |------|------|
 | 运行时 | Electron 44 |
-| 前端 | React 19 + TypeScript 7 + Ant Design 6 |
-| 构建 | Vite 8 |
-| 本地数据库 | SQLite（FTS5 全文检索 + sqlite-vec 向量） |
+| 前端 | React 19 + TypeScript 7 + Ant Design 6，Vite 8 |
+| 本地数据库 | SQLite（FTS5 全文 + sqlite-vec 向量） |
 | 文档解析 | PDF、Word、Excel、PPT、HTML、OCR（PaddleOCR） |
 | 语音识别 | sherpa-onnx（离线） |
 | 国际化 | i18next（中英文） |
 
-> 内置插件（笔记、日历、语音、自动化、数据模型、文档编辑、模板任务）源码位于独立仓库 `WorkAvatar-Plugins`，以 git 子模块形式包含在 `plugins/` 目录中。`plugin-sdk/` 插件协议类型定义维护在本仓库。克隆后执行 `git submodule update --init --recursive` 拉取插件源码。
+> 内置插件源码位于独立仓库 `WorkAvatar-Plugins`，以 `plugins/` git 子模块引入；`plugin-sdk/` 维护在本仓库。
 
-### 构建源码
+---
 
-**要求：** Windows 10/11 或 macOS、Node.js 24+、npm 11+
+## 常见问题
+
+**数据会不会离开我的电脑？**
+索引和检索不会。任务只会把模型需要的上下文发给你配置的供应商，工作区始终在本地。
+
+**能用本地模型吗？**
+可以。把供应商指向 LM Studio 或任意 OpenAI 兼容的本地服务即可。即使完全不接模型，关键词检索也能用。
+
+**有 macOS / Linux 版吗？**
+macOS 目前需要从源码构建；Linux 暂未打包。
+
+**会不会改坏我的文件？**
+Shell 命令受操作系统沙箱约束，工作区外的写入会被拒绝。文件工具在目标位于工作区外或属于敏感文件时，会给出 diff 并要求确认。
+
+**怎么发布自己的插件？**
+先看[协议规范](plugin-sdk/PROTOCOL.md)，从 [hello-world](plugins/examples/hello-world/) 起步，或者让内置插件开发助手帮你搭脚手架。打成 `.wap` 包就可以分发。
+
+---
+
+## 参与贡献
+
+欢迎提 Issue 和 PR。带复现步骤和截图的 bug 报告通常修得最快。
 
 ```bash
-# 拉取插件子模块
-git submodule update --init --recursive
-
-npm install
-
-# 开发模式
-npm run dev
-
-# 生产构建
-npm run build
+npm run test      # 核心测试
+npm run test:all  # 核心 + 插件测试
 ```
 
-> Electron 42 起不再在 `npm install` 时下载二进制，首次运行 `npm run dev`（或 `npx install-electron`）时才按需下载。
-> 网络受限时可保留仓库内 `.npmrc` 的 `electron_mirror`（npmmirror 镜像），或自行设置环境变量 `ELECTRON_MIRROR`。
+插件、翻译、文档和示例模板同样欢迎。
 
-### 许可证
+如果 WorkAvatar 对你有帮助，欢迎点个 Star。
+
+---
+
+## 许可证
 
 [MIT License](LICENSE)
 
-文中提及的第三方产品名称、商标归其 respective 所有者所有，仅作标识用途。
+文中提及的第三方产品名称与商标归各自所有者所有，仅作标识用途。

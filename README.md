@@ -1,102 +1,80 @@
-# WorkAvatar
-
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.6.0-blue)
-![Electron](https://img.shields.io/badge/Electron-44-green)
-![React](https://img.shields.io/badge/React-19-blue)
-![TypeScript](https://img.shields.io/badge/TypeScript-7-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+# WorkAvatar
+
+### AI employees that do the work themselves, on your own machine.
+
+WorkAvatar is an open-source desktop app for AI agents. You create a digital employee with its own role, model and tool set; it plans the steps, calls tools, reads and writes files on your computer, and returns the result. Notes, calendar, voice recognition, automation, task templates and an AI web aggregator all ship as plugins, so you can turn them off or replace them with your own.
+
+[![Stars](https://img.shields.io/github/stars/zengzag/WorkAvatar?style=flat-square&color=yellow)](https://github.com/zengzag/WorkAvatar/stargazers)
+[![Release](https://img.shields.io/github/v/release/zengzag/WorkAvatar?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
+[![Downloads](https://img.shields.io/github/downloads/zengzag/WorkAvatar/total?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0aa?style=flat-square)](#quick-start)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](#contributing)
+
+[**Download for Windows**](https://github.com/zengzag/WorkAvatar/releases/latest) · [Highlights](#highlights) · [Features](#features) · [Plugin SDK](plugin-sdk/PROTOCOL.md) · [Build from source](#build-from-source)
 
 **English** | [简体中文](README.zh-CN.md)
 
-</div>
+<img src="images/agent-chat.gif" alt="An employee planning a task, reading files and writing output" width="92%" />
 
-WorkAvatar is a desktop application centered around **digital employee agents**. Each digital employee is an independently working AI role with its own instructions, default model, and tool set — it plans steps on its own, invokes tools, reads and writes local files, and completes tasks. Two featured capabilities support it: a **local knowledge base search engine** so employees can quickly look up documents on your computer, and an **extensible plugin system** that lets the application grow over time.
+</div>
 
 ---
 
-## Table of Contents
+## Highlights
 
-- [Digital Employees](#digital-employees)
-- [Local Knowledge Base](#local-knowledge-base)
-- [Plugin Ecosystem](#plugin-ecosystem)
-- [Quick Start](#quick-start)
-- [Use Cases](#use-cases)
-- [For Developers](#for-developers)
+WorkAvatar is less about chatting and more about letting an agent act on your computer: read files, write files, run commands, search your documents. A few concrete choices make that practical:
 
----
-
-## Digital Employees
-
-<div align="center">
-  <img src="images/agent-chat.gif" alt="A digital employee working through a task" width="88%" />
-</div>
-
-Digital employees are the core of WorkAvatar. You can create as many as you want; each has its own role instructions, default model, tool set, and memory.
-
-Describe a task, and the employee plans the steps and invokes tools on its own. The whole execution unfolds in a conversation — you see what it is thinking, which files it reads, what it writes, and where it runs into problems.
-
-<div align="center">
-  <img src="images/employees.png" alt="Digital employee management" width="88%" />
-</div>
-
-**Tool set** — file read / write / edit / copy / delete, shell commands, web search (local browser or search API: DeepSeek / Tavily / Brave), image recognition, and Word / Excel / PowerPoint document generation. Tools can be configured per employee; external MCP servers can also be attached.
-
-**File safety** — all file operations go through a unified permission gate. **Shell commands run inside an OS-level sandbox** (a restricted token plus directory ACLs on Windows, Seatbelt on macOS): reads are unrestricted, writes are limited to the task workspace and a private temp directory, and an out-of-bounds write is rejected by the kernel, so the command fails. Deliverables leave the workspace through `file_copy`, which copies a file or a folder (recursively) to a chosen location and asks for confirmation once (the whole folder can be authorized). When a command genuinely must write globally (for example installing a shared library), it can pass `full_access` to request one-time unrestricted execution, which only runs after the user confirms. File tools read and write freely inside the authorized workspace; anything outside the workspace or sensitive files (`.env`, private keys, `.git`) requires confirmation with a diff preview of the change.
-
-**Sub-task delegation** — employees can split work into sub-tasks and hand them to other employees, in parallel or sequentially, up to two levels deep (main task → sub-task → sub-sub-task). Each sub-task runs in its own workspace and returns only a result summary, keeping the supervisor's context clean. Delegation is on by default and can be toggled per employee in the employee's Delegation settings (built-in and plugin employees act as specialist executors, not supervisors) and ships with two built-in sub-agent roles — `explore` (read-only research) and `general` (full-capability worker).
-
-**Memory & Skills** — cross-task memory lets employees remember your preferences and prior lessons. Skills are Markdown-defined packages of specialized capabilities that employees load on demand. The application ships with a Knowledge Search Assistant and a Plugin Development Assistant; plugins can add their own employees.
+- **Your documents stay local.** Parsing, tokenizing, indexing and search all run on your machine. Only the content a task actually needs is sent to the model provider you configured.
+- **Commands run in an OS sandbox.** A restricted token plus directory ACLs on Windows, Seatbelt on macOS. Reads are unrestricted; writes are limited to the task workspace and a private temp directory. A write outside those paths is denied by the kernel, so the command fails.
+- **Features ship as plugins.** Notes, calendar, voice recognition, automation, task templates and the AI web aggregator are separate plugins. Enable, disable, remove or replace them individually; changes apply without a restart.
+- **The knowledge base is searchable right away.** Keyword search works as soon as a folder is added. Vectors, summaries and knowledge cards are built in the background for the files you actually use.
 
 ---
 
-## Local Knowledge Base
+## Features
 
-<div align="center">
-  <img src="images/kms-search.gif" alt="Searching the local knowledge base" width="88%" />
-</div>
+### Digital employees
 
-The knowledge base lets digital employees quickly look up documents on your computer — project files, contracts, reports, meeting notes — by adding folders to it.
+Each employee has its own instructions, default model, tool set and memory. Describe a task and it plans the steps and calls tools, with the whole run visible in the conversation: what it is doing, which file it opened, what it wrote, where it failed.
 
-**Usable immediately** — add a folder and keyword search works right away, no waiting for vectorization to finish. The index tracks file changes automatically and supports incremental rebuilds.
+<img src="images/employees.png" alt="Digital employee management" width="92%" />
 
-**Hybrid search** — three search paths run in parallel: full-text keyword, semantic vector, and filename match, then merged into a single ranking. Switch between Hybrid / Keyword / Semantic / Filename modes, and filter by file type, time range, directory, or collection.
+- **Tools** — read, write, edit, copy and delete files, run shell commands, search the web (local browser or DeepSeek / Tavily / Brave API), recognize images, and generate Word / Excel / PowerPoint documents. Tools can be configured per employee, and external MCP servers can be attached.
+- **Delegation** — split work into sub-tasks and hand them to other employees, in parallel or in sequence, up to two levels. Each sub-task runs in its own workspace and returns only a result summary, so the supervisor's context stays focused. Built-in `explore` (read-only research) and `general` (full capability) roles are included.
+- **Memory and skills** — cross-task memory keeps your preferences and past lessons; skills are Markdown-defined capabilities loaded on demand. A Knowledge Search Assistant and a Plugin Development Assistant are built in.
+- **File permissions** — file tools read and write freely inside the task workspace. Outside it, or for sensitive files such as `.env`, private keys and `.git`, you get a confirmation with a diff first. Deliverables leave via `file_copy`, which copies a file or a whole folder to a chosen location with a single authorization. When a command really must write globally, such as installing a shared library, it can pass `full_access` for that one run, after you confirm.
 
-**Progressive enhancement** — files that are frequently opened or hit by search are automatically promoted in the background, gaining paragraph summaries, semantic vectors, and knowledge cards. Cold files stay as lightweight index entries, so resource usage scales with demand. The knowledge base is usable from day one and gets smarter with use.
+### Local knowledge base
 
-**Collections** — group thematically related files into a collection. Each collection gets an auto-generated summary and table of contents for topic-based browsing or to hand as context to an employee.
+<img src="images/kms-search.gif" alt="Hybrid search across local documents" width="92%" />
 
-**Offline-first** — document parsing, tokenization, indexing, and search all run locally. Keyword search remains usable even when the configured model service is unavailable. Supported formats: PDF, Word, Excel, PowerPoint, Markdown, plain text, HTML, and images via local OCR.
+Add folders to the knowledge base and employees can search the project files, contracts, reports and meeting notes inside them.
 
-**MCP service** — a built-in MCP service exposes knowledge base search to other applications on the same machine. It binds only to 127.0.0.1 and requires a generated access token.
+- **Hybrid search** — full-text keyword, semantic vector and filename matching run in parallel, then merge into one ranking. Switch between Hybrid / Keyword / Semantic / Filename, and filter by file type, time range, directory or collection.
+- **Progressive enhancement** — files that are opened or matched often gain paragraph summaries, vectors and knowledge cards in the background. Cold files stay as lightweight index entries, so cost grows with actual use.
+- **Collections** — group related files and get an auto-generated summary and table of contents, ready to browse or to hand to an employee as context.
+- **Works offline** — parsing, tokenizing, indexing and search are local. Keyword search keeps working when the model service is unreachable. Supported formats: PDF, Word, Excel, PowerPoint, Markdown, plain text, HTML, and images through local OCR.
+- **Built-in MCP service** — exposes search to other MCP clients on the same machine at `127.0.0.1`, with a generated access token.
 
----
+### Plugin ecosystem
 
-## Plugin Ecosystem
+<img src="images/plugins.gif" alt="Enabling and managing plugins" width="92%" />
 
-<div align="center">
-  <img src="images/plugins.gif" alt="Managing plugins in Settings" width="88%" />
-</div>
+Plugins can add navigation pages, settings tabs, chat toolbars, agent tools, MCP tools and keyboard shortcuts, and can provide their own digital employees. They follow the app's theme and language, keep data in a separate SQLite database, and are enabled, disabled, imported, removed or upgraded from Settings without a restart.
 
-WorkAvatar was designed for plugins from the start. Notes, calendar, voice recognition, automation, data modeling, document editing, task templates, and third-party AI aggregation are all delivered as plugins. Enable, disable, import, remove, and upgrade from Settings → Plugins — changes take effect immediately, no restart needed.
+A bundled **Plugin Development Assistant** lets an employee write a plugin inside the app and install it. Plugins are shared as `.wap` packages.
 
-Plugins can add navigation pages, settings tabs, and chat toolbars. They automatically follow the application's theme and language settings.
-
-A bundled **Plugin Development Assistant** lets a digital employee develop and install a plugin inside the application. Plugins shared as `.wap` packages can also be imported.
-
-### First-party plugins
-
-| Plugin | Description |
+| Plugin | What it does |
 |------|------|
-| **Notes** | Markdown notes stored as `.md` files, so the folder works with sync services and other editors. Three-pane layout: file tree, editor, outline — with split preview and full-text search. |
-| **Calendar & To-dos** | Month / week / day views, recurring events, reminders, optional one-way Outlook sync. Digital employees can create and edit events on request. |
-| **Voice Recognition** | Offline recognition powered by sherpa-onnx. Live subtitles during recording, floating subtitle window, and meeting minutes generated after recording ends. |
-| **Automation** | Run a digital employee task on a daily, weekly, or monthly schedule, with retry on failure and a notification when done. Each run links back to its conversation. |
-| **Data Model** | Design database schemas on a canvas with DBML import and export. Models can also be edited through conversation. |
-| **Document Editor** | Word-fidelity `.docx` editor with import / export, PDF export, and version snapshots. The AI assistant edits the open document directly — rewrite, replace, insert, delete, reorder, and adjust styles. Editor interface is in Chinese. |
-| **Task Templates** | Build multi-step workflows on a canvas — agent, review, condition, loop, parallel, and human nodes — with pass / fail gating and round limits. A bundled Template Designer employee can turn a written requirement into a runnable template. |
-| **AI Aggregator** | Open third-party AI websites such as Doubao and DeepSeek inside the app, in single-pane, dual-pane, or tabbed layouts, with isolated login state per site. Any custom HTTPS page can be added too. Subject to each site's own terms of service. |
+| **Notes** | Markdown notes stored as plain `.md` files, so sync services and other editors work with them directly. File tree, editor and outline in three panes, with split preview and full-text search. |
+| **Calendar & To-dos** | Month / week / day views, recurring events, reminders and optional one-way Outlook sync. Employees can create and edit events on request. |
+| **Voice Recognition** | Offline recognition via sherpa-onnx, with live subtitles and a floating subtitle window during recording, and meeting minutes generated when it stops. |
+| **Automation** | Runs an employee task daily, weekly or monthly, retries on failure, and notifies you when done. Every run links back to its conversation. |
+| **Task Templates** | Build multi-step workflows on a canvas with agent, review, condition, loop, parallel and human nodes, plus pass / fail gating and round limits. A built-in Template Designer turns a written requirement into a runnable template. |
+| **AI Aggregator** | Opens third-party AI sites such as Doubao and DeepSeek inside the app in single, dual or tabbed layouts, with isolated login state per site. Any HTTPS page can be added. Subject to each site's own terms. |
 
 <div align="center">
   <table><tr>
@@ -112,76 +90,157 @@ A bundled **Plugin Development Assistant** lets a digital employee develop and i
 
 ---
 
-## Quick Start
+## Quick start
 
-On first launch, an onboarding wizard walks you through model service setup, creating your first digital employee, and the basics of the knowledge base. The wizard can be skipped and re-run later from Settings → General.
+### Install the app
 
-Manual setup is three steps:
+Download the latest build from [Releases](https://github.com/zengzag/WorkAvatar/releases/latest) (Windows 10/11 installer). On macOS, [build from source](#build-from-source).
 
-1. **Add a knowledge base** — open Knowledge Base → Document Management from the left navigation, add a folder, and the index builds and stays in sync automatically.
-2. **Search documents** — type keywords into the top search box. Switch between Hybrid / Keyword / Semantic / Filename modes, filter by type or time range.
-3. **Start a conversation** — switch to Digital Employees, pick an employee (or create one), describe your task. The employee searches the knowledge base as needed and writes output files into the task's isolated workspace. Use the sidebar button at the top right of a task to browse workspace files, open a terminal, and preview artifacts in place.
+The first launch opens a wizard that walks you through connecting a model service, creating your first employee and adding a folder to the knowledge base. You can skip it and run it again from Settings → General.
+
+### First run
+
+1. **Add a knowledge base** — in Knowledge Base → Document Management, add a folder. The index builds and stays in sync automatically.
+2. **Search it** — type a keyword in the top search box and switch between Hybrid / Keyword / Semantic / Filename as needed.
+3. **Hand over a task** — go to Digital Employees, pick or create an employee, and describe the task. It searches the knowledge base as needed and writes output into the task's own workspace. The sidebar button at the top right of a task opens workspace files, a terminal and in-place previews.
+
+### Build from source
+
+**Requirements:** Windows 10/11 or macOS, Node.js 24+, npm 11+.
+
+```bash
+git clone --recurse-submodules https://github.com/zengzag/WorkAvatar.git
+cd WorkAvatar
+npm install
+npm run dev        # development
+npm run build      # production build
+```
+
+Already cloned? Fetch the plugin sources with `git submodule update --init --recursive`.
+
+> Since Electron 42 the binary is no longer downloaded by `npm install`; it is fetched on demand the first time you run `npm run dev` (or `npx install-electron`). On restricted networks keep the repo `.npmrc` `electron_mirror`, or set `ELECTRON_MIRROR` yourself.
 
 ---
 
-## Use Cases
+## Use cases
 
-- Let AI work on **local documents** — contract comparison, report drafting, project research — without uploading to the cloud.
-- Build a **long-lived, reusable AI employee** for a team or personal use, with customizable role, tools, and memory.
-- Hand repetitive work to **automation** — for example, auto-generate a daily morning briefing.
-- Expose your local document search to other AI applications via the built-in **MCP service**.
+| Scenario | What WorkAvatar does |
+|------|------|
+| **Local document work** | Contract comparison, report drafting, project research — on your own folders, without uploading a library to a cloud drive first. |
+| **A long-lived team employee** | A fixed role, tool set and memory that a team can hand the same kind of work to again and again. |
+| **Scheduled background work** | A daily briefing or weekly digest generated by an automation and delivered to a conversation. |
+| **Exposing your search** | Let other local AI clients search your documents through the built-in MCP service. |
+| **Internal tool plugins** | Package an internal workflow as a plugin, with its own navigation page, settings and agent tools. |
 
 ---
 
-## For Developers
+## Plugin development
 
-### Plugin Development
+A plugin is a folder with a `manifest.json`, a CommonJS main entry, an optional ESM renderer entry and locale files. Capabilities must be declared; the host checks them on each call, and services you did not declare are not available.
 
-The plugin protocol, API documentation, and example project ship with the repository:
+```json
+{
+  "id": "my-plugin",
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "engine": ">=0.2.0",
+  "main": "dist/main/index.cjs",
+  "renderer": "dist/renderer/index.js",
+  "ipc": ["list-things"],
+  "capabilities": [
+    { "domain": "data", "entities": ["conversations"], "access": "read" },
+    { "domain": "execute", "kinds": ["llm-chat"] },
+    { "domain": "ui", "views": ["chat.toolbar", "settings.tab"] }
+  ]
+}
+```
 
-- Protocol specification: [plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
+```ts
+import type { PluginContext } from '@workavatar/plugin-sdk'
+
+export async function activate(ctx: PluginContext): Promise<void> {
+  ctx.ipc.handle('list-things', () => ctx.storage.openSqlite('index').prepare('SELECT * FROM things').all())
+
+  ctx.contributions.registerAgentTools([{
+    id: 'my_thing_lookup',
+    name: 'my_thing_lookup',
+    title: 'Look up my data',
+    description: 'Query plugin data by keyword',
+    parameters: { type: 'object', properties: { keyword: { type: 'string' } } },
+    handler: (args) => `results for ${args.keyword}`,
+    onDemand: true,
+  }])
+}
+```
+
+- Protocol: [plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
 - API reference: [plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
 - Capability matrix: [plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
 - Tutorial: [plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
-- Example plugin: [plugins/examples/hello-world/](plugins/examples/hello-world/)
+- Minimal example: [plugins/examples/hello-world/](plugins/examples/hello-world/)
 
-### Tech Stack
+React, ReactDOM, antd and i18next are injected by the host through `__WA_HOST__`, so you do not install them yourself and there is only one React instance.
+
+---
+
+## Architecture
+
+WorkAvatar runs on Electron, with the agent runtime, the UI and the plugin host kept in separate layers.
+
+- **Main process** — agent runtime (planning, tool execution, delegation), model providers, the knowledge base (SQLite FTS5 + sqlite-vec), the file permission service and the shell sandbox.
+- **Renderer** — React 19 and Ant Design UI, streaming conversation state, and plugin pages loaded over the `plugin://` scheme.
+- **Plugins** — a separate SQLite database per plugin, declared capabilities, a `plugin:<id>:` IPC namespace, and enable / disable without a restart.
+- **Models** — OpenAI, Azure, DeepSeek, Qwen, Zhipu, Volcengine, Xiaomi, LM Studio and any OpenAI-compatible endpoint, over Chat Completions, Responses or Anthropic Messages.
 
 | Category | Technology |
 |------|------|
 | Runtime | Electron 44 |
-| Frontend | React 19 + TypeScript 7 + Ant Design 6 |
-| Build | Vite 8 |
+| Frontend | React 19 + TypeScript 7 + Ant Design 6, Vite 8 |
 | Local database | SQLite (FTS5 full-text + sqlite-vec vector) |
 | Document parsing | PDF, Word, Excel, PowerPoint, HTML, OCR (PaddleOCR) |
 | Speech recognition | sherpa-onnx (offline) |
 | Internationalization | i18next (Chinese and English) |
 
-> The source of the first-party plugins (notes, calendar, voice, automation, data model, document editor, task templates) lives in a separate repository, `WorkAvatar-Plugins`, and is included as the `plugins/` git submodule. `plugin-sdk/`, the plugin protocol type definitions, is maintained in this repository. Run `git submodule update --init --recursive` after cloning.
+> First-party plugin sources live in a separate repository, `WorkAvatar-Plugins`, included here as the `plugins/` git submodule; `plugin-sdk/` is maintained in this repository.
 
-### Build from Source
+---
 
-**Requirements:** Windows 10/11 or macOS, Node.js 24+, npm 11+
+## FAQ
+
+**Does my data leave my machine?**
+Indexing and search do not. A task sends only the context the model needs to the provider you configured, and workspaces stay local.
+
+**Can I use a local model?**
+Yes. Point the provider at LM Studio or any OpenAI-compatible local server. Keyword search works even with no model at all.
+
+**Is there a macOS or Linux build?**
+macOS currently requires building from source. Linux is not packaged yet.
+
+**Can it damage my files?**
+Shell commands are constrained by the OS sandbox, and writes outside the workspace are rejected. File tools show a diff and ask for confirmation when the target is outside the workspace or sensitive.
+
+**How do I publish a plugin?**
+Read the [protocol](plugin-sdk/PROTOCOL.md), start from [hello-world](plugins/examples/hello-world/), or let the built-in Plugin Development Assistant scaffold it. Package it as a `.wap` file to share.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. Bug reports with reproduction steps and screenshots are usually fixed fastest.
 
 ```bash
-# Fetch the plugins submodule
-git submodule update --init --recursive
-
-npm install
-
-# Development mode
-npm run dev
-
-# Production build
-npm run build
+npm run test      # core tests
+npm run test:all  # core + plugin tests
 ```
 
-> Since Electron 42 the binary is no longer downloaded by `npm install`; it is fetched on demand the first time you run
-> `npm run dev` (or `npx install-electron`). On restricted networks keep the repo `.npmrc` `electron_mirror` (npmmirror)
-> or set the `ELECTRON_MIRROR` environment variable instead.
+Plugins, translations, documentation and example templates are welcome too.
 
-### License
+If WorkAvatar is useful to you, a star is appreciated.
+
+---
+
+## License
 
 [MIT License](LICENSE)
 
-Third-party product names, logos, and trademarks mentioned in this document belong to their respective owners and are used for identification only.
+Third-party product names and trademarks mentioned here belong to their respective owners and are used for identification only.
