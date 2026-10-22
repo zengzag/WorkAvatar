@@ -6,6 +6,8 @@ export interface Message {
   reasoning_content?: string
   toolCallId?: string
   toolCalls?: ToolCall[]
+  /** tool 消息：工具调用本身是否失败（异常/中止），用于 Anthropic tool_result.is_error 等协议回放 */
+  isError?: boolean
   timestamp?: number
   metadata?: MessageMetadata
   images?: string[]
@@ -65,6 +67,10 @@ export interface AgentConfig {
   logLevel?: LogLevel
   /** 会话 ID，用于支持 prompt caching 的 provider 最大化 cache 命中 */
   sessionId?: string
+  /** 工具结果裁剪高水位（token）：超过后整块裁剪到低水位；由模型上下文窗口派生 */
+  trimHighWaterTokens?: number
+  /** 工具结果裁剪低水位（token）：裁剪后保留的工具结果预算 */
+  trimLowWaterTokens?: number
   /** 采样 / 传输设置（temperature、max_tokens、top_p、penalties、thinking budget、超时、附加头/体） */
   stream?: AgentStreamSettings
 }
@@ -83,8 +89,12 @@ export interface AgentRunOptions {
   systemPromptOverride?: string
   /** 稳定锚点上下文（合成 user 消息）：置于 system 之后、history 之前，不参与压缩 */
   contextHead?: Message[]
-  /** 易变任务上下文（合成 user 消息）：置于 history 之后、query 之前，不参与压缩 */
-  contextTail?: Message[]
+  /**
+   * 易变任务上下文（记忆/知识库范围）：作为本次 run 首次请求末尾的追加文本注入，
+   * 不进入 history，也不写入 pi 上下文。后续工具轮次不重复注入，减少未缓存 token；
+   * 工作区/任务时间由稳定上下文头承载。
+   */
+  requestTail?: string
 }
 
 export interface AgentResponse {
@@ -128,14 +138,19 @@ export interface TokenUsage {
   completionTokens?: number
   totalTokens?: number
   cachedTokens?: number
+  /** 流式输出耗时（ms）：首 token 到末 token，用于计算输出速度 */
+  generationMs?: number
 }
 
 export interface AgentRunStreamCallbacks {
   onChunk?: (chunk: string) => void
   onThought?: (thought: string) => void
-  onToolCall?: (toolCall: { id: string; name: string; args: any }) => void
+  /** iteration 为模型请求轮次（同一 assistant 消息内的工具调用共享同一值），用于前端还原 assistant 消息边界 */
+  onToolCall?: (toolCall: { id: string; name: string; args: any; iteration?: number }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: GeneratedFileInfo[]; images?: string[]; success?: boolean }) => void
+  /** resultRaw 是发给 LLM 的工具结果原文（与展示值不同时才下发），前端据此原样重建 history。
+   *  isError 表示工具调用本身失败（异常/中止），用于跨轮回放 Anthropic tool_result.is_error。 */
+  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: GeneratedFileInfo[]; images?: string[]; success?: boolean; isError?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone?: (metadata?: AgentResponseMetadata) => void
   onError?: (error: string) => void

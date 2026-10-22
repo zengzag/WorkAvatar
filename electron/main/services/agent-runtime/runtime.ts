@@ -1034,6 +1034,9 @@ class SubAgentRuntime {
       total.completionTokens = (total.completionTokens || 0) + (u.completionTokens || 0)
       total.totalTokens = (total.totalTokens || 0) + (u.totalTokens || 0)
       total.cachedTokens = (total.cachedTokens || 0) + (u.cachedTokens || 0)
+      if (u.generationMs !== undefined) {
+        total.generationMs = (total.generationMs || 0) + u.generationMs
+      }
     }
     return hasAny ? total : undefined
   }
@@ -1396,7 +1399,7 @@ function mergeTokenUsage(a: AgentRunTokenUsage | undefined, b: AgentRunTokenUsag
   if (!a) return b ? { ...b } : undefined
   if (!b) return a
   const out: AgentRunTokenUsage = { ...a }
-  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens'] as const) {
+  for (const key of ['promptTokens', 'completionTokens', 'totalTokens', 'cachedTokens', 'generationMs'] as const) {
     const val = b[key]
     if (val !== undefined) out[key] = (a[key] || 0) + val
   }

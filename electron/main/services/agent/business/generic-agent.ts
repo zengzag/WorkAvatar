@@ -9,6 +9,7 @@ import {
   buildAssistantSystemPrompt,
   buildCapabilitiesPrompt,
   buildStableContextMessageContent,
+  buildStableTaskContextMessageContent,
   buildTaskContextMessageContent,
   STABLE_CONTEXT_MSG_PREFIX,
   TASK_CONTEXT_MSG_PREFIX,
@@ -45,6 +46,9 @@ export class GenericAgent extends BaseAgent {
   private cachedSystemPrompt: string | undefined = undefined
   /** 稳定上下文消息首次构建后冻结（agent 生命周期内字节不变，缓存前缀可复用） */
   private cachedStableContent: string | undefined
+  /** 稳定任务信息（工作区/任务时间）首次构建后冻结；与易变尾部拆分，减少每次请求的未缓存 token */
+  private cachedStableTaskContent: string | undefined
+  private stableTaskContentBuilt = false
   protected readonly todoStore = new TodoStore()
 
   constructor(config: GenericAgentConfig, options?: BaseAgentOptions) {
@@ -230,20 +234,35 @@ export class GenericAgent extends BaseAgent {
   }
 
   /**
-   * 在调用父类执行前，把动态上下文拆成两组合成 role=user 消息：
+   * 稳定任务信息（工作区/任务时间）：会话期间不变，放进头部稳定锚点。
+   * 记忆/知识库范围等易变信息仍由 requestTail 注入。
+   */
+  private getOrBuildStableTaskContent(): string | undefined {
+    if (this.minimalMode) return undefined
+    if (this.stableTaskContentBuilt) return this.cachedStableTaskContent
+    this.stableTaskContentBuilt = true
+    this.cachedStableTaskContent = buildStableTaskContextMessageContent({
+      workspaceContextPrompt: this.workspaceContextPrompt,
+      taskTimePrompt: this.taskTimePrompt,
+    })
+    return this.cachedStableTaskContent
+  }
+
+  /**
+   * 在调用父类执行前，把动态上下文拆成两组：
    * 1) contextHead 稳定上下文：技能清单 / Capabilities / Delegation —— 锚定在 history 之前，
    *    首次构建后字节冻结，构成可复用的 KV cache 前缀；
-   * 2) contextTail 任务上下文：工作区 / 任务时间 / 记忆 / 知识库范围 —— 放在 history 之后、
-   *    真实 query 之前；其内容变化只使尾部前缀失效，不击穿已发生对话的缓存。
+   * 2) requestTail 任务上下文：记忆 / 知识库范围 —— 作为「本次 run 首次请求末尾追加的文本」
+   *    注入，既不在 history 里，也不写入 pi 上下文。跨 run 重建 history 时前缀不会因它错位；
+   *    同一 run 的后续工具轮次不再重复注入，避免每轮多出一段未缓存 token。
    * 真实 query 始终独占末尾 user 消息，语义边界清晰。
    */
   private patchOptionsWithDynamicContext(options: AgentRunOptions): AgentRunOptions {
     const useSkills = options.useSkills !== false && !this.minimalMode
     const stableContent = this.getOrBuildStableContent(useSkills)
+    const stableTaskContent = this.getOrBuildStableTaskContent()
     // 极简模式：不注入工作区/任务时间/记忆等任务上下文，仅保留基础系统提示词的纯对话
     const taskContent = this.minimalMode ? undefined : buildTaskContextMessageContent({
-      workspaceContextPrompt: this.workspaceContextPrompt,
-      taskTimePrompt: this.taskTimePrompt,
       memoryPrompt: this.memoryPrompt,
       recalledMemoryPrompt: this.recalledMemoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
@@ -251,16 +270,17 @@ export class GenericAgent extends BaseAgent {
 
     const prevHistory = options.history || []
     const cleanedHistory = prevHistory.filter(m => !this.isContextMessage(m))
-    const contextHead = stableContent
-      ? [{ role: 'user' as const, content: stableContent }]
-      : []
-    const contextTail = taskContent
-      ? [{ role: 'user' as const, content: taskContent }]
-      : []
+    const contextHead = [
+      ...(stableContent ? [{ role: 'user' as const, content: stableContent }] : []),
+      ...(stableTaskContent ? [{ role: 'user' as const, content: stableTaskContent }] : []),
+    ]
 
-    if (contextHead.length === 0 && contextTail.length === 0) return options
+    if (contextHead.length === 0 && !taskContent) {
+      // 即使极简模式没有新上下文，也要清掉旧版本遗留的合成上下文消息
+      return cleanedHistory.length === prevHistory.length ? options : { ...options, history: cleanedHistory }
+    }
 
-    return { ...options, history: cleanedHistory, contextHead, contextTail }
+    return { ...options, history: cleanedHistory, contextHead, requestTail: taskContent }
   }
 
   async runStream(

@@ -56,8 +56,10 @@ export class SkillManager {
       s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
     const parts: string[] = []
-    for (const [name, skill] of this.discoveredSkills) {
-      parts.push(`<skill name="${escapeXml(name)}">${escapeXml(skill.description)}</skill>`)
+    // 技能清单进入稳定上下文头：按名称排序，保证跨 agent 重建时字节一致
+    const skills = [...this.discoveredSkills.values()].sort((a, b) => a.name.localeCompare(b.name))
+    for (const skill of skills) {
+      parts.push(`<skill name="${escapeXml(skill.name)}">${escapeXml(skill.description)}</skill>`)
     }
 
     return `<skills>\n${parts.join('\n')}\n</skills>`

@@ -1,7 +1,7 @@
 import os from 'os'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
-import { parseJsonRecord } from './llm-request-builder'
+import { parseJsonRecord, resolveContextWindowTokens, resolveToolResultTrimThresholds } from './llm-request-builder'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
@@ -56,6 +56,10 @@ interface EmployeeChatStreamParams {
       name: string
       args: any
       result?: any
+      /** 实际发送给 LLM 的工具结果原文（仅在与展示值不同时下发），重建 history 时优先使用 */
+      resultRaw?: string
+      /** 工具调用本身是否失败（异常/中止），重建 history 时回放给 Anthropic tool_result.is_error */
+      isError?: boolean
       images?: string[]
       isComplete?: boolean
     }>
@@ -78,9 +82,9 @@ interface EmployeeChatStreamParams {
 interface EmployeeChatCallbacks {
   onChunk: (chunk: string) => void
   onThought: (thought: string) => void
-  onToolCall: (toolCall: { id: string; name: string; args: any }) => void
+  onToolCall: (toolCall: { id: string; name: string; args: any; iteration?: number }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -239,6 +243,9 @@ class EmployeeAgentService {
     const modelConfig = this.getModelConfig(config, modelId)
 
     const resolvedModelName = modelConfig?.model || modelId || config.model
+    // 上下文窗口与工具结果裁剪水位统一由模型配置派生：裁剪必须跟随真实窗口，不能固定 80k
+    const contextWindowTokens = resolveContextWindowTokens(modelConfig)
+    const trimThresholds = resolveToolResultTrimThresholds(contextWindowTokens)
 
     const memoryEnabled = this.isMemoryEnabled(employeeId, emp)
     const memoryPrompt = memoryEnabled
@@ -261,7 +268,10 @@ class EmployeeAgentService {
       : []
     // 可复用子智能体模板（内置 explore/general + 用户自建）：作为「预置执行者」候选，随稳定上下文与工具枚举下发
     const delegationProfiles = delegationEnabled
-      ? SubAgentProfileService.getInstance().list().map(p => ({ id: p.id, name: p.name, description: p.description }))
+      ? SubAgentProfileService.getInstance().list()
+          .map(p => ({ id: p.id, name: p.name, description: p.description }))
+          // 提示词必须字节稳定：模板按名称/ID 排序，避免 updated_at 顺序变化导致稳定头漂移
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       : []
 
     const agentConfig: EmployeeAgentConfig = {
@@ -277,6 +287,8 @@ class EmployeeAgentService {
       supportsImageInput: resolveImageSupport(config.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,
+      trimHighWaterTokens: trimThresholds.high,
+      trimLowWaterTokens: trimThresholds.low,
       // 采样 / 传输设置：单次调用覆盖 > 模型配置 > 供应商配置
       stream: {
         temperature: streamOverrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
@@ -308,7 +320,7 @@ class EmployeeAgentService {
 
     const agentOptions: BaseAgentOptions = {
       memoryConfig: {
-        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 256 * 1024),
+        maxTokens: contextWindowTokens,
         strategy: modelConfig?.memory_strategy ?? 'sliding_window_with_summary',
         recentTurnsToKeep: modelConfig?.recent_turns_to_keep ?? 10,
       },
@@ -507,7 +519,7 @@ class EmployeeAgentService {
       try { role = c.profile_json ? JSON.parse(c.profile_json)?.roleName : undefined } catch { /* ignore */ }
       out.push({ id: c.id, name: c.name, description: c.description, role })
     }
-    out.sort((a, b) => a.name.localeCompare(b.name))
+    out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
     return out
   }
 
@@ -953,13 +965,18 @@ class EmployeeAgentService {
         for (const tc of validToolCalls) {
           // 工具执行成功但无返回值时，result 可能为 undefined/null/空字符串；
           // OpenAI 协议要求 tool result content 非空，补一个占位文本
-          const toolContent = tc.result === undefined || tc.result === null
-            ? ''
-            : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result))
+          // 优先使用 resultRaw（后端下发的 LLM 原文），保证与上一轮真实 transcript 字节一致；
+          // 对象按 2 空格缩进序列化，与 formatToolMessageContent 的成功分支保持一致
+          const toolContent = tc.resultRaw !== undefined
+            ? tc.resultRaw
+            : tc.result === undefined || tc.result === null
+              ? ''
+              : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2))
           result.push({
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            isError: tc.isError === true,
             images: tc.images,
           })
         }

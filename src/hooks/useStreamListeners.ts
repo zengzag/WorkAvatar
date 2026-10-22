@@ -205,8 +205,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; id: string; name: string; args: any }) => {
-      const { sessionId, id: toolCallId, name, args } = data
+    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; id: string; name: string; args: any; iteration?: number }) => {
+      const { sessionId, id: toolCallId, name, args, iteration } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -244,6 +244,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 toolCallId,
                 toolName: name,
                 toolArgs: args,
+                iteration,
                 instruction: args?.instruction ?? filteredSegs[existingIdx].instruction,
                 targetEmployeeId: args?.target_employee_id ?? filteredSegs[existingIdx].targetEmployeeId,
               }
@@ -268,6 +269,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolCallId,
               toolName: name,
               toolArgs: args,
+              iteration,
               instruction: args?.instruction,
               targetEmployeeId: args?.target_employee_id,
               delegationStatus: 'streaming',
@@ -294,6 +296,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolArgsRaw: undefined,
               isToolArgsStreaming: false,
               toolCallId,
+              iteration,
               isToolComplete: false,
             }
           } else {
@@ -311,6 +314,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolName: name,
               toolArgs: args,
               toolCallId,
+              iteration,
               isToolComplete: false,
               collapsed: true,
               timestamp: Date.now(),
@@ -321,8 +325,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => {
-      const { sessionId, name, result, rawResult, generatedFiles, images, success } = data
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => {
+      const { sessionId, name, result, rawResult, resultRaw, generatedFiles, images, success, isError } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -342,6 +346,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               segs[wrapperIdx] = {
                 ...segs[wrapperIdx],
                 toolResult: result,
+                toolResultRaw: resultRaw,
+                toolIsError: isError === true,
                 isToolComplete: true,
                 toolError: undefined,
                 completedAt: Date.now(),
@@ -411,6 +417,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: isPending ? 'streaming' : (isSuccess ? 'completed' : 'failed'),
               resultSummary: typeof result === 'string' ? result : (rawResult?.output || rawResult?.error),
               toolResult: result,
+              toolResultRaw: resultRaw,
+              toolIsError: isError === true,
               isToolComplete: true,
               toolError: isPending ? undefined : (isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined))),
               delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
@@ -430,6 +438,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           segs[actualIndex] = {
             ...segs[actualIndex],
             toolResult: result,
+            toolResultRaw: resultRaw,
+            toolIsError: isError === true,
             toolResultImages: images && images.length > 0 ? images : undefined,
             isToolComplete: true,
             toolError: toolSuccess ? undefined : (typeof result === 'string' ? result : (rawResult?.error || undefined)),
@@ -920,6 +930,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               completionTokens: apiTokenUsage.completionTokens ?? apiTokenUsage.completion_tokens,
               totalTokens: apiTokenUsage.totalTokens ?? apiTokenUsage.total_tokens,
               cachedTokens: apiTokenUsage.cachedTokens ?? apiTokenUsage.cached_tokens ?? apiTokenUsage.prompt_tokens_details?.cached_tokens ?? apiTokenUsage.prompt_cache_hit_tokens,
+              generationMs: apiTokenUsage.generationMs ?? apiTokenUsage.generation_ms,
             }
           : (totalChars > 0 ? { totalChars } : undefined)
         const savedAssistantMsg: MessageWithThought = {

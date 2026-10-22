@@ -52,7 +52,8 @@ describe('agent/tools/tool-registry', () => {
     reg.registerTool(makeTool({ name: 'lazy', onDemand: true }))
     reg.registerTool(makeTool({ name: 'default' })) // 不传 onDemand → 视为常驻
 
-    expect(reg.getOpenAISchemas().map(s => s.function.name)).toEqual(['resident', 'default'])
+    // tools 数组按名称排序：注册顺序（插件/MCP 加载时序）不能影响提示词前缀缓存
+    expect(reg.getOpenAISchemas().map(s => s.function.name)).toEqual(['default', 'resident'])
     expect(reg.getOnDemandTools().map(t => t.name)).toEqual(['lazy'])
     // 按需工具仍在总表中（invoke_tool 依赖 getTool 查找）
     expect(reg.getTools().map(t => t.name)).toEqual(['resident', 'lazy', 'default'])

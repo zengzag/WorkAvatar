@@ -12,9 +12,9 @@ import { buildEnrichedHistory, type ConversationStreamState, type EnrichedHistor
 export type GenericChatEvent =
   | { type: 'chunk'; sessionId: string; text: string }
   | { type: 'thought'; sessionId: string; thought: string }
-  | { type: 'tool-call'; sessionId: string; toolCall: { id: string; name: string; args: any } }
+  | { type: 'tool-call'; sessionId: string; toolCall: { id: string; name: string; args?: any; arguments?: any; iteration?: number } }
   | { type: 'tool-call-delta'; sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }
-  | { type: 'tool-result'; sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }
+  | { type: 'tool-result'; sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }
   | { type: 'tool-progress'; sessionId: string; toolCallId: string; name: string; progress: any }
   | { type: 'done'; sessionId: string; metadata?: any }
   | { type: 'error'; sessionId: string; error: string }
@@ -133,12 +133,19 @@ export const useGenericChat = ({ send, subscribe, persist, conversationId: exter
             prev.map((m) => {
               if (m.id !== streamState.assistantMessageId) return m
               const segs = [...(m.segments || [])]
+              // 兼容宿主/插件两种字段命名：args 为对象，arguments 可能是对象或 JSON 字符串
+              const rawArgs = event.toolCall.args ?? event.toolCall.arguments
+              let toolArgs = rawArgs
+              if (typeof rawArgs === 'string') {
+                try { toolArgs = JSON.parse(rawArgs) } catch { /* 保留原始字符串 */ }
+              }
               segs.push({
                 type: 'tool_call',
                 id: `${streamState.assistantMessageId}_tool_${toolCallCounterRef.current++}`,
                 toolName: event.toolCall.name,
                 toolCallId: event.toolCall.id,
-                toolArgs: event.toolCall.args,
+                toolArgs,
+                iteration: event.toolCall.iteration,
                 isToolComplete: false,
                 collapsed: true,
                 timestamp: Date.now(),
@@ -161,6 +168,8 @@ export const useGenericChat = ({ send, subscribe, persist, conversationId: exter
               segs[actualIndex] = {
                 ...segs[actualIndex],
                 toolResult: event.result,
+                toolResultRaw: event.resultRaw,
+                toolIsError: event.isError === true,
                 toolResultImages: event.images && event.images.length > 0 ? event.images : undefined,
                 isToolComplete: true,
                 toolError: event.success === false ? (typeof event.result === 'string' ? event.result : undefined) : undefined,

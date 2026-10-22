@@ -11,6 +11,8 @@ export interface AgentRunTokenUsage {
   completionTokens?: number
   totalTokens?: number
   cachedTokens?: number
+  /** 流式输出耗时（ms）：首 token 到末 token，用于计算输出速度 */
+  generationMs?: number
 }
 
 export interface AgentRunResult {

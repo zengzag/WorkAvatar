@@ -509,7 +509,7 @@ function toPiMessages(
         toolCallId: m.toolCallId || '',
         toolName: '',
         content: text ? [{ type: 'text', text }, ...imageParts] : imageParts,
-        isError: false,
+        isError: m.isError === true,
         timestamp: ts,
       })
     }
@@ -608,6 +608,9 @@ function toAgentTool(
           images: result.images,
           success: result.success,
           latencyMs: result.latencyMs ?? (Date.now() - startMs),
+          // 实际发送给 LLM 的工具结果原文：前端重建 history 时优先用它，
+          // 保证与上一轮真实 transcript 字节一致（失败工具/对象输出等场景展示值与原文不同）
+          llmContent: text,
         },
         // isError 只在工具调用本身失败（抛异常/abort）时为 true；
         // 业务失败（如 shell_exec exit_code≠0，result.success=false 但工具正常返回了结果）时 isError=false，
@@ -615,6 +618,21 @@ function toAgentTool(
         isError: caught,
       }
     },
+  }
+}
+
+/**
+ * 前端仅凭展示值（output / error）能重建出的工具结果文本。
+ * 与 expandFrontendMessages 的重建规则保持一致（空值占位 + 对象按 2 空格缩进序列化），
+ * 用于判断是否需要把 LLM 原文额外下发给前端。
+ */
+function expectedToolMessageContent(displayValue: any): string {
+  if (displayValue === undefined || displayValue === null || displayValue === '') return '工具执行完成，无返回值'
+  if (typeof displayValue === 'string') return displayValue
+  try {
+    return JSON.stringify(displayValue, null, 2)
+  } catch {
+    return String(displayValue)
   }
 }
 
@@ -643,51 +661,70 @@ function formatToolMessageContent(result: ToolCallResult): string {
 
 /**
  * 截断较早的 tool result 内容，防止上下文溢出（pi Message 版本）。
- * 保留最近 KEEP_RECENT 条 tool result 完整，更早的截断为摘要。
+ *
+ * 关键约束：截断必须「大块 + 滞后 + 切点只前进」，不能按「保留最近 N 条」逐请求移动边界。
+ * 后者每次请求都会改动一条历史消息，导致该消息之后的全部 token 前缀失效（KV cache 击穿）。
+ *
+ * 策略：总估算超过高水位时，从最新往前保留到低水位，其余一次性压成摘要；
+ * 切点在单次 run 内冻结（ToolResultTrimState），后续请求即使仍高于高水位也复用同一批截断，
+ * 只有有效大小再次超过高水位时才整块向前推进。high-low 的差值提供滞后区间。
  */
-function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
-  const MAX_ESTIMATED_TOKENS = 80000
-  const KEEP_RECENT = 6
-  const SUMMARY_PREFIX = '[Truncated] '
+const TOOL_RESULT_TRIM_HIGH_WATER_TOKENS = 80000
+const TOOL_RESULT_TRIM_LOW_WATER_TOKENS = 30000
+const TOOL_RESULT_SUMMARY_PREFIX = '[Truncated] '
 
-  let totalChars = 0
-  for (const msg of messages) {
-    const pm = msg as PiMessage
-    if (pm.role === 'toolResult') {
-      for (const c of pm.content) {
-        if (c.type === 'text') totalChars += c.text.length
-      }
-    } else if (pm.role === 'assistant') {
-      for (const c of pm.content) {
-        if (c.type === 'text') totalChars += c.text.length
-        else if (c.type === 'thinking') totalChars += c.thinking.length
-      }
-    } else if (pm.role === 'user') {
-      if (typeof pm.content === 'string') totalChars += pm.content.length
+/** 工具结果裁剪切点：cut = 已截断的 toolResult 数量（按出现顺序）。
+ *  由 BaseAgent 持有并跨 run 复用，避免每个新 user turn 首次请求重新放大截断范围。 */
+export interface ToolResultTrimState {
+  cut: number
+}
+
+function estimateCharsForTrim(msg: PiMessage): number {
+  if (msg.role === 'toolResult' || msg.role === 'assistant') {
+    let chars = 0
+    for (const c of msg.content) {
+      if (c.type === 'text') chars += c.text.length
+      else if (c.type === 'thinking') chars += c.thinking.length
     }
+    return chars
   }
+  if (msg.role === 'user' && typeof msg.content === 'string') return msg.content.length
+  return 0
+}
 
-  if (totalChars / 3.5 < MAX_ESTIMATED_TOKENS) return messages
+function estimateTrimTokens(messages: AgentMessage[]): number {
+  let chars = 0
+  for (const msg of messages) chars += estimateCharsForTrim(msg as PiMessage)
+  return chars / 3.5
+}
 
-  const toolResultIndices: number[] = []
+function collectToolResultIndices(messages: AgentMessage[]): number[] {
+  const indices: number[] = []
   for (let i = 0; i < messages.length; i++) {
-    if ((messages[i] as PiMessage).role === 'toolResult') toolResultIndices.push(i)
+    if ((messages[i] as PiMessage).role === 'toolResult') indices.push(i)
   }
+  return indices
+}
 
-  const keepCount = Math.min(KEEP_RECENT, toolResultIndices.length)
-  const toTrim = toolResultIndices.slice(0, toolResultIndices.length - keepCount)
+/** 将前 cut 个工具结果压成摘要；已截断/短文本/图片按既有规则处理 */
+function applyToolResultTrim(messages: AgentMessage[], cut: number): AgentMessage[] {
+  if (cut <= 0) return messages
+  const toolResultIndices = collectToolResultIndices(messages)
+  if (toolResultIndices.length === 0) return messages
+  // 至少保留最新一条：历史被压缩/删除后旧 cut 可能过大，不能把当前工具输出也截掉
+  const limit = Math.min(cut, Math.max(0, toolResultIndices.length - 1))
   const result = [...messages]
-
-  for (const idx of toTrim) {
+  for (let k = 0; k < limit; k++) {
+    const idx = toolResultIndices[k]
     const msg = result[idx] as ToolResultMessage
     const newContent: (TextContent | ImageContent)[] = []
     for (const c of msg.content) {
       // 已截断的旧图片块直接丢弃，避免被截断历史持续占用视觉上下文
       if (c.type === 'image') continue
-      if (c.type === 'text' && c.text.length > 500 && !c.text.startsWith(SUMMARY_PREFIX)) {
+      if (c.type === 'text' && c.text.length > 500 && !c.text.startsWith(TOOL_RESULT_SUMMARY_PREFIX)) {
         newContent.push({
           type: 'text',
-          text: SUMMARY_PREFIX + c.text.slice(0, 300) + `\n…(original ${c.text.length} chars, truncated to save context)`,
+          text: TOOL_RESULT_SUMMARY_PREFIX + c.text.slice(0, 300) + `\n…(original ${c.text.length} chars, truncated to save context)`,
         })
       } else {
         newContent.push(c)
@@ -695,8 +732,44 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
     }
     result[idx] = { ...msg, content: newContent }
   }
-
   return result
+}
+
+/** 从最新往前累计到低水位，返回需要截断的工具结果数量；至少保留最新一条，避免把当前工具输出也截掉 */
+function computeTrimCut(messages: AgentMessage[], toolResultIndices: number[], lowTokens: number): number {
+  let keptChars = 0
+  let cut = 0
+  for (let i = toolResultIndices.length - 1; i >= 0; i--) {
+    keptChars += estimateCharsForTrim(messages[toolResultIndices[i]] as PiMessage)
+    if (keptChars / 3.5 > lowTokens) {
+      cut = i + 1
+      break
+    }
+    cut = i
+  }
+  return Math.min(cut, Math.max(0, toolResultIndices.length - 1))
+}
+
+function trimPiToolResults(
+  messages: AgentMessage[],
+  state: ToolResultTrimState,
+  highTokens: number,
+  lowTokens: number,
+): AgentMessage[] {
+  const toolResultIndices = collectToolResultIndices(messages)
+  if (toolResultIndices.length === 0) return messages
+
+  // 历史被重写/压缩导致工具结果数量变少：旧切点已无意义，重新判断
+  if (state.cut >= toolResultIndices.length) state.cut = 0
+
+  const current = applyToolResultTrim(messages, state.cut)
+  if (estimateTrimTokens(current) < highTokens) {
+    return state.cut > 0 ? current : messages
+  }
+
+  const nextCut = computeTrimCut(current, toolResultIndices, lowTokens)
+  if (nextCut > state.cut) state.cut = nextCut
+  return state.cut > 0 ? applyToolResultTrim(messages, state.cut) : messages
 }
 
 /**
@@ -780,6 +853,18 @@ export interface RunPiAgentLoopParams {
    * 因此不改变已发生对话的前缀缓存。
    */
   getLoopReminder?: (turn: number, maxIterations: number) => string | undefined
+  /**
+   * 易变任务上下文（记忆/知识库范围）：仅在本次 run 的首次请求追加在末尾，
+   * 不写入 pi 上下文。后续工具轮次不重复注入，避免每次请求都多出一段未缓存 token；
+   * 工作区/任务时间已由稳定头承载，仍全程可见。
+   */
+  requestTail?: string
+  /** 工具结果裁剪高水位（token）：由模型上下文窗口派生；未传入时使用内置默认值 */
+  trimHighWaterTokens?: number
+  /** 工具结果裁剪低水位（token）：由模型上下文窗口派生；未传入时使用内置默认值 */
+  trimLowWaterTokens?: number
+  /** 跨 run 复用的裁剪切点（由 BaseAgent 持有，避免每个新 user turn 重置切点） */
+  trimState?: ToolResultTrimState
 }
 
 /**
@@ -810,6 +895,10 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
     onPromptTokens,
     sessionId,
     getLoopReminder,
+    requestTail,
+    trimHighWaterTokens,
+    trimLowWaterTokens,
+    trimState: sharedTrimState,
   } = params
 
   const { systemPrompt, piMessages } = toPiMessages(messages, config.providerType, config.model, config.apiFormat)
@@ -855,9 +944,15 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   }
 
   let turnCount = 0
+  // 裁剪切点优先复用 BaseAgent 持有的跨 run 状态；未提供时仅本次 run 内有效
+  const trimState: ToolResultTrimState = sharedTrimState ?? { cut: 0 }
+  const trimHigh = trimHighWaterTokens ?? config.trimHighWaterTokens ?? TOOL_RESULT_TRIM_HIGH_WATER_TOKENS
+  const trimLow = trimLowWaterTokens ?? config.trimLowWaterTokens ?? TOOL_RESULT_TRIM_LOW_WATER_TOKENS
   // 模型请求序号（流式恢复重试会在同一 turn 内再次转换，序号只增不减）
   let requestNumber = 0
   let totalTokenUsage: TokenUsage = {}
+  // 本次 LLM 请求的流式计时（首/末 delta），用于计算输出速度
+  const streamTiming: StreamTiming = {}
   // 缓存 toolCallId → args：pi-agent-core 的 tool_execution_end 不含 args，需从 start 时缓存
   const toolArgsCache = new Map<string, any>()
   // 缓存 toolCallId → startTime：用于计算 latencyMs
@@ -866,10 +961,24 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   const loopConfig: AgentLoopConfig = {
     model: createPiModel(config),
     convertToLlm: (msgs: AgentMessage[]) => {
+      requestNumber += 1
+      // 每次请求前重置流式计时（流式恢复重试会在同一 turn 内再次进入）
+      streamTiming.firstDeltaAt = undefined
+      streamTiming.lastDeltaAt = undefined
       const converted = convertMessagesForLlm(msgs, config.supportsImageInput === true)
-      // 节流提醒：append-only 合成 user 消息，仅出现在本次请求尾部，不回写上下文
+      // 易变任务上下文：只在本次 run 的首次请求注入（工作区/任务时间已在稳定头）。
+      // ask_user 返回代表新的用户输入，需要再次注入记忆/知识库范围；普通工具轮次不重复。
+      const lastMsg = msgs[msgs.length - 1] as PiMessage | undefined
+      const afterUserInteraction = lastMsg?.role === 'toolResult' && (lastMsg as any).toolName === 'ask_user'
+      if (requestTail && (requestNumber === 1 || afterUserInteraction)) {
+        converted.push({
+          role: 'user',
+          timestamp: Date.now(),
+          content: requestTail,
+        } as PiMessage)
+      }
+      // 节流提醒：append-only，放在最后（每请求变化，不影响任务上下文的复用）
       if (getLoopReminder) {
-        requestNumber += 1
         const reminder = getLoopReminder(requestNumber, maxIterations)
         if (reminder) {
           converted.push({
@@ -881,7 +990,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
       }
       return converted
     },
-    transformContext: async (msgs: AgentMessage[]) => trimPiToolResults(msgs),
+    transformContext: async (msgs: AgentMessage[]) => trimPiToolResults(msgs, trimState, trimHigh, trimLow),
     // pi-ai 1.x 以 finishTurn 取代 shouldStopAfterTurn：undefined 表示正常调度，end 表示结束本次 run
     finishTurn: () => {
       turnCount++
@@ -915,7 +1024,8 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
         abortReason = '用户主动停止（signal 已中止）'
         break
       }
-      await handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
+      await handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage, generationMs) => {
+        const prevGenerationMs = totalTokenUsage.generationMs
         totalTokenUsage = {
           promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
           completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
@@ -923,8 +1033,11 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
           ...(totalTokenUsage.cachedTokens || usage.cachedTokens
             ? { cachedTokens: (totalTokenUsage.cachedTokens || 0) + (usage.cachedTokens || 0) }
             : {}),
+          ...(prevGenerationMs !== undefined || generationMs !== undefined
+            ? { generationMs: (prevGenerationMs || 0) + (generationMs || 0) }
+            : {}),
         }
-      })
+      }, streamTiming)
     }
   } catch (err: any) {
     // signal.aborted 视为正常中止，保留 tokenUsage 返回；其他异常继续上抛
@@ -969,6 +1082,18 @@ export function findToolCallByContentIndex(
   return content.find((c): c is PiToolCall => c.type === 'toolCall')
 }
 
+/** 单次 LLM 请求的流式计时：首个 delta → 末个 delta */
+interface StreamTiming {
+  firstDeltaAt?: number
+  lastDeltaAt?: number
+}
+
+function markStreamDelta(timing: StreamTiming): void {
+  const now = Date.now()
+  if (timing.firstDeltaAt === undefined) timing.firstDeltaAt = now
+  timing.lastDeltaAt = now
+}
+
 async function handleAgentEvent(
   event: AgentEvent,
   callbacks: AgentRunStreamCallbacks,
@@ -978,7 +1103,8 @@ async function handleAgentEvent(
   onPromptTokens: ((tokens: number) => void) | undefined,
   toolArgsCache: Map<string, any>,
   toolStartTime: Map<string, number>,
-  onUsage: (usage: TokenUsage) => void,
+  onUsage: (usage: TokenUsage, generationMs?: number) => void,
+  timing: StreamTiming,
 ): Promise<void> {
   switch (event.type) {
     case 'agent_start':
@@ -1009,7 +1135,11 @@ async function handleAgentEvent(
       }
       const usage = toTokenUsage(asstMsg.usage)
       if (usage) {
-        onUsage(usage)
+        // 首 token → 末 token 的耗时（无多段 delta 时无意义，返回 undefined），用于输出速度统计
+        const start = timing.firstDeltaAt
+        const end = timing.lastDeltaAt
+        const generationMs = start !== undefined && end !== undefined && end > start ? end - start : undefined
+        onUsage(usage, generationMs)
         if (usage.promptTokens) onPromptTokens?.(usage.promptTokens)
       }
       break
@@ -1019,12 +1149,15 @@ async function handleAgentEvent(
       const asstEvent = event.assistantMessageEvent
       switch (asstEvent.type) {
         case 'text_delta':
+          markStreamDelta(timing)
           callbacks.onChunk?.(asstEvent.delta)
           break
         case 'thinking_delta':
+          markStreamDelta(timing)
           callbacks.onThought?.(asstEvent.delta)
           break
         case 'toolcall_delta': {
+          markStreamDelta(timing)
           const partial = asstEvent.partial
           const tc = findToolCallByContentIndex(partial.content, asstEvent.contentIndex)
           callbacks.onToolCallDelta?.({
@@ -1048,7 +1181,13 @@ async function handleAgentEvent(
       toolArgsCache.set(event.toolCallId, event.args)
       toolStartTime.set(event.toolCallId, Date.now())
       eventEmitter.emit('tool:call:start', { tool: event.toolName, args: event.args })
-      callbacks.onToolCall?.({ id: event.toolCallId, name: event.toolName, args: event.args })
+      // iteration：本次工具调用所属的模型请求轮次，前端据此还原 assistant 消息边界
+      callbacks.onToolCall?.({
+        id: event.toolCallId,
+        name: event.toolName,
+        args: event.args,
+        iteration: agentContext.getIterationCount(),
+      })
       break
     }
 
@@ -1083,15 +1222,25 @@ async function handleAgentEvent(
       toolStartTime.delete(event.toolCallId)
 
       eventEmitter.emit('tool:call:end', { tool: event.toolName, success })
+      // 展示值（前端 UI 用 output / error）；若 LLM 实际看到的文本与「仅凭展示值重建」不同，
+      // 额外下发 resultRaw，前端重建 history 时原样使用，避免跨轮前缀字节漂移
+      const displayValue = success ? result.output : result.error
+      const llmContent = details?.llmContent
+      const resultRaw = typeof llmContent === 'string' && llmContent !== expectedToolMessageContent(displayValue)
+        ? llmContent
+        : undefined
       callbacks.onToolResult?.({
         name: event.toolName,
         // 前端展示用 result：工具调用成功时展示 output，失败（异常）时展示 error
-        result: success ? result.output : result.error,
+        result: displayValue,
         rawResult: result.rawOutput,
+        resultRaw,
         generatedFiles: result.generatedFiles,
         images: result.images,
         // success 字段表示"工具调用是否成功"（基于 isError），非业务层成功
         success,
+        // 协议级失败标记：Anthropic tool_result.is_error 需要跨轮回放，否则历史字节不一致
+        isError: event.isError === true,
       })
 
       if (onToolCallExecuted) {

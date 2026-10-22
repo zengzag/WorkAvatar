@@ -243,8 +243,8 @@ describe('generic-chat / chatStream 参数透传', () => {
           { id: 't2', type: 'function', function: { name: 'read', arguments: '{"p":"a"}' } },
         ],
       },
-      { role: 'tool', toolCallId: 't1', content: '{"hits":1}' },
-      { role: 'tool', toolCallId: 't2', content: '工具执行完成，无返回值' },
+      { role: 'tool', toolCallId: 't1', content: JSON.stringify({ hits: 1 }, null, 2), isError: false },
+      { role: 'tool', toolCallId: 't2', content: '工具执行完成，无返回值', isError: false },
     ])
   })
 

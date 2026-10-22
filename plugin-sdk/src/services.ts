@@ -108,11 +108,11 @@ export interface PluginExecuteRequest {
 export interface PluginExecuteCallbacks {
   onChunk?: (text: string) => void
   onThought?: (thought: string) => void
-  onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string }) => void
+  onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string; iteration?: number }) => void
   /** 工具调用参数流式增量（arguments 为 JSON 字符串增量片段） */
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  /** 工具执行结果 */
-  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
+  /** 工具执行结果；resultRaw 为发给 LLM 的原文，isError 表示工具调用本身失败 */
+  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; success?: boolean; isError?: boolean }) => void
   /** 工具执行中间进度（仅UI展示，不进入LLM上下文） */
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone?: (metadata?: unknown) => void

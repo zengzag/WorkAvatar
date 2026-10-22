@@ -19,8 +19,14 @@ export interface MessageSegment {
   toolName?: string
   toolArgs?: any
   toolResult?: any
+  /** 实际发送给 LLM 的工具结果原文（仅在与展示值不同时下发），重建历史时优先使用，保证字节一致 */
+  toolResultRaw?: string
+  /** 本段所属的模型请求轮次（同一次 assistant 消息内的工具调用共享），用于还原消息边界 */
+  iteration?: number
   /** 工具结果包含的图片（data URL，如 read_image），UI 展示缩略图 */
   toolResultImages?: string[]
+  /** 工具调用本身是否失败（异常/中止）；仅用于协议回放，不表示业务失败 */
+  toolIsError?: boolean
   isToolComplete?: boolean
   toolCallId?: string
   /** LLM 正在流式生成工具参数（arguments JSON 尚未完成） */
@@ -74,6 +80,8 @@ export interface TokenUsage {
   totalTokens?: number
   cachedTokens?: number
   totalChars?: number
+  /** 流式输出耗时（ms）：首 token 到末 token，用于计算输出速度 */
+  generationMs?: number
 }
 
 export interface MessageBranch {

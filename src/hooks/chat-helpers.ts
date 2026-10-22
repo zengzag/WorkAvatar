@@ -174,6 +174,8 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
   name: string
   args: any
   result?: any
+  resultRaw?: string
+  isError?: boolean
   images?: string[]
   isComplete?: boolean
 }> | undefined => {
@@ -183,10 +185,12 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
   return toolSegs.map(s => {
     if (s.type === 'delegation') {
       return {
-        id: s.delegationId || s.id,
-        name: 'delegate_to_employee',
-        args: { target_employee_id: s.targetEmployeeId, instruction: s.instruction || '' },
-        result: buildDelegationResultText(s),
+        id: s.toolCallId || s.delegationId || s.id,
+        name: s.toolName || 'delegate_to_employee',
+        args: s.toolArgs ?? { target_employee_id: s.targetEmployeeId, instruction: s.instruction || '' },
+        result: s.toolResult ?? buildDelegationResultText(s),
+        resultRaw: s.toolResultRaw,
+        isError: s.toolIsError,
         isComplete: s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out' || s.delegationStatus === 'cancelled',
       }
     }
@@ -195,6 +199,8 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
       name: s.toolName!,
       args: s.toolArgs,
       result: s.toolResult,
+      resultRaw: s.toolResultRaw,
+      isError: s.toolIsError,
       images: s.toolResultImages,
       isComplete: s.isToolComplete,
     }
@@ -211,6 +217,8 @@ export interface EnrichedHistoryMessage {
     name: string
     args: any
     result?: any
+    resultRaw?: string
+    isError?: boolean
     images?: string[]
     isComplete?: boolean
   }>
@@ -273,6 +281,8 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
     let currentReasoning = ''
     let currentToolCalls: NonNullable<EnrichedHistoryMessage['toolCalls']> = []
     let hasToolCalls = false
+    /** 当前正在累积的 assistant 消息所属的模型请求轮次（用于还原消息边界） */
+    let currentIteration: number | undefined
 
     const flushTurn = () => {
       subResult.push({
@@ -286,10 +296,20 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
       currentReasoning = ''
       currentToolCalls = []
       hasToolCalls = false
+      currentIteration = undefined
+    }
+
+    // 换迭代即换一条 assistant 消息：连续「只调工具、没有正文」的轮次会被合并成一条，
+    // 与真实 transcript 不一致，下一轮重建历史时前缀从合并点起全部失效。
+    const switchTurnIfNewIteration = (iteration?: number) => {
+      if (iteration === undefined) return
+      if (currentIteration !== undefined && iteration !== currentIteration) flushTurn()
+      currentIteration = iteration
     }
 
     for (const seg of segments) {
       if (seg.type === 'thinking') {
+        // 工具调用之后出现的思考必然属于下一条 assistant 消息
         if (hasToolCalls) flushTurn()
         currentReasoning += (seg.content || '')
       } else if (seg.type === 'answer') {
@@ -297,27 +317,41 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
         currentContent += (seg.content || '')
       } else if (seg.type === 'tool_call') {
         if (!seg.toolName) continue
+        switchTurnIfNewIteration(seg.iteration)
         currentToolCalls.push({
           id: seg.toolCallId || seg.id,
           name: seg.toolName,
           args: seg.toolArgs,
           result: seg.toolResult,
+          resultRaw: seg.toolResultRaw,
+          isError: seg.toolIsError,
           images: seg.toolResultImages,
           isComplete: seg.isToolComplete,
         })
         hasToolCalls = true
       } else if (seg.type === 'delegation') {
-        // delegation 段等价于一次 delegate_to_employee 调用 + 结果摘要
-        // 子员工完整过程不进主管 LLM 上下文，仅摘要（含产物文件清单）作为 tool_result
-        if (hasToolCalls) flushTurn()
+        // 只回放真实发生过的 delegate_to_employee 调用（由 onToolCall 建卡，带 toolCallId）。
+        // run 事件创建的并行子任务卡（launch_agents）没有 toolCallId，其真实调用已由
+        // launch_agents 的 tool_call 段表示；再补一条会伪造出模型从未发起的调用。
+        if (!seg.toolCallId) continue
+        // 委托段等价于一次真实工具调用：id / args / result 一律取真实值（缺失时才用展示信息兜底），
+        // 否则重建出的 assistant.tool_calls 与 tool result 与上一轮实际请求不一致
+        if (seg.iteration === undefined) {
+          // 旧数据没有 iteration 标记：沿用旧启发式（委托单独成轮）
+          if (hasToolCalls) flushTurn()
+        } else {
+          switchTurnIfNewIteration(seg.iteration)
+        }
         currentToolCalls.push({
-          id: seg.delegationId || seg.runId || seg.id,
-          name: 'delegate_to_employee',
-          args: {
+          id: seg.toolCallId,
+          name: seg.toolName || 'delegate_to_employee',
+          args: seg.toolArgs ?? {
             target_employee_id: seg.targetEmployeeId,
             instruction: seg.instruction || '',
           },
-          result: buildDelegationResultText(seg),
+          result: seg.toolResult ?? buildDelegationResultText(seg),
+          resultRaw: seg.toolResultRaw,
+          isError: seg.toolIsError,
           isComplete: seg.delegationStatus === 'completed' || seg.delegationStatus === 'failed' || seg.delegationStatus === 'timed_out' || seg.delegationStatus === 'cancelled',
         })
         hasToolCalls = true

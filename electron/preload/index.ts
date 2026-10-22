@@ -214,8 +214,8 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.LLM_THOUGHT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_THOUGHT, handler)
     },
-    onToolCall: (callback: (data: { sessionId: string; id: string; name: string; args: any }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; id: string; name: string; args: any }) => callback(data)
+    onToolCall: (callback: (data: { sessionId: string; id: string; name: string; args: any; iteration?: number }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; id: string; name: string; args: any; iteration?: number }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
@@ -224,8 +224,8 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
     },
-    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => callback(data)
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
     },

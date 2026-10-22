@@ -161,6 +161,9 @@ class EmployeeMemoryService {
   buildInjectionMemoryPrompt(employeeId: string): string | undefined {
     const memories = this.listMemoriesForInjection(employeeId)
     const alwaysOn = selectAlwaysOnMemories(memories, { maxCount: MEMORY_ALWAYS_ON_MAX_COUNT })
+    // 没有置顶/关键记忆时不注入空占位块：避免每次请求都带一段“暂无记忆”的无效 token。
+    // 其他记忆仍可通过 search_memories 工具按需检索。
+    if (alwaysOn.length === 0) return undefined
     const block = buildMemoryPromptBlock(alwaysOn, memories.length)
     return block || undefined
   }
