@@ -2,7 +2,7 @@
  * 插件渲染端入口契约（dist/renderer/index.js，ESM default export）。
  * 宿主启动时经 plugin:// 协议动态 import，注册路由/导航后挂载路由表。
  */
-import type { ComponentType, CSSProperties, ReactNode } from 'react'
+import { createContext, useContext, type ComponentType, type Context, type CSSProperties, type ReactNode } from 'react'
 import type { PluginViewPoint } from './manifest'
 
 export interface PluginRouteDefinition {
@@ -161,4 +161,30 @@ export interface PluginRendererEntry {
   init?(host: PluginRendererHost): void | Promise<void>
   /** 宿主卸载本插件路由时调用（清理订阅） */
   dispose?(): void
+}
+
+// ====== 页面活动可见性 ======
+// 宿主把同一个 PageVisibleContext 实例挂在共享单例 __WA_HOST__ 上（插件构建时 react
+// 已 external 到宿主单例），插件 bundle 内调用本 hook 与宿主页面消费的是同一个 Context。
+
+/** 宿主未注入时的兜底 Context（恒为可见），保证脱离宿主环境（如独立调试）不报错 */
+const fallbackPageVisibleContext = createContext<boolean>(true)
+
+function getHostPageVisibleContext(): Context<boolean> {
+  const host = (globalThis as { __WA_HOST__?: { PageVisibleContext?: Context<boolean> } }).__WA_HOST__
+  return host?.PageVisibleContext ?? fallbackPageVisibleContext
+}
+
+/**
+ * 当前插件页面是否活动可见：
+ * - 主窗口 KeepAlive 内切到其它导航 tab 时返回 false（display/content-visibility 隐藏
+ *   不会触发 document.visibilitychange，无法自行用 visibilitychange 检测）；
+ * - 窗口最小化 / OS 切换窗口时返回 false；
+ * - tab 独立窗口中与该窗口可见性一致；脱离宿主运行时恒为 true。
+ *
+ * 用于暂停动画帧、高频轮询、流式增量 setState 等主线程开销，避免后台缓存页拖慢
+ * 整个渲染进程（典型表现：录音/长任务运行期间点击导航栏长时间不跳转）。
+ */
+export function usePageVisible(): boolean {
+  return useContext(getHostPageVisibleContext())
 }

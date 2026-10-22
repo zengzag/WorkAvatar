@@ -73,8 +73,9 @@
 | 能力 | 说明 | 授权粒度 |
 |---|---|---|
 | 声明 `origins` | 允许内嵌的站点域名（hostname 或 `*.suffix`），恒 https | 域名条目 |
+| 声明 `allowUserOrigins` | 允许经 `ctx.webview.allowOrigins` 运行时追加用户自定义域名（仅精确 hostname） | 布尔开关 |
 
-宿主在每个 `<webview>` attach 时统一收口：剥离 `preload`/`preloadURL`，强制 `nodeIntegration=false` / `contextIsolation=true` / `sandbox=true` / `webSecurity=true`，并校验 `src` 是否命中所有**已启用**插件声明的域名并集；未命中直接 `preventDefault`（guest 不创建、无任何事件）。首次 attach 后的站内导航与登录重定向不再拦截。
+宿主在每个 `<webview>` attach 时统一收口：剥离 `preload`/`preloadURL`，强制 `nodeIntegration=false` / `contextIsolation=true` / `sandbox=true` / `webSecurity=true`，并校验 `src` 是否命中所有**已启用**插件声明的域名并集（含运行时追加的域名）；未命中直接 `preventDefault`（guest 不创建、无任何事件）。首次 attach 后的站内导航与登录重定向不再拦截。
 
 ## 插件协作层（services.shared / bus）
 
@@ -137,4 +138,4 @@
 | voice | execute（llm-stream）、system（windows/native）、storage、ipc |
 | automation | data（conversations write）、execute（agent-chat）、events（subscribe）、system（notification/scheduler）、registerAgentTools |
 | data-model | data（employees/llmProviders/messages read）、execute（agent-chat）、registerAgentTools |
-| ai-assistants | webview（内嵌豆包 / DeepSeek 等网页版）、storage、ipc |
+| ai-assistants | webview（内嵌豆包 / DeepSeek 等网页版；allowUserOrigins 支持用户自定义网页）、storage、ipc |

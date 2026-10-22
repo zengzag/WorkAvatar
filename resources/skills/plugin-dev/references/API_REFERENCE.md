@@ -105,6 +105,7 @@ interface PluginContext {
   storage: PluginStorage              // openSqlite / KV
   services: PluginServices            // 按 capabilities 注入，见 §6-9
   contributions: PluginContributionsApi // 见 §10
+  webview: PluginWebviewApi           // allowOrigins：运行时追加内嵌域名
 }
 ```
 
@@ -115,6 +116,8 @@ interface PluginContext {
 - `ipc.broadcast(event, payload)`：推送到本插件所有渲染端（主窗口 + tab 独立窗口 + 插件自建窗口）。
 
 - `storage.openSqlite(name?)`：独立分库（WAL）；`storage.get/set/delete/keys`：插件作用域 KV（存 `plugin_kv` 表，不写内核 settings）。
+
+- `webview.allowOrigins(hosts)`：运行时追加本插件的内嵌网页域名白名单（如用户自定义网页），需 manifest 声明 `capabilities.webview.allowUserOrigins: true`。每项必须是精确主机名（不支持通配/协议/端口/路径），宿主恒按 https 放行；每次调用整体替换，插件下线时自动清空。
 
 **文案本地化（始终可用，无能力要求）**：
 

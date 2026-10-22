@@ -67,7 +67,7 @@ manifest `capabilities` 数组声明插件可访问的能力域，宿主在服�
 | `execute` | `{ domain:'execute', kinds:[...] }` | `services.execute.execute` | 统一执行入口（agent-task/agent-chat/llm-chat/llm-stream） |
 | `events` | `{ domain:'events', subscribe?:[...], publish?:boolean }` | `services.events.subscribe/publish` | 事件总线（订阅白名单 + 发布开关） |
 | `ui` | `{ domain:'ui', views:[...] }` | 渲染端 `views` + `contributions.registerView` | UI 注入（注入点白名单） |
-| `webview` | `{ domain:'webview', origins:[...] }` | 渲染端 `<webview>` | 在主窗口内嵌第三方网页（域名白名单 + guest 强制加固） |
+| `webview` | `{ domain:'webview', origins:[...], allowUserOrigins?:boolean }` | 渲染端 `<webview>` + `ctx.webview.allowOrigins` | 在主窗口内嵌第三方网页（域名白名单 + guest 强制加固；可选运行时追加用户自定义域名） |
 | `system` | `{ domain:'system', features:[...] }` | `services.notification/scheduler/windows/native` | 系统能力（特性白名单） |
 | `collaboration` | `{ domain:'collaboration', shared?:{read?,write}, call?:[...] }` | `services.shared` + `services.bus` | 插件协作：共享 KV + 跨插件 RPC |
 
@@ -77,6 +77,8 @@ manifest `capabilities` 数组声明插件可访问的能力域，宿主在服�
 **UI 注入点**：`chat.toolbar` / `chat.quick` / `chat.header` / `sidebar.footer` / `settings.tab` / `message.menu` / `message.bubble`。
 
 **内嵌网页域名**（`webview.origins`）：每个元素为主机名（`chat.deepseek.com`）或 `*.` 前缀通配（`*.doubao.com` 命中该域及其任意子域）；恒要求 https，不接受协议/端口/路径。宿主在 `will-attach-webview` 处校验 src 是否命中**所有已启用插件**该声明的并集。
+
+**运行时自定义域名**（`webview.allowUserOrigins: true` + `ctx.webview.allowOrigins(hosts)`）：面向「用户自己输入网址」的场景（如 AI 助手集的自定义网页）。调用时**整体替换**本插件的运行时白名单，仅接受精确主机名（不支持通配/协议/端口/路径），恒按 https 放行；插件下线/禁用时自动清空。未声明 `allowUserOrigins` 时调用抛错。
 
 **基础能力**（无需声明）：`logger` / `host` / `ipc` / `storage` / `contributions` / `paths`。
 
