@@ -394,6 +394,7 @@ export default {
     completionTokens: '输出',
     cachedTokens: '缓存命中',
     cacheHitRate: '缓存命中比例',
+    avgOutputSpeed: '平均输出速度',
     usage: '用量',
     totalTokens: '总Token',
     outputChars: '输出字符数',

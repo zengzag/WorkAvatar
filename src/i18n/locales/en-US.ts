@@ -394,6 +394,7 @@ export default {
     completionTokens: 'Output',
     cachedTokens: 'Cache hit',
     cacheHitRate: 'Cache hit rate',
+    avgOutputSpeed: 'Avg output speed',
     usage: 'Usage',
     totalTokens: 'Total Tokens',
     outputChars: 'Output chars',

@@ -48,8 +48,9 @@ export function resolveModelLabel(
 
 /**
  * Token 用量展示块。从 MessageBubble / MultiChatPanel 抽取的共享逻辑。
+ * tokensPerSec：当前对话的平均输出速度（tok/s），由调用方按整个会话聚合后传入。
  */
-export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }> = ({ tokenUsage }) => {
+export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined; tokensPerSec?: number }> = ({ tokenUsage, tokensPerSec }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
@@ -83,6 +84,9 @@ export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }>
       t('workbench.cacheHitRate'),
       `${promptTokens ? ((cachedTokens / promptTokens) * 100).toFixed(1) : '0.0'}%`,
     ])
+  }
+  if (tokensPerSec !== undefined && Number.isFinite(tokensPerSec) && tokensPerSec > 0) {
+    details.push([t('workbench.avgOutputSpeed'), `${tokensPerSec.toFixed(1)} tok/s`])
   }
 
   return (

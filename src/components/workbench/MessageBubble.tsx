@@ -337,7 +337,9 @@ const MessageBubble: React.FC<{
   hideMessageActions?: boolean
   /** 当前数字员工，用于助手消息展示其真实头像（无则回退默认机器人图标） */
   assistantEmployee?: Employee | null
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee }) => {
+  /** 当前对话平均输出速度（tok/s），展示在用量弹窗中 */
+  conversationTokensPerSec?: number
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee, conversationTokensPerSec }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -727,7 +729,7 @@ const MessageBubble: React.FC<{
                     {currentBranchModelLabel}
                   </Tag>
                 )}
-                <TokenUsageDisplay tokenUsage={displayTokenUsage} />
+                <TokenUsageDisplay tokenUsage={displayTokenUsage} tokensPerSec={conversationTokensPerSec} />
                 {isLastAssistantMessage && (
                   <ContextUsageInline
                     stats={contextStats}
@@ -762,6 +764,7 @@ export default memo(MessageBubble, (prev, next) => {
     && prev.assistantEmployee === next.assistantEmployee
     && prev.isLastAssistantMessage === next.isLastAssistantMessage
     && prev.contextStats === next.contextStats
+    && prev.conversationTokensPerSec === next.conversationTokensPerSec
     && prev.isCompacting === next.isCompacting
     && prev.onCompact === next.onCompact
 })
