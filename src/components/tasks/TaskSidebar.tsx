@@ -1,4 +1,4 @@
-import { memo, useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { memo, useState, useMemo, useCallback, useRef, useEffect, startTransition } from 'react'
 import { Input, Button, Typography, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
 import type { MenuProps, InputRef } from 'antd'
 import {
@@ -66,6 +66,94 @@ export const formatTaskTime = (timestamp: number | null, t: (key: string, option
   if (now.isSame(time, 'year')) return t('workbench.monthDay', { month: time.month() + 1, day: time.date() })
   return time.format('YYYY/M/D')
 }
+
+/** 搜索提交防抖时长：停止输入后再触发检索与列表过滤 */
+const SEARCH_DEBOUNCE_MS = 250
+
+/**
+ * 搜索输入框：本地维护输入值并防抖提交。
+ * 输入过程只重渲染这个小组件，不触发整页（含对话区）重渲染与后端检索；
+ * 提交时用 startTransition 标记为低优先级，避免长列表/流式输出阻塞按键。
+ */
+const DebouncedSearchInput = memo(({
+  value,
+  onChange,
+  placeholder,
+  token,
+}: {
+  value: string
+  onChange: (query: string) => void
+  placeholder: string
+  token: any
+}) => {
+  const [local, setLocal] = useState(value)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onChangeRef = useRef(onChange)
+
+  useEffect(() => { onChangeRef.current = onChange }, [onChange])
+  // 外部重置（如清空筛选）时同步本地值
+  useEffect(() => { setLocal(value) }, [value])
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+
+  const commit = useCallback((next: string, immediate = false) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    const run = () => startTransition(() => onChangeRef.current(next))
+    if (immediate) {
+      run()
+    } else {
+      timerRef.current = setTimeout(run, SEARCH_DEBOUNCE_MS)
+    }
+  }, [])
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value
+    setLocal(next)
+    commit(next)
+  }, [commit])
+
+  const handleClear = useCallback(() => {
+    setLocal('')
+    commit('', true)
+  }, [commit])
+
+  return (
+    <>
+      <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
+      <input
+        placeholder={placeholder}
+        value={local}
+        onChange={handleChange}
+        style={{
+          flex: 1,
+          height: '100%',
+          border: 'none',
+          outline: 'none',
+          background: 'transparent',
+          fontSize: 12,
+          padding: '0 6px',
+          color: token.colorText,
+          minWidth: 0,
+        }}
+      />
+      {local && (
+        <Button
+          type="text"
+          size="small"
+          icon={<CloseOutlined style={{ fontSize: 10 }} />}
+          onClick={handleClear}
+          style={{
+            flexShrink: 0,
+            width: 18,
+            height: 18,
+            minWidth: 18,
+            padding: 0,
+            color: token.colorTextQuaternary,
+          }}
+        />
+      )}
+    </>
+  )
+})
 
 const TaskItem = memo(({
   task,
@@ -564,39 +652,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
               onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary }}
             >
-              <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
-              <input
-                placeholder={t('tasks.searchPlaceholder')}
+              <DebouncedSearchInput
                 value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                style={{
-                  flex: 1,
-                  height: '100%',
-                  border: 'none',
-                  outline: 'none',
-                  background: 'transparent',
-                  fontSize: 12,
-                  padding: '0 6px',
-                  color: token.colorText,
-                  minWidth: 0,
-                }}
+                onChange={onSearchChange}
+                placeholder={t('tasks.searchPlaceholder')}
+                token={token}
               />
-              {searchQuery && (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CloseOutlined style={{ fontSize: 10 }} />}
-                  onClick={() => onSearchChange('')}
-                  style={{
-                    flexShrink: 0,
-                    width: 18,
-                    height: 18,
-                    minWidth: 18,
-                    padding: 0,
-                    color: token.colorTextQuaternary,
-                  }}
-                />
-              )}
               {/* 筛选按钮 - 内嵌搜索框右侧 */}
               <Dropdown
                 open={filterVisible}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import { Button, Typography, Spin, Tooltip, theme, App, Dropdown } from 'antd'
@@ -175,11 +175,16 @@ const Tasks: React.FC = () => {
     } catch {}
   }, [])
 
+  // 稳定引用：loadGlobalTasks 依赖 useFullLoad，直接放进 effect 依赖会导致
+  // 每次进入/退出搜索都重新拉员工与合集列表
+  const loadGlobalTasksRef = useRef(loadGlobalTasks)
+  useEffect(() => { loadGlobalTasksRef.current = loadGlobalTasks }, [loadGlobalTasks])
+
   useEffect(() => {
     loadEmployees()
-    loadGlobalTasks()
+    loadGlobalTasksRef.current()
     loadAllCollections()
-  }, [loadEmployees, loadGlobalTasks, loadAllCollections])
+  }, [loadEmployees, loadAllCollections])
 
   // 资料库合集增删改通知：实时刷新合集列表，避免新合集需重启才出现在输入框
   useEffect(() => {
@@ -193,10 +198,10 @@ const Tasks: React.FC = () => {
   useEffect(() => {
     const unsub = window.electronAPI.employee.onChanged(async () => {
       await loadEmployees()
-      await loadGlobalTasks()
+      await loadGlobalTasksRef.current()
     })
     return () => { unsub?.() }
-  }, [loadEmployees, loadGlobalTasks])
+  }, [loadEmployees])
 
   // 清理无效筛选选中态：filterEmployeeId / newTaskEmployeeId / currentEmployeeId  若不在员工列表中则重置
   useEffect(() => {
@@ -223,25 +228,28 @@ const Tasks: React.FC = () => {
     }
   }, [taskMode, employees, currentEmployeeId])
 
-  // 全文内容搜索：防抖 300ms 调用 searchGlobal
+  // 全文内容搜索：输入框侧已做防抖，这里直接请求；请求序号用于丢弃过期结果
+  const searchSeqRef = useRef(0)
   useEffect(() => {
     const trimmed = searchQuery.trim()
     if (!trimmed) {
       setContentMatchIds(null)
       return
     }
-    const timer = setTimeout(async () => {
-      try {
-        const results = await window.electronAPI.conversation.searchGlobal({
-          query: trimmed,
-          limit: 50,
-        })
+    const seq = ++searchSeqRef.current
+    window.electronAPI.conversation.searchGlobal({
+      query: trimmed,
+      limit: 50,
+    }).then((results) => {
+      if (seq !== searchSeqRef.current) return
+      // 检索结果作为低优先级更新，避免阻塞输入/流式渲染
+      startTransition(() => {
         setContentMatchIds(new Set(Array.isArray(results) ? results.map((r: any) => r.conversationId) : []))
-      } catch {
-        setContentMatchIds(new Set())
-      }
-    }, 300)
-    return () => clearTimeout(timer)
+      })
+    }).catch(() => {
+      if (seq !== searchSeqRef.current) return
+      startTransition(() => setContentMatchIds(new Set()))
+    })
   }, [searchQuery])
 
   // 使用 useEmployeeChat，传入 skipAutoInit 避免自动选择对话
