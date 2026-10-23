@@ -2,7 +2,7 @@ import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import { expandGlobPattern, isGlobPattern, isIgnoredDirName } from './glob-engine'
-import { getWorkspacePath, resolveToolPath } from './fs-shared'
+import { getWorkspacePath, isUncreatedWorkspaceRoot, resolveToolPath } from './fs-shared'
 import { formatFileSize, relativeDisplayPath } from './utils'
 
 const DEFAULT_MAX_ITEMS = 200
@@ -63,6 +63,15 @@ async function listFiles(args: any) {
   try {
     stat = fs.statSync(base)
   } catch {
+    // 工作区懒创建：任务还没写过文件时目录不存在，按空目录返回，避免误导模型去"修路径"
+    if (isUncreatedWorkspaceRoot(base)) {
+      return {
+        success: true,
+        output: pattern
+          ? `${base}\n匹配 "${pattern}"：共 0 项（工作区尚未创建，首次写入文件时自动创建）`
+          : `${base}\n直接子项：共 0 项（工作区尚未创建，首次写入文件时自动创建）`,
+      }
+    }
     return { success: false, error: `路径不存在: ${base}` }
   }
   if (stat.isFile()) {

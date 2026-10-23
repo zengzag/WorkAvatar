@@ -1,4 +1,5 @@
 import type { ToolDefinition } from './types'
+import * as fs from 'fs'
 import * as os from 'os'
 import { IS_WINDOWS, runCommandPlatform, truncateOutput } from './exec-shared'
 import { getWorkspacePath } from './fs-shared'
@@ -41,7 +42,10 @@ export const envProbeTool: ToolDefinition = {
       ? 'PowerShell（优先 pwsh 7，回退 powershell.exe 5.1）'
       : '/bin/bash'
     // 无工作区上下文时用空目录当可写边界，避免把应用目录当沙箱（沙箱会改目录 ACL）
-    const sandboxRoot = getWorkspacePath() || emptyWorkspaceRoot()
+    const workspacePath = getWorkspacePath()
+    // 工作区懒创建：任务未写过文件时目录还不存在，spawn 会因 cwd 缺失失败，探测改用临时目录兜底
+    const workspaceMissing = !!workspacePath && !fs.existsSync(workspacePath)
+    const sandboxRoot = workspacePath && !workspaceMissing ? workspacePath : emptyWorkspaceRoot()
 
     const lines: string[] = [
       '# 环境探测',
@@ -51,6 +55,9 @@ export const envProbeTool: ToolDefinition = {
       `- 路径分隔符: ${IS_WINDOWS ? '\\' : '/'}；换行: ${IS_WINDOWS ? 'CRLF' : 'LF'}`,
       `- 宿主运行时: Node.js ${process.version}（Electron 内置，非系统 Node）`,
     ]
+    if (workspaceMissing) {
+      lines.push(`- 注意: 任务工作区 ${workspacePath} 尚未创建（首次写入文件时自动创建），本次探测在临时目录执行`)
+    }
 
     const probe = await runCommandPlatform(buildProbeScript(), {
       cwd: sandboxRoot,

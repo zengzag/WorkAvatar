@@ -2,7 +2,7 @@ import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import { expandGlobPattern, isIgnoredDirName } from './glob-engine'
-import { getWorkspacePath, resolveToolPath } from './fs-shared'
+import { getWorkspacePath, isUncreatedWorkspaceRoot, resolveToolPath } from './fs-shared'
 import { relativeDisplayPath } from './utils'
 
 const DEFAULT_MAX_RESULTS = 200
@@ -91,6 +91,13 @@ async function grepFiles(args: any) {
   try {
     rootStat = fs.statSync(root)
   } catch {
+    // 工作区懒创建：任务未写过文件时目录不存在，按「无文件可搜索」返回
+    if (isUncreatedWorkspaceRoot(root)) {
+      return {
+        success: true,
+        output: `${root} 中搜索 /${pattern}/${args.ignore_case === true ? 'i' : ''}\n命中 0 处（工作区尚未创建，首次写入文件时自动创建）`,
+      }
+    }
     return { success: false, error: `路径不存在: ${root}` }
   }
 

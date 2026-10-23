@@ -22,6 +22,17 @@ export function resolveToolPath(raw: string): string {
   return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(getWorkspacePath() || process.cwd(), raw)
 }
 
+/**
+ * 目标是否为尚未落盘的工作区根目录。
+ * 任务工作区采用懒创建：任务从不写文件时目录不存在，此时只读工具应按「空目录」处理而非报路径不存在。
+ */
+export function isUncreatedWorkspaceRoot(target: string): boolean {
+  const ws = getWorkspacePath()
+  if (!ws) return false
+  if (path.resolve(ws) !== path.resolve(target)) return false
+  return !fs.existsSync(target)
+}
+
 /** 读取文件当前文本状态：超上限/二进制/非 UTF-8 时 content 为空且 isText=false */
 export function readFileState(filePath: string): { exists: boolean; content: string; isText: boolean } {
   try {

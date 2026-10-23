@@ -113,6 +113,20 @@ describe('agent/tools/file-list', () => {
     })
   })
 
+  it('工作区尚未创建（懒创建）时按空目录返回而非报路径不存在', async () => {
+    fs.rmSync(ws, { recursive: true, force: true })
+    await withWorkspace(ws, 'fl-7', async () => {
+      const res = await list({})
+      expect(res.success, res.error).toBe(true)
+      expect(res.output).toContain('共 0 项')
+      expect(res.output).toContain('工作区尚未创建')
+
+      const withPattern = await list({ pattern: '**/*.ts' })
+      expect(withPattern.success, withPattern.error).toBe(true)
+      expect(withPattern.output).toContain('共 0 项')
+    })
+  })
+
   it('工具元信息：常驻、只读、无必填参数', () => {
     expect(fileListTool.id).toBe('file_list')
     expect(fileListTool.onDemand).toBe(false)
@@ -195,6 +209,16 @@ describe('agent/tools/grep', () => {
       const bad = await grep({ pattern: 'a(' })
       expect(bad.success).toBe(false)
       expect(bad.error).toContain('正则表达式无效')
+    })
+  })
+
+  it('工作区尚未创建（懒创建）时按无文件可搜索返回', async () => {
+    fs.rmSync(ws, { recursive: true, force: true })
+    await withWorkspace(ws, 'gr-9', async () => {
+      const res = await grep({ pattern: 'anything' })
+      expect(res.success, res.error).toBe(true)
+      expect(res.output).toContain('命中 0 处')
+      expect(res.output).toContain('工作区尚未创建')
     })
   })
 
