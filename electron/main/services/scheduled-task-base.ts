@@ -33,7 +33,7 @@ export abstract class ScheduledTaskBase {
     logger.info(`[${this.name}] Started: interval=${this.intervalMs}ms`)
   }
 
-  /** 执行检查并带并发防护，避免与 running 状态混淆 */
+  /** 带并发防护执行检查：同一时刻仅允许一次 runCheck */
   private runCheckSafe(): Promise<void> {
     if (this.executing) return Promise.resolve()
     this.executing = true

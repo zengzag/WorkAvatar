@@ -17,7 +17,7 @@ import { type SearchTraceStep } from './kms-search-agent-types'
 
 const logger = createLogger('KMS-KnowledgeCard')
 
-/** 卡片归档天数：90天未被搜索/查看且非置顶 → 归档 */
+/** 卡片归档天数：非置顶且 90 天未更新（updated_at）的 active 卡片 → 归档 */
 const CARD_ARCHIVE_DAYS = 90
 const CARD_EVAL_DEBOUNCE_MS = 45_000
 const CARD_LLM_HOURLY_BUDGET = 10

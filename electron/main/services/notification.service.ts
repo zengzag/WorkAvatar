@@ -11,7 +11,7 @@ export interface NotifyPayload {
   /** 点击通知后前端跳转目标（内核语义：automation/ask_user；命中插件 id 时跳插件页） */
   clickTarget?: string
   clickId?: string
-  /** 静默：不弹 antd notification，仅写日志（如批量提醒去重时） */
+  /** 静默标记：系统通知抑制提示音；IPC 路径原样透传，渲染端不会据此隐藏通知 */
   silent?: boolean
   /** 来源标记：`plugin:<id>` 表示插件通知（渲染端经插件桥路由），其余为宿主通知 */
   source?: string
@@ -66,7 +66,7 @@ class NotificationService {
    * 发送通知。返回是否实际发出。
    * - 主窗口未激活：弹系统通知
    * - 主窗口激活：仅推事件给渲染进程（宿主通知走 CALENDAR_NOTIFY；插件通知经插件桥广播 'notify'）
-   * - 启用系统通知被关闭时，仍走 IPC 通道（前端弹 antd notification）
+   * - 系统通知不受支持或展示失败时，回退到 IPC 通道（前端弹 antd notification）
    */
   notify(payload: NotifyPayload): boolean {
     if (!payload || !payload.title) return false

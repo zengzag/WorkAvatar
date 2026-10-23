@@ -24,8 +24,8 @@ interface GlobalSearchBoxProps {
  * 顶部全局搜索框：跨智能体检索历史对话内容
  * - 输入防抖 300ms 触发搜索
  * - Ctrl+K / Cmd+K 聚焦
- * - ESC 清空并失焦
- * - 点击结果：当前员工直接切换对话；其他员工写入 localStorage 后路由跳转
+ * - ESC 关闭结果面板并失焦（保留输入内容）
+ * - 点击结果：当前员工直接切换对话；其他员工经 requestPendingTaskJump（事件分发 + localStorage 兜底）后路由跳转
  */
 const GlobalSearchBox: React.FC<GlobalSearchBoxProps> = ({
   currentEmployeeId,

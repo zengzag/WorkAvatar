@@ -6,119 +6,127 @@ import {
 
 /** 构建记忆提取 prompt
  *
- * 融合 Hermes Agent 全局记忆提取思想（USER.md + MEMORY.md），结合本项目数字员工场景：
- * - "一周后是否仍重要"启发式作为核心判定准则
- * - 价值排序"减少未来用户纠正" > 一次性任务细节
- * - 范围覆盖 Hermes MEMORY.md 范式：硬约束/踩坑/偏好/环境事实/角色（非仅"用户自身"）
- * - 声明式（偏好）vs 命令式（硬约束/踩坑）分场景区分——硬约束存在的意义就是覆盖用户请求
- * - 记忆 vs Skills 路由：流程归 Skills，事实归记忆
- * - 强"Nothing to save"允许，避免为写而写污染记忆库
+ * 提示词固定英文，输出语言跟随用户消息语言。设计要点：
+ * - 四重准入闸门（可复用/影响行为/非显而易见/有证据）+ "一周后是否仍需要"终判
+ * - 默认零产出：多数对话不应产生任何记忆，单次提取最多 3 条，抑制"为写而写"
+ * - 明确排除任务叙述、一次性细节、瞬时状态与情绪、单例推断、流程步骤
+ * - 记忆条目必须脱离对话可独立理解（禁指代、禁"用户让我..."叙事）
+ * - 声明式（偏好）vs 命令式（硬约束/踩坑）；精确值原样保留，相对时间转绝对日期
  * - 作用域：employee（默认，仅当前员工）vs global（跨员工共享的用户级事实）
  */
 export function buildExtractionPrompt(contextParts: string[]): string {
-  return `你是数字员工的跨任务记忆提取器。从对话中提取"未来仍重要"的持久事实，而非一次性任务细节。
-如果本轮没有值得持久记录的内容，返回空结果——这完全正常，大多数对话不需要写入记忆。
+  return `You extract durable memory from a digital employee's past conversations.
+A memory earns its place only if it changes how the employee behaves on a future task. Most conversations contain nothing worth saving — an empty result is a normal, correct outcome.
 
-## 核心判定准则
-问自己：一周后我还会需要这条信息吗？如果不会，它不属于记忆。
-最有价值的记忆，是能减少用户未来重复纠正你的那些——用户偏好、反复出现的纠正、踩过的坑，优先于一次性任务细节。
+## Admission bar (all four must hold)
+1. Reusable — it holds beyond the task being discussed.
+2. Behavioral — it changes what the employee does next time: a constraint to honor, a failure to avoid, a style to match, an environment fact to rely on.
+3. Non-obvious — it cannot be inferred from the request itself, the material involved, or general knowledge.
+4. Evidenced — the user stated, corrected, or confirmed it; not inferred from a single instance.
+Final test: will I still need this in a week? If not, drop it.
+Value order: hard constraints and corrections > pitfalls with their fix > long-term preferences > stable environment and role facts.
 
-## 该提取什么（按价值排序）
-① 硬性约束与禁忌：用户明确的"不要/禁止"、合规要求、流程限制等不可违背的规则。
-   ✓ "PPT 不用动画，客户反感"        ✗ "这个 PPT 别加动画"（一次性）
-② 踩坑经验与工具怪癖：工具/流程失败原因及最终解法，下次可避免重复踩坑。
-   ✓ "Excel 透视表>10万行会崩，改用 Power Query"   ✗ "今天 Excel 崩了一次"（无解法）
-③ 用户长期偏好与工作风格：写作风格、文档格式、汇报习惯、沟通节奏、审批流程等稳定偏好。
-   ✓ "汇报材料先结论后数据"          ✗ "本次汇报用结论前置"（一次性）
-④ 稳定环境事实：用户常用工具/平台、工作场景、固定协作对象等。
-   ✓ "团队用飞书文档协作"            ✗ "刚才打开了一个 Word"（一次性）
-⑤ 用户角色信息：职业、岗位、行业、技术栈等固定身份信息。
-   ✓ "用户是财务岗，常用 Excel"      ✗ "用户刚才在算账"（一次性动作）
+## Save
+1. Hard constraints and prohibitions — explicit "do not / never", compliance rules, process limits.
+   ✓ "No animations in client PPTs; the client dislikes them"   ✗ "Don't add animation to this deck" (one-off)
+2. Corrections and pitfalls — the cause plus the fix, so the mistake is not repeated.
+   ✓ "Excel pivot tables crash above 100k rows; use Power Query"   ✗ "Excel crashed today" (no fix)
+3. Long-term preferences and working style — format, tone, level of detail, cadence, approval flow.
+   ✓ "Reports lead with the conclusion, then the data"   ✗ "Put the conclusion first in this report" (one-off)
+4. Stable environment and role facts — tools and platforms in use, collaborators, the user's role or domain.
+   ✓ "The team collaborates in Feishu docs; the user does finance reporting in Excel"   ✗ "A Word file was opened just now"
 
-## 不该提取什么
-✗ 一次性临时问题（"这个怎么填"、"帮我查下"）
-✗ 任务进度日志、文件计数、流程编号、"已完成 X"、"已提交 Y"
-✗ 随口未确认的想法或计划
-✗ 已在现有记忆中且未变化的信息
-✗ LLM 已具备的通用办公知识
-✗ 具体操作步骤/工作流——应沉淀为 Skill，而非记忆（记忆存事实，Skill 存流程）
+## Never save
+- The task itself: what was requested, produced, changed, fixed, or is still pending.
+- One-off details: this file, this number, this date, this recipient, this document title.
+- Transient state or mood: "the user is in a hurry / frustrated", thanks, small talk, urgency.
+- Questions asked, lookups performed, general knowledge, or anything already in the provided material.
+- Guesses about intent from a single instance ("the user probably prefers X").
+- What existing memory already covers, unchanged.
+- Step-by-step procedures or workflows — those belong in a Skill; memory stores facts, Skills store procedures.
 
-## 激活范围（scope）
-每条记忆需判定作用域，取值二选一：
-- "employee"（默认）：仅对当前数字员工成立的偏好、约束、踩坑、结论。
-- "global"：**跨所有数字员工都成立的用户级事实**——用户的角色/职业、通用偏好、通用硬约束/禁忌。
-判断标准：换一个数字员工执行同类任务时，这条信息是否仍然应当生效？是则可用 global，否则一律 employee。
-涉及具体业务、项目、资料库、某个员工职责范围的内容，必须留 employee，不得标记 global。
-不确定时一律用 employee（宁可局部生效，也不要错误地全局生效）。
+## Scope
+Every memory needs one scope:
+- "employee" (default): applies only to this digital employee.
+- "global": a user-level fact that holds for any digital employee on a similar task — role, general preferences, general hard constraints.
+Content tied to a specific business, project, knowledge base, or employee responsibility must stay "employee".
+When unsure, always use "employee".
 
-## 写法规范
-- 用户偏好用声明式："用户偏好简洁回复" ✓，而非 "总是简洁回复" ✗
-  声明式描述事实；命令式会在后续会话被当指令，可能覆盖用户当前需求。
-- 硬性约束/踩坑经验可用命令式："不要用 X 替代 Y"——这类规则就是要覆盖用户请求。
-- 每条 content 1-2 句话、≤150 字，保留关键细节（工具名、阈值、对象），不为短而丢信息。
-  反例："报告用 PDF 发"（丢失原因"领导 iPad 批注"）
-  正例："周报用 PDF 发送，领导习惯用 iPad 批注"
-- **完整保留背景前提**：规则如果带有限定场景（如"对外""周会""合同审核时"），该前提不可省略，否则规则会从特定场景扩大到所有场景。
-  反例："邮件必须抄送主管"（丢失"对外"前提，变成所有邮件都要抄送）
-  正例："对外邮件必须抄送主管"
-- **完整保留并列约束**：当原文用"和/与/及"列举多个并列要求时，必须全部保留，不得选择性丢弃。
-  反例："数据须标注来源"（丢失"更新时间"这一并列项）
-  正例："数据须标注来源和更新时间"
-- key 短小唯一且稳定，如 "writing_style"、"no_ppt_animation"、"excel_pitfall_large_rows"。
-- 同一类别多个相似偏好合并为一条，不要拆碎。
+## Writing rules
+- One self-contained fact, understandable without the conversation: no "this", "the above", "today", "刚才"; no "the user asked me to..." narration — state the rule, not the story.
+- Write preferences declaratively: "The user prefers concise replies". Write hard constraints and pitfalls imperatively: "Do not use X instead of Y".
+- Keep 1-2 sentences and ≤150 characters, preserving the decisive detail (tool name, threshold, object).
+  ✗ "Send reports as PDF" (drops the reason)
+  ✓ "Send weekly reports as PDF; the manager annotates on an iPad"
+- Preserve every qualifying condition and every parallel requirement.
+  ✗ "Emails must CC the manager"   ✓ "External emails must CC the manager"
+  ✗ "Data must cite sources"   ✓ "Data must cite sources and update time"
+- Preserve exact values verbatim: paths, ports, IDs, version pins, command flags, names. Never paraphrase them.
+- Convert relative time ("yesterday", "next month") to an absolute date when the fact is time-bound.
+- key is short, unique, and stable, e.g. "writing_style", "no_ppt_animation".
+- Merge similar preferences of the same category into one item; never open a second key for an existing rule.
+- Budget: at most 3 new items per extraction — keep the highest-value ones and drop the rest.
 
-## 审查现有记忆
-- 新信息与已有记忆矛盾 → 把过时 key 放入 delete_keys（仅删除本员工作用域的记忆）。
-- 新信息是对已有记忆的补充/更新 → 放入 update_memories（写完整更新后内容）。
-  更新全局记忆时需同时回填该条目的 scope（见【现有记忆】中的 [global] 标记）。
-- 偏好/规则变更属于"更新"，不要新增为独立条目。
+## Reviewing existing memory
+- A changed preference or rule is an update, not a new item: put the full revised content in update_memories.
+- If new information contradicts an existing memory, put the obsolete key in delete_keys (employee scope only).
+- For a global memory, also repeat its scope (see the [global] marker in [Existing Memories]).
+- Never restate an existing memory just to "refresh" it.
 
-## 上下文结构
-上下文按以下顺序给出，用 --- 分隔：
-1. 【历史摘要】（可能不存在）：之前已提取对话的运行式压缩，提供背景。**不要从中提取记忆**——那些对话已处理过。
-2. 【本轮新对话】：自上次提取以来的新消息（仅 content，已剥离工具调用与思考过程）。**只从这里提取记忆**。
-3. 【现有记忆】：当前记忆库内容，用于判断去重、更新或删除。以 \`[global]\` 前缀标记的条目为全局记忆。
+## Output language
+Write every memory content, topic, and summary in the primary language of the user's messages in the conversation being processed. The prompt is in English, but the output language follows the user.
 
-## 输出
-若本轮无值得记录的内容，返回 {"memories":[],"delete_keys":[],"update_memories":[],"summary":"..."}。
-summary 是**运行式摘要**：若上下文含【历史摘要】，需整合历史摘要+本轮新对话，生成覆盖全部已提取对话的更新摘要；若无历史摘要，则概括本轮新对话。不超过150字，保留关键主题与结论，丢弃一次性细节。
+## Context layout
+Parts are separated by ---, in this order:
+1. [Conversation Summary] (may be absent): a running summary of earlier conversations. Background only; **do not extract memories from it**.
+2. [New Messages] or [Full Conversation]: the messages to extract from (content only; tool calls and reasoning are stripped). **Extract only from here**.
+3. [Existing Memories]: current memory store in key|topic|content form, for deduplication, update, and deletion. Items with a \`[global]\` prefix are global memories.
 
-上下文：
+## Output
+Return only valid JSON, with no explanation and no code fence.
+If nothing is worth saving, return {"memories":[],"delete_keys":[],"update_memories":[],"summary":"..."}.
+summary is a **running summary**, not a memory: if a [Conversation Summary] is present, merge it with the new messages to cover all extracted conversations; otherwise summarize this conversation. Keep it under 150 characters, preserving key topics and conclusions and dropping one-off details.
+
+Context:
 ${contextParts.join('\n---\n')}
 
-输出 JSON：
-{"memories":[{"key":"唯一标识","topic":"分类标签","content":"≤150字精炼事实","scope":"employee|global"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容（≤150字）","topic":"可选新topic","scope":"employee|global"}],"summary":"运行式摘要（中文，<150字，覆盖历史摘要+本轮新对话）"}`
+Output JSON:
+{"memories":[{"key":"unique id","topic":"category label","content":"durable fact, ≤150 characters","scope":"employee|global"}],"delete_keys":["key to delete"],"update_memories":[{"key":"key","content":"full updated content (≤150 characters)","topic":"optional new topic","scope":"employee|global"}],"summary":"running summary in the user's language, <150 characters, covering the conversation summary and the new messages"}`
 }
 
 /** 构建记忆合并整理 prompt
  *
- * 融合 Hermes 思想：一周后是否仍有用作为删除判定；简化时强制保留关键细节；
- * 声明式/命令式分场景规范；价值排序指导重要性评估。
+ * 提示词固定英文，输出语言跟随既有记忆语言。
  * 调用方按作用域分桶传入（员工桶或全局桶），本 prompt 不跨桶整理。
  */
 export function buildConsolidationPrompt(memoriesText: string): string {
-  return `你是跨任务记忆合并整理器。对记忆库去重、合并、清理，保持精简有用。
+  return `You consolidate the memory store for one scope: deduplicate, merge, simplify, and prune. Do not mix scopes.
 
-## 判定准则
-问自己：这条记忆一周后还有用吗？没用就删。
-价值排序：硬性约束/踩坑经验 > 用户偏好/角色信息 > 临时业务细节。
+## Decision rule
+Ask: will this memory still be useful in a week? If not, delete it.
+Value order: hard constraints and pitfalls > preferences and role facts > temporary business details.
 
-## 规则
-- pinned(pin:1) 标记的记忆不允许删除。
-- manual source 的记忆谨慎删除，除非明确过时。
-- >${STALE_MEMORY_DAYS}天未引用且非 pinned 的记忆优先删除。
-- 合并内容重叠/高度相似的记忆为一条。
-- 简化冗余内容，每条 content 1-2 句话、≤150 字——但简化时必须保留关键细节（工具名、阈值、对象），不得丢弃背景前提或并列约束。
-  反例：把"对外邮件必须抄送主管"简化为"邮件抄送主管"（丢失"对外"前提，规则被扩大到所有邮件）
-  正例：简化为"对外邮件须抄送主管"
-  反例：把"周报用 PDF 发送，领导习惯用 iPad 批注"简化为"报告用 PDF"（丢失关键原因）
-  正例：简化为"周报用 PDF，领导需 iPad 批注"
-- 同一类别多个相似偏好合并为一条。
-- 写法规范：偏好用声明式（"用户偏好X"），硬约束/踩坑可用命令式（"不要用X替代Y"）。
-- 重要性评估：critical=硬性约束/关键踩坑/核心角色特征；normal=常规偏好/稳定环境事实；low=次要信息。
-- 总量目标 ≤${MEMORY_CONSOLIDATION_TARGET_COUNT} 条 / ${MEMORY_CONSOLIDATION_TARGET_CHARS} 字符，请主动删除低价值条目腾出空间。
+## Rules
+- Memories marked pinned(pin:1) must not be deleted.
+- Delete manual-source memories cautiously, and only when clearly obsolete.
+- Delete items that never met the durability bar: task narration, one-off details, transient states, single-instance guesses.
+- Prioritize deleting memories unused for more than ${STALE_MEMORY_DAYS} days unless pinned.
+- Merge overlapping or highly similar memories into one.
+- Simplify redundant content. Keep each content item to 1-2 sentences and ≤150 characters, preserving tool names, thresholds, and objects. Never drop a qualifying condition or parallel requirement.
+  ✗ "External emails must CC the manager" → "Emails CC the manager" (drops "external")
+  ✓ "External emails must CC the manager"
+  ✗ "Weekly reports are sent as PDF; the manager annotates on an iPad" → "Reports use PDF" (drops the reason)
+  ✓ "Weekly reports use PDF; the manager needs iPad annotation"
+- Merge similar preferences of the same category into one item.
+- Write preferences declaratively ("The user prefers X"); write hard constraints and pitfalls imperatively ("Do not use X instead of Y").
+- importance: critical = hard constraints, key pitfalls, core role traits; normal = regular preferences, stable environment facts; low = minor details.
+- Keep the total within ${MEMORY_CONSOLIDATION_TARGET_COUNT} items / ${MEMORY_CONSOLIDATION_TARGET_CHARS} characters; delete low-value items to make room.
+
+## Output language
+Write all content in the same language as the existing memories below. The prompt is in English, but the output language follows the user.
 
 ${memoriesText}
 
-JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":"≤150字"}}],"simplify_updates":[{"key":"","content":"≤150字精炼版本"}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
+Return only valid JSON:
+{"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":"≤150 characters"}}],"simplify_updates":[{"key":"","content":"concise version, ≤150 characters"}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
 }

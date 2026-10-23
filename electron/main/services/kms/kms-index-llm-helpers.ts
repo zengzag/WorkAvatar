@@ -24,31 +24,28 @@ export async function callLLMForToc(
   signal?: AbortSignal,
   enableThinking?: boolean,
 ): Promise<LLMTocEntry[]> {
-  const systemPrompt = `You are an expert document structure analyst. Your task is to analyze document content and accurately identify its section headings, their hierarchy, and their positions.
+  const systemPrompt = `You are a document structure analyst. Identify section headings, their hierarchy, and their exact line positions in the supplied document text.
 
-Identification rules:
-1. Identify only genuine structural headings. Do not mistake emphasized text, list items, or table content in the body for headings.
-2. A heading is typically a short standalone line (usually no longer than 60 characters) that summarizes what follows.
-3. Common heading patterns:
-   - Numbered: "Chapter/Section/Part X", "1."/"1.1"/"1.1.1", or other ordered schemes
-   - Unnumbered: a standalone summarizing phrase followed by detailed content
-4. level is the hierarchy depth, up to 3 levels: 1 = top level (chapter/part), 2 = next level (section), 3 = finest level (subsection). Never exceed 3 levels.
-5. lineNumber must exactly match the [L<number>] line markers in the content.
-6. If a heading is followed by too little body content (for example, fewer than 50 words), ignore that heading.
-7. When upper-level TOC context is provided, use it to determine the level of the current headings and avoid misclassifying lower-level headings as higher-level ones.
-8. Copy every heading title verbatim from the source content and keep it in the document's original language. Never translate headings into English.${existingTocContext ? `\n\nAlready identified upper-level TOC context (for reference):\n${existingTocContext}` : ''}
+Rules:
+1. Include only genuine structural headings, not emphasized body text, list items, table cells, captions, or repeated headers and footers.
+2. A heading is a short standalone line (normally 60 characters or fewer) that labels the content that follows.
+3. Recognize numbered headings ("Chapter 3", "1.2.1") and unnumbered standalone section titles.
+4. level is the hierarchy depth from 1 to 3 (1 = chapter/part, 2 = section, 3 = subsection). Never emit a deeper level.
+5. lineNumber must match the [L<number>] markers in the content exactly.
+6. Skip a heading whose body content is negligible (for example, fewer than 50 words).
+7. When upper-level TOC context is supplied, use it to place the current headings at the correct level.
+8. Copy every heading verbatim and keep the source language; never translate it.${existingTocContext ? `\n\nAlready identified upper-level TOC context (for reference):\n${existingTocContext}` : ''}
 
-Output requirements:
-- Return strictly valid JSON.
-- Return only the JSON, with no explanatory text.
+Output:
+- Return only valid JSON, with no prose and no code fences.
 - If no heading structure can be identified, return {"toc":[]}`
 
-  const userPrompt = `Analyze the following document content and identify all section headings and their positions.
+  const userPrompt = `Identify every section heading in the document below and return its level and line number.
 
 Document content:
 ${numberedContent}
 
-Response format:
+JSON shape:
 {"toc":[{"title":"heading text","level":1,"lineNumber":5}]}`
 
   const parsed = await callLLMForJSON<{ toc: LLMTocEntry[] }>(
@@ -134,17 +131,17 @@ export async function generateParagraphSummary(
   signal?: AbortSignal,
   enableThinking?: boolean,
 ): Promise<{ title: string; summary: string; keywords: string[] }> {
-  const prompt = `Generate a summary for the paragraph below and return it as JSON.
+  const prompt = `Summarize the paragraph below and return the result as JSON.
 Paragraph title: ${paragraphTitle}
 Paragraph content:
 ${paragraphContent.substring(0, 8000)}
 
-Return these fields:
+Fields:
 - title: the paragraph title
-- summary: a concise, tightly written summary (about 50 words)
-- keywords: a list of 3-5 keywords
+- summary: a concise summary of about 50 words
+- keywords: 3-5 keywords
 
-Write the title, summary, and keywords in the same language as the paragraph content. If the paragraph is not in English, do not translate it into English — keep the original language.
+Write the summary and keywords in the same language as the paragraph content; do not translate them.
 
 Return only JSON.`
 
@@ -152,7 +149,7 @@ Return only JSON.`
     providerId,
     modelId,
     [
-      { role: 'system', content: 'You are a professional knowledge engineer. Return only valid JSON.' },
+      { role: 'system', content: 'You are a knowledge-engineering assistant. Return only valid JSON.' },
       { role: 'user', content: prompt },
     ],
     { title: paragraphTitle, summary: '', keywords: [] },
@@ -179,17 +176,17 @@ export async function generateDocumentSummaryFromParagraphs(
     `### Paragraph ${i + 1}: ${ps.title}\n${ps.summary}\nKeywords: ${ps.keywords.join(', ')}`
   ).join('\n\n')
 
-  const prompt = `Generate a document-level summary from the paragraph summaries below and return it as JSON.
+  const prompt = `Produce a document-level summary from the paragraph summaries below and return it as JSON.
 Document title: ${documentTitle}
 Paragraph summaries:
 ${summariesText.substring(0, 15000)}
 
-Return these fields:
-- summary: a document-level summary (about 150 words, concise and tight)
-- keywords: a list of 5-8 keywords
-- mainTopics: a list of 3-5 main topics
+Fields:
+- summary: a document-level summary of about 150 words, concise and specific
+- keywords: 5-8 keywords
+- mainTopics: 3-5 main topics
 
-Write the summary, keywords, and main topics in the same language as the source material. If the source is not in English, do not translate it into English — keep the original language.
+Write the summary, keywords, and main topics in the same language as the source material; do not translate them.
 
 Return only JSON.`
 
@@ -197,7 +194,7 @@ Return only JSON.`
     providerId,
     modelId,
     [
-      { role: 'system', content: 'You are a professional knowledge engineer. Return only valid JSON.' },
+      { role: 'system', content: 'You are a knowledge-engineering assistant. Return only valid JSON.' },
       { role: 'user', content: prompt },
     ],
     { summary: '', keywords: [], mainTopics: [] },
@@ -267,14 +264,19 @@ export async function generateFileSummary(
     throw new Error('MODEL_NOT_CONFIGURED')
   }
   const truncatedText = fullText.substring(0, 3000)
-  const summaryPrompt = `Generate a concise summary (about 150 words) of the document content below, and extract 5-8 keywords and 3-5 main topics.
+  const summaryPrompt = `Summarize the document below and extract its keywords and main topics.
 
 Document content:
 ${truncatedText}
 
-Write the summary, keywords, and main topics in the same language as the document. If the document is not in English, do not translate it into English — keep the original language.
+Fields:
+- summary: about 150 words, concise and specific
+- keywords: 5-8 keywords
+- main_topics: 3-5 main topics
 
-Return the result as JSON: {"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
+Write them in the same language as the document; do not translate.
+
+Return only JSON: {"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
 
   if (signal?.aborted) return
 
@@ -282,7 +284,7 @@ Return the result as JSON: {"summary": "...", "keywords": ["..."], "main_topics"
     providerId,
     modelId,
     [
-      { role: 'system', content: 'You are a document summarization assistant. Always return results in strict JSON format.' },
+      { role: 'system', content: 'You are a document summarization assistant. Return only valid JSON.' },
       { role: 'user', content: summaryPrompt },
     ],
     { summary: '', keywords: [], main_topics: [] },
@@ -344,23 +346,27 @@ export async function generateDirSummaryViaLLM(
   const fileList = buildDirFileList(files)
 
   if (providerId && modelId && files.length <= 100) {
-    const prompt = `Generate a concise summary (about 200 words) of the directory below, covering its content themes and structure, and extract 5-10 keywords.
+    const prompt = `Summarize the directory below and extract its keywords.
 
 Directory path: ${dirPath}
 File count: ${files.length}
 File list:
 ${fileList}
 
-Write the summary and keywords in the same language as the file names and summaries above. If they are not in English, do not translate them into English — keep the original language.
+Fields:
+- summary: about 200 words covering content themes and structure
+- keywords: 5-10 keywords
 
-Return the result as JSON: {"summary": "...", "keywords": ["..."]}`
+Write them in the same language as the file names and summaries above; do not translate.
+
+Return only JSON: {"summary": "...", "keywords": ["..."]}`
 
     try {
       const parsed = await callLLMForJSON<{ summary: string; keywords: string[] }>(
         providerId,
         modelId,
         [
-          { role: 'system', content: 'You are a directory content summarization assistant. Output concise, accurate JSON.' },
+          { role: 'system', content: 'You are a directory summarization assistant. Return only valid JSON.' },
           { role: 'user', content: prompt },
         ],
         { summary: '', keywords: [] },

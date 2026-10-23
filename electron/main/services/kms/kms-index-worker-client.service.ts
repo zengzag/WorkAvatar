@@ -150,9 +150,8 @@ class KMSIndexWorkerClientService {
       const worker = await this.ensureWorker()
       this.lastActivityAt = Date.now()
       const id = this.nextTaskId()
-      // autoIndexCheck 包含爬虫+解析+LLM+embedding，可能很慢，给 30 分钟
-      // 其他批量索引任务给 30 分钟
-      const timeoutMs = task === 'autoIndexCheck' ? 30 * 60 * 1000 : 30 * 60 * 1000
+      // 所有 Worker 任务统一 30 分钟超时（autoIndexCheck 含爬虫+解析+LLM+embedding，耗时最长）
+      const timeoutMs = 30 * 60 * 1000
       logger.info(`Dispatching worker task "${task}" (id=${id}, timeout=${timeoutMs / 1000}s)`)
       const result = await new Promise<any>((resolve, reject) => {
         const timer = setTimeout(() => {

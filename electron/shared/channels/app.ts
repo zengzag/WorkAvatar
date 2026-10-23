@@ -15,10 +15,10 @@ export const APP_CHANNELS = {
   // 存储占用量化：分类统计数据目录占用、打开指定分类目录
   APP_GET_STORAGE_USAGE: 'app:get-storage-usage',
   APP_OPEN_STORAGE_PATH: 'app:open-storage-path',
-  // 前台防休眠：应用处于前台时禁止系统自动熄屏/休眠（查询/设置开关）
+  // 防休眠：仍有可见窗口时禁止系统自动熄屏/休眠（查询/设置开关）
   POWER_SAVE_GET: 'power-save:get',
   POWER_SAVE_SET: 'power-save:set',
-  // 重启应用（插件启停/导入/删除等变更后一键生效）
+  // 插件变更生效：增量扫描磁盘并加载/卸载受影响插件（不重启应用）
   APP_RESTART: 'app:restart',
   // 渲染进程日志转发（fire-and-forget）：渲染进程 console 输出转发到主进程写入日志文件
   APP_RENDERER_LOG: 'app:renderer-log',

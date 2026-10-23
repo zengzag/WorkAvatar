@@ -138,10 +138,10 @@ export function selectAlwaysOnMemories(
 export function buildMemoryPromptBlock(alwaysOn: EmployeeMemory[], totalCount: number): string {
   if (totalCount <= 0) return ''
   const lines = formatMemoriesForPrompt(alwaysOn, MEMORY_ALWAYS_ON_MAX_CHARS)
-  const header = '核心记忆（跨任务持久事实，已自动注入）：'
-  const hint = '以上仅为置顶与关键记忆；如需回忆其他偏好、约束、踩坑或结论，调用 search_memories 工具检索。'
+  const header = 'Core memories (durable cross-task facts, injected automatically):'
+  const hint = 'Only pinned and critical memories are shown; use search_memories for other preferences, constraints, pitfalls, and conclusions.'
   if (!lines) {
-    return `${header}\n（暂无置顶/关键记忆）\n${hint}`
+    return `${header}\n(no pinned or critical memories)\n${hint}`
   }
   return `${header}\n${lines}\n${hint}`
 }

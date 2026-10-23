@@ -36,25 +36,24 @@ export const grepTool: ToolDefinition = {
   id: 'grep',
   name: 'grep',
   title: '内容检索',
-  summary: '在文件内容中按正则检索，返回文件:行号与匹配行，用于定位符号、字符串、配置项。',
-  description: `在文件内容中按正则检索，返回 "路径:行号: 内容"。用于跨文件定位函数名、变量、字符串、配置项——内容检索请用本工具，不要用 shell 的 grep / rg / Select-String 代替。
+  summary: 'Search file contents by regular expression and return path:line matches for symbols, strings, and config keys.',
+  description: `Search file contents by regular expression and return "path:line: content". Use this tool instead of shell grep / rg / Select-String for content search.
 
-- pattern：正则表达式（必填）。仅需字面量匹配时请转义特殊字符（如 "\\.json"、"getUser\\("）。
-- path：搜索根目录或单个文件，默认当前工作目录。
-- glob：可选文件过滤模式（支持 * ? [abc] 与 **，如 "**/*.ts"、"src/**/*.test.ts"）；不传则搜索全部文本文件。
-- ignore_case：忽略大小写（默认false）；context_lines：匹配行上下各展示几行（0-5，默认0，上下文行以 "路径-行号- 内容" 呈现）。
-- 自动跳过 node_modules / .git / dist 等重目录，以及二进制文件与超过 2MB 的文件。
-- 单行预览超过 2000 字节会截断，单次输出超过 256KB 会停止追加并提示。
-- 最多返回 max_results 处匹配，超限会在末尾提示。`,
+- pattern: regular expression (required). Escape special characters for literal matches (e.g. "\\.json", "getUser\\(").
+- path: search root or a single file (default: current workspace).
+- glob: optional file filter (* ? [abc], **, e.g. "**/*.ts"); by default all text files are searched.
+- ignore_case: case-insensitive search (default false); context_lines: lines of context before and after each match (0-5, default 0, rendered as "path-line- content").
+- Heavy directories (node_modules, .git, dist) are skipped, as are binary files and files over 2MB.
+- A line preview is cut at 2000 bytes; output stops at 256KB. At most max_results matches are returned, with a truncation notice.`,
   parameters: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: '要检索的正则表达式' },
-      path: { type: 'string', description: '搜索根目录或单个文件（绝对路径，或相对当前工作目录）。默认当前工作目录' },
-      glob: { type: 'string', description: '可选文件过滤模式（支持 * ? [abc] 与 **），相对 path 解析' },
-      ignore_case: { type: 'boolean', description: '是否忽略大小写（默认false）' },
-      context_lines: { type: 'number', description: '匹配行上下各展示几行（0-5，默认0）', minimum: 0, maximum: 5 },
-      max_results: { type: 'number', description: `最多返回的匹配行数（默认${DEFAULT_MAX_RESULTS}，上限${MAX_RESULTS_LIMIT}）`, minimum: 1, maximum: MAX_RESULTS_LIMIT },
+      pattern: { type: 'string', description: 'Regular expression to search for' },
+      path: { type: 'string', description: 'Search root or a single file (absolute, or relative to the workspace). Default: current workspace' },
+      glob: { type: 'string', description: 'Optional file filter (* ? [abc], **), resolved relative to path' },
+      ignore_case: { type: 'boolean', description: 'Case-insensitive search (default false)' },
+      context_lines: { type: 'number', description: 'Lines of context around each match (0-5, default 0)', minimum: 0, maximum: 5 },
+      max_results: { type: 'number', description: `Maximum matching lines to return (default ${DEFAULT_MAX_RESULTS}, max ${MAX_RESULTS_LIMIT})`, minimum: 1, maximum: MAX_RESULTS_LIMIT },
     },
     required: ['pattern'],
   },

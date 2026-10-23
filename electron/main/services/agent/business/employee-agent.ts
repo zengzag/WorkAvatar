@@ -72,8 +72,8 @@ export class EmployeeAgent extends GenericAgent {
 
   /**
    * 稳定能力块：Capabilities（按需工具 + 技能激活方式）+ Delegation。
-   * 工具注册在 agent 构造后完成，因此按需工具列表在此（每次运行）惰性计算；
-   * 首次生成的稳定上下文消息会在 GenericAgent 中冻结。
+   * 工具注册在 agent 构造后完成，因此按需工具列表在首次构建稳定上下文时惰性计算一次，
+   * 随后随稳定上下文一起冻结复用。
    */
   protected buildStableContextExtras(useSkills: boolean): string[] {
     const onDemandTools = this.getToolRegistry().getOnDemandTools()

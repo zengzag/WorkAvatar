@@ -12,7 +12,7 @@ export interface AgentRunEventPayload {
   parentConversationId?: string
 }
 
-/** 注册会话对应的窗口（chatStream 启动时调用），并清理旧窗口资源 */
+/** 注册会话对应的窗口（chatStream 启动时调用）；同一 sessionId 重复注册时覆盖为新窗口 */
 export function registerSessionWebContents(sessionId: string, wc: Electron.WebContents): void {
   const existing = sessionWebContents.get(sessionId)
   if (existing && existing !== wc && !existing.isDestroyed()) {

@@ -854,8 +854,8 @@ export interface RunPiAgentLoopParams {
    */
   getLoopReminder?: (turn: number, maxIterations: number) => string | undefined
   /**
-   * 易变任务上下文（记忆/知识库范围）：仅在本次 run 的首次请求追加在末尾，
-   * 不写入 pi 上下文。后续工具轮次不重复注入，避免每次请求都多出一段未缓存 token；
+   * 易变任务上下文（记忆/知识库范围）：在本次 run 首次请求及 ask_user 返回后的请求追加在末尾，
+   * 不写入 pi 上下文。其余工具轮次不重复注入，避免每次请求都多出一段未缓存 token；
    * 工作区/任务时间已由稳定头承载，仍全程可见。
    */
   requestTail?: string
@@ -997,8 +997,8 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
       return turnCount >= maxIterations ? { action: 'end' as const } : undefined
     },
     toolExecution: 'sequential',
-    // pi-agent-core 通过 config.reasoning 传给 streamFn 的 options.reasoning
-    // createStreamFn 将其映射为 pi-ai 的 reasoningEffort，驱动 deepseek/qwen thinkingFormat 开关
+    // pi-agent-core 不解析思考强度；createStreamFn 经 buildPiStreamOptions
+    // 按 provider/model/enableThinking 计算 reasoningEffort，驱动 deepseek/qwen thinkingFormat 开关
     ...(config.enableThinking ? { reasoning: config.enableThinking } : {}),
     // sessionId 传递给 streamFn → pi-ai，启用 prompt cache（openai/deepseek/xiaomi 等支持）
     ...(sessionId ? { sessionId } : {}),

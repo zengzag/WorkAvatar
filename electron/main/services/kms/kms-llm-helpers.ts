@@ -18,7 +18,7 @@ export interface CallLLMForJSONOptions {
 /**
  * 调用 LLM 并将响应解析为 JSON 对象。
  *
- * 统一封装 KMS 模块内 9 处 LLM-JSON 调用模板：
+ * 统一封装 KMS 模块内的 LLM-JSON 调用模板：
  * - 自动注入 model 参数（避免 400 MissingParameter）
  * - 使用 parseJSON 容错解析（支持 ```json``` 围栏 + 字符串内换行修复）
  * - 默认失败返回 fallback；可选 throwOnError 抛出

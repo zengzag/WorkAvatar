@@ -98,8 +98,8 @@ class GenericChatService {
   /** 进行中的 agent 构建（按 cacheKey 去重） */
   private agentCreationInFlight = new Map<string, Promise<CachedAgentEntry>>()
 
-  /** 配置指纹：systemPrompt/tools/minimalMode/skills 等创建期参数变化时必须重建 agent，
-   * 否则同会话配置更新后仍复用旧 agent（创建时冻结的行为与配置脱节） */
+  /** 配置指纹：systemPrompt、minimalMode、技能数等创建期参数变化时必须重建 agent，
+   * 否则同会话配置更新后仍复用旧 agent（创建时冻结的行为与配置脱节）；tools 仅按数量判断 */
   private buildCacheKey(config: GenericChatConfig): string {
     const cfgFingerprint = [
       config.systemPrompt?.length ?? 0,

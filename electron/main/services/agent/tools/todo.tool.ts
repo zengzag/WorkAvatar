@@ -113,7 +113,7 @@ export function createTodoWriteTool(store: TodoStore): ToolDefinition {
   return {
     id: 'todo_write',
     name: 'todo_write',
-    title: 'Update Task List',
+    title: '更新任务清单',
     summary: 'Create or replace the multi-step task list for the current task',
     description: `Create or replace the task list tracking the current multi-step task. The list is visible to the user as your working plan.
 - Send the COMPLETE list on every call; it replaces the previous list wholesale.
@@ -159,7 +159,7 @@ export function createTodoWriteTool(store: TodoStore): ToolDefinition {
 
 /**
  * 节流后的 todo 提醒；不满足节奏时返回 undefined。
- * 进入收尾窗口（剩余迭代 ≤ FINAL_PHASE_TURNS）时追加一次收尾提醒。
+ * 进入收尾窗口（剩余迭代少于 TODO_FINAL_PHASE_TURNS）时追加一次收尾提醒。
  */
 export function buildTodoReminderIfDue(params: {
   turn: number

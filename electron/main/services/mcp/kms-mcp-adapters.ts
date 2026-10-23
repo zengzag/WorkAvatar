@@ -10,7 +10,7 @@
 import type { ToolDefinition } from '../agent/tools/types'
 
 /**
- * 不在 MCP 对外暴露的工具清单：按用户要求移除文件管理、Office 自动化、命令行执行、向用户询问 4 大类。
+ * 不在 MCP 对外暴露的工具清单：移除文件管理、命令行执行、向用户询问 3 大类。
  * 注意：Agent 内部仍可使用这些工具；这里仅阻止它们被 buildAllBuiltinToolDefinitions()
  * 聚合到对外 MCP 工具清单中，避免通过 MCP 通道泄露能力。
  */
@@ -35,9 +35,9 @@ function isToolIncluded(t: ToolDefinition): boolean {
 
 /**
  * 构造完整的对外 MCP 工具集合：
- * 1. 来自 Agent 的 allBuiltinTools（含通用/网络等，已过滤 files/shell/ask_user/office）
+ * 1. 来自 Agent 的 allBuiltinTools（含通用/网络等，已过滤 files/shell/ask_user）
  * 2. KMS 主工具（createKMSTools + createKMSCollectionTools，不带 scope 过滤）
- * 3. 对话工具 search_conversations/list_conversations/get_conversation_detail（需 employeeId，对外场景下为 undefined，仅返回空）
+ * 3. 对话与记忆工具 search_conversations/list_conversations/get_conversation_detail/search_memories（需 employeeId，对外场景下为空串）
  *
  * 最后按 resolveEnabledToolIds(tool_categories) 过滤。
  *
@@ -48,7 +48,7 @@ export function buildAllBuiltinToolDefinitions(): ToolDefinition[] {
   const agentTools = require('../agent/tools')
   const result: ToolDefinition[] = []
 
-  // 1. 常驻 + 按需的通用内置工具（allBuiltinTools）→ 过滤掉 files/office/shell/ask_user
+  // 1. 常驻 + 按需的通用内置工具（allBuiltinTools）→ 过滤掉 files/shell/ask_user
   for (const t of (agentTools.allBuiltinTools || []) as ToolDefinition[]) {
     if (isToolIncluded(t)) result.push(t)
   }

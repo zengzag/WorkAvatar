@@ -114,7 +114,7 @@ class KMSFileReaderService {
    * 热数据文件在 processHotFile 流程中将 LLM 切分后的段落原文写入 kms_paragraphs.content，
    * 因此可以直接从数据库读取，无需重新解析文件（file2md 较慢）。
    *
-   * 冷数据文件没有 kms_paragraphs 记录（仅在 kms_search_index 中存截断的 500 字符），
+   * 冷数据文件没有 kms_paragraphs 记录（仅在 kms_search_index 中存截断的 1000 字符），
    * 此时返回 null，调用方需重新解析文件。
    *
    * @return 拼接后的完整文本；若无段落记录则返回 null

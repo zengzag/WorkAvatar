@@ -218,7 +218,7 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
 }
 
-/* 快速创建输入框：抹掉 antd TextArea 自带聚焦样式 */
+/* 待办快速添加输入框：抹掉 antd TextArea 自带聚焦样式 */
 .quick-add-input::placeholder {
   color: var(--text-tertiary, rgba(0, 0, 0, 0.45));
 }
@@ -295,16 +295,6 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
 .nav-more-popup .ant-menu {
   max-height: min(60vh, 480px);
   overflow-y: auto;
-}
-
-/* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
-@keyframes nav-rec-pulse {
-  0% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.7); }
-  100% { opacity: 1; transform: scale(1); }
-}
-.nav-rec-indicator {
-  animation: nav-rec-pulse 1.2s ease-in-out infinite;
 }
 
 /* 通用光标闪烁：用于实时字幕、流式纪要生成等场景 */

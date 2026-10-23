@@ -40,7 +40,7 @@ function getStatusColor(tool: RuntimeEnvTool): string {
 }
 
 /**
- * 安装进度阶段 → 中文文案映射
+ * 安装进度阶段 → i18n 文案映射
  */
 function getPhaseLabel(phase: RuntimeEnvInstallProgress['phase'], t: (k: string) => string): string {
   switch (phase) {

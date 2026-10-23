@@ -5,18 +5,18 @@ export const dateTimeTool: ToolDefinition = {
   id: 'date_time',
   name: 'date_time',
   title: '日期时间',
-  summary: '获取当前日期时间或进行日期计算。需要时间信息时使用。',
-  description: '获取当前日期时间，或进行日期计算（add_days需传入days参数）',
+  summary: 'Get the current date and time, or perform date arithmetic.',
+  description: 'Get the current date and time, or add a number of days to the current date.',
   parameters: {
     type: 'object',
     properties: {
       operation: {
         type: 'string',
         enum: ['now', 'format', 'add_days'],
-        description: '操作类型（可选，不传默认 "now"）'
+        description: 'Operation to perform (default "now")'
       },
-      format: { type: 'string', description: '日期格式，如 "YYYY-MM-DD"' },
-      days: { type: 'number', description: '要添加的天数' }
+      format: { type: 'string', description: 'Output format, e.g. "YYYY-MM-DD"' },
+      days: { type: 'number', description: 'Number of days to add (add_days only)' }
     },
   },
   handler: (args: any) => {

@@ -24,7 +24,6 @@ let _pwshPath: string | null | undefined = undefined
  * 检测 PowerShell 7 (pwsh.exe) 是否可用。
  * 优先使用 pwsh（更快、UTF-8 原生支持更好、功能更丰富、含 ForEach-Object -Parallel 等现代特性），
  * 回退到 powershell.exe (Windows PowerShell 5.1)。
- * 参考：Claude Code 的 CLAUDE_CODE_USE_POWERSHELL_TOOL=1 策略
  */
 function detectPowerShell(): string {
   if (!IS_WINDOWS) return 'powershell.exe'
@@ -80,7 +79,6 @@ function detectPowerShell(): string {
  * 在 Windows 上彻底杀死进程树（包括子进程和孙进程）。
  * - 使用 taskkill /T /F 强制终止整个进程树
  * - 回退到 child.kill('SIGKILL')
- * 参考：Codex CLI 的 Windows Job Object 进程树管理策略
  */
 function killProcessTreeOnWindows(pid: number): void {
   try {
@@ -169,7 +167,7 @@ exit $LASTEXITCODE
 
 /**
  * heredoc 语法解析：从命令字符串中提取 `<<?'?EOF'?...EOF` 块。
- * 返回：{ preCommand: heredoc 前的命令部分, heredocBody: 多行脚本内容, shell: 要使用的 shell 类型 }
+ * 返回：{ preCommand: heredoc 前的命令部分, heredocBody: 多行脚本内容, shell: preCommand 的别名（历史字段，调用方不使用） }
  * 未匹配时返回 null。
  */
 export function parseHeredoc(command: string): { preCommand: string; heredocBody: string; shell: string } | null {

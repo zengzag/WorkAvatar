@@ -47,7 +47,7 @@ export interface McpServerConfig {
 
 /** MCP 工具信息（listTools 返回的元素） */
 export interface McpToolInfo {
-  /** 工具名（注入到 ToolDefinition.name 时会加前缀 mcp_<serverId>_） */
+  /** 工具名（注入到 ToolDefinition.name 时会加前缀 mcp_<serverId 前 8 位>_） */
   name: string
   description: string
   /** JSON Schema 形式的入参定义 */

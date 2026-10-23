@@ -25,7 +25,7 @@ const STOP_WORDS = new Set<string>([
  *
  * 选型理由：
  * - 基于 Rust 的 jieba-rs，预编译 N-API 二进制，无需 node-gyp 构建
- * - 性能比 nodejieba 快约 33%，dict 文件内置于包内无需额外管理
+ * - 预编译二进制性能优于 node-gyp 版本，dict 文件内置于包内无需额外管理
  * - 支持精确模式（cut）与搜索引擎模式（cutForSearch）
  */
 class KMSTokenizerService {

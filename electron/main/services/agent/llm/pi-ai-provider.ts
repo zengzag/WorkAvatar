@@ -318,7 +318,7 @@ export class PiAIProvider implements ILLMProvider {
         }
       }
 
-      // abort 时不抛错，返回空 response，让上层（base-agent.runStream）判断 signal.aborted 处理
+      // abort 时不抛错，返回空 response，由调用方按 signal.aborted 处理
       if (signal?.aborted) {
         return {
           content: '',

@@ -62,9 +62,9 @@ describe('buildEmployeeSystemPrompt 补充分支', () => {
 
   it('操作规则覆盖权限拒绝、结果截断、环境差异三类 harness 契约', () => {
     const p = buildEmployeeSystemPrompt({ name: 'A', instructions: '' })
-    expect(p).toMatch(/denied or cancelled call is intentional/)
-    expect(p).toMatch(/may be truncated/)
-    expect(p).toMatch(/shell and path conventions/)
+    expect(p).toMatch(/denied or cancelled tool call is final/)
+    expect(p).toMatch(/Truncated tool output is a partial result/)
+    expect(p).toMatch(/platform conventions in Environment/)
   })
 })
 

@@ -88,7 +88,7 @@ class KMSSearchEngineService {
   /**
    * embedding 内存缓存（LRU + 字节上限）
    *
-   * 替代原无上限 Map，限制总字节 ≤ EMBEDDING_CACHE_MAX_BYTES（256MB）。
+   * 替代原无上限 Map，限制总字节 ≤ EMBEDDING_CACHE_MAX_BYTES（64MB）。
    * 大索引场景下超限的 __all__ 条目将不被缓存，向量检索回退到 DB 全量加载。
    *
    * Worker 模式下禁用缓存：Worker 仅做写入，每次写入都会触发 invalidateEmbeddingCacheForFile
@@ -560,7 +560,7 @@ class KMSSearchEngineService {
     }
     lineOffsets.push(offset)
 
-    // kms_search_index.content 只存前 500 字符（用于搜索结果 snippet 和 embedding 生成），
+    // kms_search_index.content 只存前 1000 字符（用于搜索结果 snippet 和 embedding 生成），
     // FTS5 仍索引完整原文（用于全文搜索）。
     const insertIndex = this.db.prepare(`
       INSERT INTO kms_search_index (id, file_id, source_type, source_id, paragraph_index, title, content, start_offset, end_offset, start_line, end_line, created_at, updated_at)
@@ -880,7 +880,7 @@ class KMSSearchEngineService {
     // 批量删除 embedding：使用单一向量库事务，避免 1000 文件 = 1000 事务
     this.deleteEmbeddingsByFiles(fileIds)
 
-    // 批量失效 embedding 缓存
+    // 批量失效 embedding 缓存（实际缓存键为 `__all__:<model>:<dim>`，仅按 `__all__` 取值不会命中）
     if (this.embeddingCache) {
       const cached = this.embeddingCache.get('__all__')
       if (cached) {
@@ -1029,7 +1029,7 @@ class KMSSearchEngineService {
         }
       }
 
-      // FTS5 无结果时，降级到 LIKE 模糊匹配（参考搜索引擎的容错机制）
+      // FTS5 无结果时，降级到 LIKE 子串匹配，避免分词未命中导致零结果
       if (results.length === 0) {
         results = this.likeSearch(query, options, topK)
       }
@@ -1052,7 +1052,7 @@ class KMSSearchEngineService {
 
   /**
    * LIKE 模糊匹配（FTS5 无结果时的降级方案）
-   * 参考搜索引擎的容错机制，对每个关键词做子串匹配
+   * 对每个关键词做子串匹配
    */
   private likeSearch(query: string, options: SearchOptions | undefined, topK: number): SearchResult[] {
     const queryWords = extractQueryKeywords(query)
@@ -1315,7 +1315,7 @@ class KMSSearchEngineService {
   /**
    * 使用 vec0 虚表的 KNN 查询：
    * - metadata 过滤 file_id、source_type
-   * - 多取 topK*3 条以缓解 pre-filter 后不足 k 的问题
+   * - 多取 max(topK*3, 30) 条以缓解 pre-filter 后不足 k 的问题
    * 返回 null 表示 KNN 查询失败，调用方应回退到 JS。
    */
   private vectorSearchViaVec0(
@@ -1470,7 +1470,7 @@ class KMSSearchEngineService {
    * 作为混合搜索的第三个 RRF 来源，与 FTS（关键词）和 vector（语义）并列。
    * 不依赖任何已建立的索引/向量，可与现有过滤条件（dirIds / collectionIds /
    * fileExtensions / timeRange）协同工作；timeRange 单位为 unix 秒（与
-   * kms_files.modified_time 一致），调用方（hybridSearch）负责毫秒→秒转换。
+   * kms_files.modified_time 一致），毫秒→秒转换由 KMSService.search 完成。
    */
   fileNameSearch(query: string, options: SearchOptions): SearchResult[] {
     const topK = options?.topK || 10
@@ -1879,7 +1879,7 @@ class KMSSearchEngineService {
 
     // RRF 分数归一化到 [0, 1]：除以本批最大分数，使 Top 结果 score=1.0
     // 前端 KMSSearchResultList 按 score*100 渲染匹配度进度条，未归一化的 RRF 原始分数
-    //（最大约 2/61 ≈ 0.033）会导致进度条几乎不可见
+    //（四个来源全命中时最大约 7/61 ≈ 0.115）会导致进度条几乎不可见
     const maxSortKey = topResults.length > 0 ? topResults[0].sortKey : 0
     const safeMax = maxSortKey > 0 ? maxSortKey : 1
 
@@ -2075,10 +2075,10 @@ class KMSSearchEngineService {
 
   /**
    * 失效指定 fileId 的 embedding 缓存（删除文件时调用）
-   * 从 __all__ 缓存数组中过滤掉该 fileId 的条目，避免全量重载
+   * 从 `__all__` 缓存数组中过滤掉该 fileId 的条目，避免全量重载
    *
-   * 通过 LRU update 接口原地 filter 并重算字节，超限时自动淘汰整个 __all__ 条目。
-   * 注意：filter 会产生新数组引用，但 update 接口会将其重新 set 到缓存中。
+   * 实际缓存键为 `__all__:<model>:<dim>`，此处仅按 `__all__` 取值不会命中；
+   * 过滤通过 get + filter + set 写回，set 会重算字节并在超限时按 LRU 淘汰。
    */
   private invalidateEmbeddingCacheForFile(fileId: string): void {
     if (!this.embeddingCache) return

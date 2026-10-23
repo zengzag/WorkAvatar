@@ -18,7 +18,7 @@ export interface NotifyPayload {
   /** 点击通知后前端跳转目标（内核语义：automation/ask_user；命中插件 id 时跳插件页） */
   clickTarget?: string
   clickId?: string
-  /** 静默：不弹 antd notification，仅写日志 */
+  /** 静默标记：系统通知抑制提示音；IPC 路径原样透传，渲染端不会据此隐藏通知 */
   silent?: boolean
   /** 来源标记 */
   source?: string

@@ -271,7 +271,7 @@ export function registerToolHandlers(
 
   /**
    * 获取按分类聚合的员工工具列表
-   * 返回：每个分类包含总开关 + 分类包含的工具明细 + 模式聚合（on/on_demand/off/mixed）
+   * 返回：每个分类包含总开关 + 分类包含的工具明细 + 模式聚合（on/on_demand/off）
    */
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, (params: { employee_id: string }) => {
     const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as Array<{ tool_id: string; tool_mode: string }>
@@ -375,7 +375,7 @@ export function registerToolHandlers(
       mode: params.mode,
     }))
 
-    // 批量 SQL 写入：因为预编译语句最多支持 20 组 values，按批处理
+    // 分批写入，控制单条 SQL 的绑定参数数量与语句长度
     for (let offset = 0; offset < rows.length; offset += 20) {
       const batch = rows.slice(offset, offset + 20)
       const bindParams: any[] = []

@@ -269,7 +269,7 @@ export default {
     allEmployees: '全部数字员工',
     confirmDeleteEmployee: '确认删除该数字员工？',
     deleteEmployee: '删除员工',
-    titleGenSystemPrompt: '你是一名对话标题生成器。根据用户发送的第一条消息，提炼此次任务的核心意图，生成一个简洁、准确的任务标题，长度在 10 个字左右，不超过 20 个字。\n\n生成要求：\n1. 标题须概括任务意图（如「整理会议纪要」「生成季度销售报表」「检索合同条款」），而非复述原文或罗列细节。\n2. 采用名词短语或「动作 + 对象」的表达方式，符合任务型标题习惯；避免疑问句、感叹句及口语化措辞。\n3. 以 10 个字左右为宜（如「整理本周销售数据并生成报表」），信息不足时可短至 5～6 字（如「整理会议纪要」）；确有必要补充关键限定（对象、范围、格式）时可延长，但严格不超过 20 个字，并删除冗余修饰词（如「请」「帮我」「是否」）。\n4. 若消息内容为空或无法提炼出明确意图，则输出「新对话」。\n\n输出规则：\n- 仅输出标题本体，不包含任何解释、引号、标点或前后缀。',
+    titleGenSystemPrompt: 'You are a conversation title generator. From the user\'s first message, extract the core task intent and write a concise, accurate task title.\n\nRequirements:\n1. State the task intent, not a restatement or a list of details. Use a noun phrase or "action + object" form; avoid questions, exclamations, and casual wording.\n2. Write the title in the same language as the user\'s message.\n3. Keep it short: around 10 characters for Chinese (max 20); 5-8 words for alphabetic languages (max 60 characters). Extend only for essential qualifiers (object, scope, format).\n4. Drop redundant modifiers such as "please", "help me", and "should".\n5. If the message is empty or has no clear intent, output the equivalent of "New conversation" in the user\'s language.\n\nOutput: the title only, with no explanation, quotes, punctuation, or prefix/suffix.',
     toolNames: {
       date_time: '日期时间',
       shell_exec: 'Shell命令执行',

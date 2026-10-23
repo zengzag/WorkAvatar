@@ -115,7 +115,7 @@ describe('employee-memory-helpers / buildMemoryPromptBlock', () => {
 
   it('有记忆但无常驻项时只给检索提示', () => {
     const block = buildMemoryPromptBlock([], 3)
-    expect(block).toContain('核心记忆')
+    expect(block).toContain('Core memories')
     expect(block).toContain('search_memories')
     expect(block).not.toContain('- ')
   })

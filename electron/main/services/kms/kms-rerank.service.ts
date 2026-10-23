@@ -5,11 +5,11 @@
  * 不依赖外部模型（为未来接入 cross-encoder 预留接口），仅使用已在
  * SearchResult 上可得的廉价信号：
  *
- * 1. 基础分：RRF sortKey（多来源融合排名，已由 hybridSearch 计算）
+ * 1. 基础分：hybridSearch 归一化后的 RRF 分数（sortKey / 本批最大值）
  * 2. 词覆盖：查询词在 text/file_name 中的命中率（覆盖越多越相关）
  * 3. 新鲜度：按文档年龄做指数半衰期衰减，始终生效（新文档加成、旧文档降权）
  * 4. 版本约束：非最新 content_version 的结果降权，优先展示当前版本
- * 5. 文件名前缀：文件名列首命中（权重最高的传统信号）小幅加成
+ * 5. 文件名前缀：文件名以查询词开头时小幅加成
  *
  * 全部为线性/乘法组合，常量集中定义便于调参与测试。
  */
@@ -28,7 +28,7 @@ export const TERM_COVERAGE_STEP = 0.05
 export const FILENAME_PREFIX_BOOST = 0.08
 
 export interface RerankHints {
-  /** RRF 融合后的基础分 */
+  /** 归一化后的 RRF 基础分 */
   baseScore: number
   /** 文档修改时间（unix 秒） */
   modifiedTime?: number
@@ -90,7 +90,7 @@ export function rerankOne<T>(
     && hints.contentVersionId !== hints.latestVersionId
   const versionMultiplier = staleVersion ? STALE_VERSION_PENALTY : 1
 
-  // 文件名前缀命中：文件名以词开头（ Traditional prefix signal ）
+  // 文件名前缀命中：文件名以查询词开头
   const fileNameLower = (hints.fileName || '').toLowerCase()
   const prefixHit = queryTerms.some(t => fileNameLower.startsWith(t))
   const prefixBoost = prefixHit ? 1 + FILENAME_PREFIX_BOOST : 1

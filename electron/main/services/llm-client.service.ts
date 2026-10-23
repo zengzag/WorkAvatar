@@ -236,7 +236,7 @@ class LLMClientService {
     return this.getProvider(id)
   }
 
-  /** 模型ID变更后级联更新所有引用处（settings 表场景默认模型/KMS/语音、自动化任务） */
+  /** 模型 ID 变更后级联更新 settings 中的默认模型/KMS 模型引用，并通知插件同步其分库 */
   private syncModelReferences(providerId: string, oldModelsJson: string | undefined, newModelsJson: string | undefined): void {
     try {
       const oldModels: any[] = oldModelsJson ? JSON.parse(oldModelsJson) : []

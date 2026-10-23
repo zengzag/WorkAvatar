@@ -5,8 +5,8 @@
  * - 模板的持久化与画布 UI 由 workflow 插件持有；内核只负责「运行」这一段。
  * - 一次运行生成一条主任务会话（仅作运行工作区与子会话父级，**不写消息、不出现在任务页**），
  *   每个智能体节点作为其子会话执行，复用 SubAgentRuntime 的并发控制、级联中止、事件广播与产物采集。
- * - 临时数字员工（EphemeralRole）经注册表注册为「模板内联」注册员工，
- *   不落 employees 表、不进员工库列表，运行结束即下线。
+ * - 临时数字员工（EphemeralRole）经注册表登记为「模板内联」员工，并在 employees 表写入仅作外键占位的影子记录；
+ *   不出现在员工库列表，运行结束即下线。
  */
 
 import path from 'path'
@@ -337,7 +337,7 @@ export class WorkflowRuntimeService {
     this.finishRun(entry, 'completed')
   }
 
-  /** 执行单个节点：智能体/评审/输入/条件/工具等类型 */
+  /** 执行单个节点：输入/结束/条件/循环节点本地处理，其余类型按智能体节点执行 */
   private async executeNode(
     entry: RunEntry,
     node: PluginWorkflowNodeSpec,
@@ -547,7 +547,7 @@ export class WorkflowRuntimeService {
     // 仅注入执行类节点：评审/条件节点只针对新产出复核，不承接返工上下文
     if (node.type === 'review' || node.type === 'condition') return base
 
-    const sections: string[] = ['【迭代返工】流程回到本节点重新执行，请结合下列上一轮反馈修订产出，不要从头重写。']
+    const sections: string[] = ['【迭代返工】流程回到本节点重新执行。请结合上一轮反馈修订产出，不要从头重写。']
     const verdict = feedback.verdict ? `（结论：${feedback.verdict}）` : ''
     sections.push(`— 来自「${feedback.fromLabel}」的上一轮反馈${verdict}：\n${feedback.output.trim().slice(0, MAX_OUTPUT_INJECT_CHARS) || '(未给出文字意见)'}`)
     const previous = entry.nodeRuns.get(node.id)?.output

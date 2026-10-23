@@ -9,23 +9,23 @@ export const runSkillScriptTool: ToolDefinition = {
   id: 'run_skill_script',
   name: 'run_skill_script',
   title: '运行 Skill 脚本',
-  summary: '执行 skill 的 scripts/ 目录下的脚本（.py/.sh/.js），需 skill 显式授权',
+  summary: 'Run a script from a skill\'s scripts/ directory (.py/.sh/.js); the skill must explicitly allow it.',
   description:
-    '执行指定 skill 的 scripts/ 目录下的脚本。仅当 skill 的 frontmatter allowed-tools 包含 run_skill_script 时才允许执行。支持 .py（python）、.sh（bash/sh）、.js/.mjs（node）。',
+    'Run a script from the scripts/ directory of the specified skill. Allowed only when the skill\'s frontmatter allowed-tools includes run_skill_script. Supports .py (python), .sh (bash/sh), and .js/.mjs (node).',
   parameters: {
     type: 'object',
     properties: {
       skill_id: {
         type: 'string',
-        description: '目标 skill 的 ID',
+        description: 'Target skill id',
       },
       script_name: {
         type: 'string',
-        description: '脚本文件名（仅文件名，如 deploy.py），不能含路径',
+        description: 'Script file name only (e.g. deploy.py); must not contain a path',
       },
       args: {
         type: 'string',
-        description: '可选：传递给脚本的参数，空格分隔',
+        description: 'Optional arguments passed to the script, space-separated',
       },
     },
     required: ['skill_id', 'script_name'],

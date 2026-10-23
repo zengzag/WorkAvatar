@@ -189,7 +189,7 @@ class KMSKeywordStatsService {
 
   /**
    * 清理低频关键词：删除 90 天未搜索且 search_count < 3 的记录。
-   * 在 autoCleanup 中调用，防止 kms_keyword_stats 表无限增长。
+   * 启动清理由 KMSDatabaseService.autoCleanup 内联 SQL 执行（避免构造期循环依赖）。
    */
   cleanupStaleKeywordStats(): number {
     const cutoff = Math.floor(Date.now() / 1000) - 90 * 86400

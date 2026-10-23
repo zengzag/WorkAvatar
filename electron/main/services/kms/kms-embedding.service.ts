@@ -8,8 +8,8 @@ import type { ProgressCallback } from './kms-index-manager.service'
 const logger = createLogger('KMS-Embedding')
 
 /** embedding 输入文本长度上限（字符）。
- * kms_search_index.content 已按 SEARCH_INDEX_CONTENT_LIMIT(1000) 截断，
- * 此处取整段截断内容作为向量输入，保证向量语义与段落关键词一致。 */
+ * 与 content_paragraph 在 kms_search_index 中的 1000 字符截断保持一致；
+ * title 与 content 拼接后超出部分在此截断。 */
 const EMBEDDING_TEXT_LIMIT = 1000
 
 class KMSEmbeddingService {

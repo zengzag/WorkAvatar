@@ -25,7 +25,7 @@ export const askUserTool: ToolDefinition = {
   id: 'ask_user',
   name: 'ask_user',
   title: '询问用户',
-  description: 'Ask the user interactively and wait for the answer: confirm / select / input.',
+  description: 'Ask the user a question and wait for the answer (confirm / select / input). Use it only when a decision, choice, or missing input genuinely blocks progress; do not ask for preferences you can infer from the conversation.',
   parameters: {
     type: 'object',
     properties: {

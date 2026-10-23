@@ -25,13 +25,13 @@ export const envProbeTool: ToolDefinition = {
   id: 'env_probe',
   name: 'env_probe',
   title: '环境探测',
-  summary: '一次性探测操作系统、Shell、工作目录与常见命令行工具（node/python/git 等）是否可用及版本。',
-  description: `探测当前执行环境，返回操作系统、Shell 类型、工作目录，以及常用命令行工具（node、npm、pnpm、python、pip、uv、git、rg、docker、go、cargo、java、gcc、make 等）是否安装及版本。
+  summary: 'Probe the OS, shell, workspace, and availability/version of common command-line tools (node, python, git, etc.).',
+  description: `Probe the execution environment and return the OS, shell type, working directory, and whether common command-line tools are installed (node, npm, pnpm, python, pip, uv, git, rg, docker, go, cargo, java, gcc, make).
 
-使用场景：
-- 执行任何外部命令前先调用一次，避免用错运行时或反复盲试命令。
-- 需要安装依赖、运行脚本、构建项目时，据此选择本机已有的工具链。
-- 无参数；结果只读，不会修改任何文件。`,
+When to use:
+- Once before running external commands, to avoid the wrong runtime or repeated blind attempts.
+- Before installing dependencies, running scripts, or building a project, to choose the available toolchain.
+- Takes no arguments, is read-only, and modifies no files.`,
   parameters: {
     type: 'object',
     properties: {},

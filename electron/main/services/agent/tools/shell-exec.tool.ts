@@ -133,7 +133,7 @@ export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
-  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}），用于python/node/git/pip/npm/外部exe等系统级操作。`,
+  summary: `Run a system shell command (${IS_WINDOWS ? 'PowerShell' : 'bash'}) for interpreters, package managers, git, build tools, and external executables.`,
   description:
     `Run a shell command (${IS_WINDOWS ? 'PowerShell' : 'bash'}). Use it for system operations: interpreters, package managers, git, build tools, external executables.
 

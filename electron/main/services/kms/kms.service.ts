@@ -185,7 +185,7 @@ class KMSService {
    *
    * 分类处理该目录下的文件：
    * - 仍属于至少一个合集的文件：迁移到虚拟手动目录（保留索引与文件记录）
-   * - 不属于任何合集的文件：仅删除 kms_files 记录，不清理 FTS5 / 向量库
+   * - 不属于任何合集的文件：删除 kms_files、kms_search_index、kms_paragraphs 记录，FTS5 / 向量库孤儿留给数据库清理
    *
    * 搜索已 JOIN kms_files，删除文件记录后搜索结果自动排除。
    * 残留的 FTS5 / embedding 孤儿记录可通过「设置 > 数据库清理」回收空间。
@@ -815,7 +815,7 @@ class KMSService {
   }
 
   /**
-   * 按自然语言 query 搜索合集摘要（LIKE 模糊匹配 summary + key_topics_json）
+   * 按自然语言 query 对合集名、描述、摘要与 key_topics 做应用层关键词打分（无向量索引）
    * 用于 kms_search 工具内部附加搜索合集摘要内容，无需向量索引
    * 返回合集元数据 + 摘要 + 主题
    */
@@ -830,7 +830,7 @@ class KMSService {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return []
 
-    // 关键词拆分（与搜索引擎一致：空格 + 中英文边界）
+    // 关键词拆分（仅按空白切分）
     const words = normalized.split(/\s+/).filter(s => s.length > 0)
     if (words.length === 0) return []
 
@@ -981,7 +981,7 @@ class KMSService {
    * - 查询按空白/标点切分后逐词匹配（词间 AND），避免整句 LIKE 漏召回
    * - 单个词在任一分支无命中时降级为 OR 匹配（兼顾宽松搜索意图）
    * - LIKE 通配符按字面转义；支持对 file_path 的整句子串匹配（目录场景）
-   * - 候选集截断 + JS 打分（词命中数 × 匹配率 + 新鲜度平手）后排序
+   * - 候选集截断 + JS 打分（整句命中优先于词命中数，新鲜度仅作平手排序）后排序
    */
   searchFiles(query: string, options?: SearchOptions): SearchResult[] {
     const startTime = Date.now()

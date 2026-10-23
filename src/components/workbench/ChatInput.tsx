@@ -88,7 +88,7 @@ export interface AvailableSkill {
 /** 文件令牌在 HTML 中的标记类名 */
 const FILE_TOKEN_CLASS = 'chat-input-file-token'
 
-/** 从 File 对象生成唯一 id */
+/** 生成文件令牌唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
 /** 生成图片附件项：data URL 先落盘为主进程附件，消息里以 wa-attachment:// 引用流转（避免 base64 进 DB/localStorage）。
@@ -605,10 +605,8 @@ const ChatInput: React.FC<{
     if (content.startsWith('/') && invocableSkills.some(s => content.slice(1).startsWith(s.name))) {
       content = convertSkillCommand(content)
     }
-    // 重要兜底：用户可能只附加了文件令牌没输文字
-    // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
-    // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
-    // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
+    // 仅附加文件令牌、没有文字时，extractContentFromEditor 会把令牌路径写入 content，仍可正常发送；
+    // 若 content 为空且无图片，上面的 hasEditorContent 已提前返回。
     onSend(content, imageUrls, selectedModels, { highPermission: fullAllow })
     // 清空编辑器
     if (editorRef.current) editorRef.current.innerHTML = ''

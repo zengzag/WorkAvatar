@@ -9,10 +9,10 @@ export const listEmployeesTool: ToolDefinition = {
   id: 'list_employees',
   name: 'list_employees',
   title: '列出数字员工',
-  summary: '列出所有可用的数字员工（id、名称）。需要指定执行员工或委派任务时使用。',
-  description: `列出所有可用的数字员工，返回 id、name。
-- 需要指定执行任务的数字员工时，调用此工具获取 employee_id
-- 可委托的员工列表以上下文信息 [DELEGATION] 段为准`,
+  summary: 'List available digital employees (id and name) for assigning or delegating a task.',
+  description: `List all available digital employees with their id and name.
+- Use it when you need the employee id of a task executor.
+- The authoritative list of delegatees is the Delegation section in the system context.`,
   parameters: { type: 'object', properties: {} },
   handler: async () => {
     try {
@@ -48,10 +48,10 @@ export const listProvidersTool: ToolDefinition = {
   id: 'list_providers',
   name: 'list_providers',
   title: '列出模型供应商',
-  summary: '列出所有 LLM 供应商及其可用模型。需要指定执行模型时使用。',
-  description: `列出所有 LLM 供应商及其可用模型，返回 id、name、provider_type、默认 model、models 列表。
-- 需要指定执行任务的供应商/模型时，调用此工具获取 provider_id 和 model_id
-- models 列表中标记 is_default 的为该供应商的默认模型`,
+  summary: 'List LLM providers and their available models for choosing an execution model.',
+  description: `List LLM providers with their id, name, provider_type, default model, and model list.
+- Use it when you need a provider_id and model_id for task execution.
+- A model marked is_default is the provider's default.`,
   parameters: { type: 'object', properties: {} },
   handler: async () => {
     try {

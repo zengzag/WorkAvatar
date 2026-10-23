@@ -36,7 +36,7 @@ import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
 
-/** Agent 缓存上限：每个会话/模型组合一个实例，数量必须收敛，否则长期使用会持续增长 */
+/** Agent 缓存上限：按员工+供应商+模型+思考级别+会话+采样覆盖组合缓存，数量必须收敛，否则长期使用会持续增长 */
 const AGENT_CACHE_MAX = 24
 /** 空闲多久后回收 Agent（释放系统提示词、工具表与 MCP 引用），下次使用再重建 */
 const AGENT_IDLE_TTL_MS = 30 * 60 * 1000
@@ -538,7 +538,7 @@ class EmployeeAgentService {
     for (const t of PluginHostService.getInstance().getAgentTools() as any[]) {
       modeMap.set(t.id, 'off')
     }
-    // KMS / 脚本工具（工厂函数创建，默认按需）
+    // KMS 工具（工厂函数创建，默认按需）；脚本工具由 skills_enable_script_execution 开关单独控制
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
     ]
@@ -633,9 +633,9 @@ class EmployeeAgentService {
       : ''
     const lines: string[] = []
     if (taskWorkspace) {
-      lines.push(`Current task workspace: ${taskWorkspace} (read/write authorized; create and modify files directly. Unless the user requests otherwise, all intermediate scripts, temporary files, work products, and final deliverables must be created, read, written, and modified inside this directory only; never create or change files outside it.)`)
+      lines.push(`Current task workspace: ${taskWorkspace} (read/write authorized). Create and modify all scripts, temporary files, and deliverables inside it unless the user requests otherwise; never write outside it.`)
       if (emp.workspace_path) {
-        lines.push(`Digital employee workspace: ${emp.workspace_path} (read-only by default; modifications require user confirmation; use it only to inspect other tasks.)`)
+        lines.push(`Digital employee workspace: ${emp.workspace_path} (read-only by default; modifications require user confirmation; use it only to inspect other tasks).`)
       }
     } else if (emp.workspace_path) {
       // 旧对话无任务目录：回退到员工工作区为读写授权，保持兼容
@@ -779,7 +779,7 @@ class EmployeeAgentService {
     const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
     if (selected.length > 0) {
       const names = selected.map((c: any) => c.name).join('、')
-      agent.updateKBContextPrompt(`Knowledge collections available in this conversation: ${names} (searches are scoped to these collections by default.)`)
+      agent.updateKBContextPrompt(`Knowledge collections in this conversation: ${names} (kms_search defaults to these collections.)`)
     } else {
       agent.updateKBContextPrompt(undefined)
     }

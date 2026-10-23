@@ -225,7 +225,7 @@ class EmployeeMemoryService {
     }
     if (lines.length === 0) return undefined
 
-    return ['与本轮问题相关的历史记忆（按相关度召回，供参考）：', ...lines].join('\n')
+    return ['Relevant memories for this request (recalled by relevance):', ...lines].join('\n')
   }
 
   /** 按传入 id 顺序返回记忆（用于保持召回排序），已删除的自动跳过 */
@@ -272,7 +272,7 @@ class EmployeeMemoryService {
     )
     this.syncMemoryFTS(id, employeeId, params.key, params.topic, content)
     this.markChanged()
-    // 手动新增立即生成向量，使语义召回即时可用（自动提取路径由定时回填覆盖）
+    // 新增记忆立即生成向量，使语义召回即时可用（自动提取路径由定时回填覆盖）
     EmployeeMemoryEmbeddingService.getInstance().embedMemoryAsync(id)
     return this.getMemory(id)!
   }
@@ -545,14 +545,12 @@ class EmployeeMemoryService {
 
     const contextParts: string[] = []
     if (summary) {
-      contextParts.push(`【历史摘要】（已提取对话的运行式压缩，提供上下文背景，勿从中提取记忆）\n${summary}`)
+      contextParts.push(`[Conversation Summary]\n${summary}`)
     }
-    const dialogLabel = fullExtract
-      ? '【完整对话】（用户手动触发的全量提取，需从中提取记忆）'
-      : '【本轮新对话】（自上次提取以来的新消息，仅含 content，需从中提取记忆）'
+    const dialogLabel = fullExtract ? '[Full Conversation]' : '[New Messages]'
     contextParts.push(`${dialogLabel}\n${conversationText}`)
     if (existingMemoriesText) {
-      contextParts.push(`【现有记忆】（[global] 前缀为全局记忆，其余为当前员工记忆；格式 key|topic|content，用于去重与更新判断）\n${existingMemoriesText}`)
+      contextParts.push(`[Existing Memories]\n${existingMemoriesText}`)
     }
 
     const prompt = buildExtractionPrompt(contextParts)

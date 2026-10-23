@@ -196,7 +196,7 @@ const SegmentListInner: React.FC<{
     return waitSeg(seg)
   }
 
-  // 渲染一段连续的非正文段；并行的 delegation 段横排为一组卡片
+  // 渲染一段连续的非正文段；并行的 delegation 段纵向堆叠为一组卡片
   const renderRun = (run: MessageSegment[], startIdx: number): React.ReactNode[] => {
     const nodes: React.ReactNode[] = []
     let k = 0

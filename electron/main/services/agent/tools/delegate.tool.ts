@@ -22,13 +22,13 @@ const MAX_DELEGATION_DEPTH = 2
  * - 主管 LLM 仅拿到结果摘要 + 文件清单（结构化），子员工完整过程不进主管上下文
  * - 返回 delegationId 可用于 followup_delegation 追问（复用同一子会话多轮协作）
  * - run_in_background=true 时立即返回 runId，完成后经 read_run_notifications 获取结果
- * - 递归防护（深度 ≤3 + 链上去环）与 abort 传播在 runtime 统一管理
+ * - 递归防护（深度上限 2 层 + 链上去环）与 abort 传播在 runtime 统一管理
  */
 export const delegateTool: ToolDefinition = {
   id: 'delegate_to_employee',
   name: 'delegate_to_employee',
   title: '委托给数字员工',
-  summary: '将子任务委托给指定执行者（已有员工/临时角色/模板），同步等待或后台执行',
+  summary: 'Delegate one self-contained sub-task to an executor (existing employee, ephemeral role, or profile); wait synchronously or run in the background.',
   description: `Delegate one self-contained sub-task to an executor and wait for its result. The sub-agent works in an isolated context and returns only a self-contained result, so your context stays clean.
 
 Provide exactly one executor: an existing employee, a one-off ephemeral_role, or a reusable subagent_profile_id (candidates are enumerated in the parameter). The instruction must be self-contained — the sub-agent has never seen this conversation.

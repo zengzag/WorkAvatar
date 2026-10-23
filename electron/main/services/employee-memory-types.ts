@@ -85,7 +85,7 @@ export const MEMORY_CONSOLIDATION_TARGET_COUNT = 30
 export const MEMORY_CONSOLIDATION_TARGET_CHARS = 3000
 export const STALE_MEMORY_DAYS = 90
 export const CONSOLIDATION_COOLDOWN_SECONDS = 3600
-/** 现有记忆减少，提示 LLM 更聚焦精炼而非穷举 */
+/** 限制注入的现有记忆条数，促使 LLM 聚焦精炼而非穷举 */
 export const EXTRACTION_MAX_EXISTING_MEMORIES = 12
 export const CONSOLIDATION_CANDIDATE_MAX = 15
 /** 单次提取连续失败多少次后放弃并推进指针，避免永久重试同一对话 */

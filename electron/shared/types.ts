@@ -109,7 +109,7 @@ export interface EmployeeDelegationConfig {
 /**
  * 解析 delegation_json，容错缺失/非法 JSON，返回默认配置。
  * 缺省即开启委托能力（可派发临时子智能体/子智能体模板）；
- * 委托给「已有数字员工」仍需在 targetIds 中显式选择目标，未选择时运行时拒绝。
+ * targetIds 为空表示不限制可委托员工，非空时仅允许白名单内的员工。
  * 用户显式配置 {"enabled":false} 可整体关闭。
  */
 export function parseEmployeeDelegation(json?: string | null): EmployeeDelegationConfig {

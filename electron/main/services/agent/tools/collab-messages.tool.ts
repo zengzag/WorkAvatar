@@ -5,7 +5,7 @@ import { interactionContext } from '../../unified-interaction.service'
 
 /**
  * 多智能体协作基元工具对：
- * - send_message：主管/兄弟 run 向某个运行中的 run 发送一条消息（写入其运行时邮箱）
+ * - send_message：主管/兄弟 run 向某个运行中或排队中的 run 发送一条消息（写入其运行时邮箱）
  * - read_messages：子会话读取自己收到的消息（读取后视为已读）
  *
  * 轻量版"平级协作"：不做常驻会话间通道，消息经 SubAgentRuntime 邮箱中转，
@@ -15,7 +15,7 @@ export const sendMessageTool: ToolDefinition = {
   id: 'send_message',
   name: 'send_message',
   title: '发送消息给子任务',
-  summary: '向运行中的子任务发送一条消息，对方可用 read_messages 读取',
+  summary: 'Send one message to a running sub-task; the sub-task reads it with read_messages.',
   description: `Send one message to a running sub-task (runId from launch_agents / delegate_to_employee), e.g. to add a requirement or redirect its work. The sub-task reads it with read_messages.
 
 Only running or queued sub-tasks can receive messages; a finished run cannot.`,
@@ -37,7 +37,7 @@ export const readMessagesTool: ToolDefinition = {
   id: 'read_messages',
   name: 'read_messages',
   title: '读取接收到的消息',
-  summary: '读取主管或协作方通过 send_message 发来的消息',
+  summary: 'Read messages sent by the parent or a peer via send_message.',
   description: 'Read the messages this sub-task received. Reading marks them as read, so later calls return only new ones. Check for messages before acting when the task objective may have changed.',
   parameters: {
     type: 'object',

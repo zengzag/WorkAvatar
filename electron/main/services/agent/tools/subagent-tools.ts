@@ -43,8 +43,8 @@ export function resolveDelegationTarget(args: Record<string, any>): {
  *
  * 动机：target_employee_id / subagent_profile_id 原为自由字符串，模型必须先读懂
  * 稳定上下文 [DELEGATION] 段才能猜出可用 id，是「委托几乎不触发」的重要原因之一。
- * 改为可枚举后，模型可直接内省候选（对标 MiMo-Code 将 subagent_type 改为动态枚举
- * 修复「多次运行零派发」的做法）。深度遍历以覆盖 launch_agents 的 tasks[].* 嵌套结构。
+ * 改为可枚举后，模型可直接内省候选，避免因猜不到 id 而漏派发。
+ * 深度遍历以覆盖 launch_agents 的 tasks[].* 嵌套结构。
  *
  * 空候选时原样返回，避免注入空 enum 使参数不可用。
  */
@@ -89,7 +89,8 @@ export function applyDelegationEnums(
  * - task_item_create / task_item_update / task_item_list：任务台账（完成门依据）
  * - submit_structured_result：子会话上报结构化交付物（output_schema 契约）
  *
- * 均为 onDemand，不污染其他员工的常驻工具表；由委托能力开启时随委托类工具一并注册。
+ * 均为 onDemand，不污染其他员工的常驻工具表；默认随委托能力注册。
+ * 子会话中即使未开启委托，也会补注册 task_item_update、task_item_list、submit_structured_result。
  */
 
 /** AgentRunStatus → 中文展示名 */
@@ -108,10 +109,10 @@ export const listSubagentsTool: ToolDefinition = {
   id: 'list_subagents',
   name: 'list_subagents',
   title: '查看子任务列表',
-  summary: '查看本会话发起的子任务运行（活跃与最近完成）及其状态/活性',
-  description: `列出当前会话发起的子任务运行（含活跃与最近完成），返回每个运行的 runId/执行者/状态/活性（progressing=推进中、stalled=停滞、idle=已结束）/结果摘要。
-参数：无（自动限定为当前会话）。
-用途：并行派发前后核对进度；发现 stalled 的子任务可 cancel_subagent 后重新派发。`,
+  summary: 'List the sub-task runs started in this conversation (active and recently completed) with status and liveness.',
+  description: `List sub-task runs started in this conversation (active and recently completed) with each run's runId, executor, status, liveness (progressing / stalled / idle), and result summary.
+Arguments: none (automatically scoped to this conversation).
+Use it to check progress before or after a parallel dispatch; a stalled run can be cancelled with cancel_subagent and re-dispatched.`,
   parameters: NO_PARAMS,
   handler: async () => {
     const store = interactionContext.getStore()
@@ -134,13 +135,13 @@ export const getSubagentStatusTool: ToolDefinition = {
   id: 'get_subagent_status',
   name: 'get_subagent_status',
   title: '查询子任务状态',
-  summary: '按 runId 查询子任务的详细状态（活性/摘要/产物/错误）',
-  description: `按 runId 查询单个子任务运行的详细状态（状态机/活性/结果摘要/产物文件/错误）。
-参数：
-- run_id: 子任务运行 id（delegate/launch 系工具返回）`,
+  summary: 'Get a sub-task\'s detailed status (liveness, summary, deliverables, error) by runId.',
+  description: `Get the detailed status of one sub-task run by runId (state, liveness, result summary, deliverable files, error).
+Parameters:
+- run_id: sub-task run id (returned by the delegate / launch tools).`,
   parameters: {
     type: 'object',
-    properties: { run_id: { type: 'string', description: '子任务运行 id' } },
+    properties: { run_id: { type: 'string', description: 'Sub-task run id' } },
     required: ['run_id'],
   },
   handler: async (args) => {
@@ -168,13 +169,13 @@ export const cancelSubagentTool: ToolDefinition = {
   id: 'cancel_subagent',
   name: 'cancel_subagent',
   title: '取消子任务',
-  summary: '中止一个运行中的子任务（级联取消其子任务）',
-  description: `中止一个运行中/排队中的子任务运行（含其嵌套子任务级联取消）。已结束的运行返回成功但不产生副作用。
-参数：
-- run_id: 子任务运行 id。`,
+  summary: 'Cancel a running sub-task (its nested sub-tasks are cancelled too).',
+  description: `Cancel a running or queued sub-task, including its nested sub-tasks. A finished run returns success with no side effect.
+Parameters:
+- run_id: sub-task run id.`,
   parameters: {
     type: 'object',
-    properties: { run_id: { type: 'string', description: '子任务运行 id' } },
+    properties: { run_id: { type: 'string', description: 'Sub-task run id' } },
     required: ['run_id'],
   },
   handler: async (args) => {
@@ -192,9 +193,9 @@ export const readRunNotificationsTool: ToolDefinition = {
   id: 'read_run_notifications',
   name: 'read_run_notifications',
   title: '读取子任务完成通知',
-  summary: '读取后台子任务（run_in_background）完成后的终态通知（读取即清空）',
-  description: `读取本会话收到的后台子任务终态通知（run_in_background 派发的子任务完成/失败/取消时产生）。读取即清空，重复调用只会返回新通知。
-参数：无。建议：发起后台派发后，在回合收尾前调用一次避免遗漏；无通知时正常继续。`,
+  summary: 'Read completion notices from background sub-tasks (run_in_background); reading clears them.',
+  description: `Read terminal notices for background sub-tasks dispatched with run_in_background (completed / failed / cancelled). Reading clears them, so repeat calls return only new notices.
+Arguments: none. Call it once before finishing a turn that launched background work; if there are no notices, continue normally.`,
   parameters: NO_PARAMS,
   handler: async () => {
     const store = interactionContext.getStore()
@@ -216,9 +217,9 @@ export const listSubagentProfilesTool: ToolDefinition = {
   id: 'list_subagent_profiles',
   name: 'list_subagent_profiles',
   title: '查看子智能体模板',
-  summary: '列出可用子智能体模板（可按模板委托）',
-  description: `列出可复用子智能体模板（subagent_profile_id 委托的候选），返回 id/名称/描述/默认工具与模型。
-参数：无。`,
+  summary: 'List reusable sub-agent profiles that can be used for delegation.',
+  description: `List reusable sub-agent profiles (candidates for subagent_profile_id), with id, name, description, default tools, and model.
+Arguments: none.`,
   parameters: NO_PARAMS,
   handler: async () => {
     const profiles = SubAgentProfileService.getInstance().list()
@@ -237,16 +238,16 @@ export const taskItemCreateTool: ToolDefinition = {
   id: 'task_item_create',
   name: 'task_item_create',
   title: '登记子任务台账项',
-  summary: '为委托子任务登记可跟踪的任务项（完成门依据）',
-  description: `为一个子任务（runId）登记需要其完成的任务项。子任务会被要求逐项收尾（task_item_update），未收尾项会触发收尾纠偏并计入未完成清单。
-参数：
-- run_id: 子任务运行 id（delegate/launch 返回）
-- title: 任务项描述（清单式要点，一次一项）。`,
+  summary: 'Register a trackable task item for a delegated sub-task (the completion gate uses these).',
+  description: `Register an item that a sub-task (runId) must complete. The sub-task is asked to close each item with task_item_update; unclosed items trigger a completion gate and appear in the incomplete list.
+Parameters:
+- run_id: sub-task run id (returned by delegate / launch)
+- title: item description (one checklist item per call).`,
   parameters: {
     type: 'object',
     properties: {
-      run_id: { type: 'string', description: '子任务运行 id' },
-      title: { type: 'string', description: '任务项描述' },
+      run_id: { type: 'string', description: 'Sub-task run id' },
+      title: { type: 'string', description: 'Task item description' },
     },
     required: ['run_id', 'title'],
   },
@@ -263,16 +264,16 @@ export const taskItemUpdateTool: ToolDefinition = {
   id: 'task_item_update',
   name: 'task_item_update',
   title: '更新台账项状态',
-  summary: '本子会话更新自己名下任务项的状态（子会话内使用）',
-  description: `更新本子任务名下的一个台账项状态。结束最终回复前必须把每个任务项更新为 completed 或 blocked。
-参数：
-- task_id: 台账项 id（收到任务后可经 task_item_list 获取）
-- status: completed=已完成 / blocked=受阻（需外部输入）/ in_progress=进行中 / open=恢复待办。`,
+  summary: 'Update a task item\'s status from inside the sub-task session.',
+  description: `Update one task item owned by this sub-task. Before the final reply, every item must be completed or blocked.
+Parameters:
+- task_id: item id (list them with task_item_list after receiving the task)
+- status: completed / blocked (needs external input) / in_progress / open (back to pending).`,
   parameters: {
     type: 'object',
     properties: {
-      task_id: { type: 'string', description: '台账项 id' },
-      status: { type: 'string', enum: ['open', 'in_progress', 'completed', 'blocked'], description: '新状态' },
+      task_id: { type: 'string', description: 'Task item id' },
+      status: { type: 'string', enum: ['open', 'in_progress', 'completed', 'blocked'], description: 'New status' },
     },
     required: ['task_id', 'status'],
   },
@@ -296,8 +297,8 @@ export const taskItemListTool: ToolDefinition = {
   id: 'task_item_list',
   name: 'task_item_list',
   title: '查看台账项',
-  summary: '列出本子会话名下的任务项与状态',
-  description: '列出本子任务名下全部台账项及状态（分发后先查看确认自己要完成什么）。',
+  summary: 'List the task items owned by this sub-task and their status.',
+  description: 'List every task item owned by this sub-task with its status. Call it after receiving the task to confirm what must be delivered.',
   parameters: NO_PARAMS,
   handler: async () => {
     const store = interactionContext.getStore()
@@ -319,14 +320,14 @@ export const submitStructuredResultTool: ToolDefinition = {
   id: 'submit_structured_result',
   name: 'submit_structured_result',
   title: '上报结构化结果',
-  summary: '本子会话按要求上报机器可读的结构化结果（子会话内使用）',
-  description: `当主管在委托指令中给定 JSON Schema 结构化契约时，用本工具上报完整结果对象（必须调用一次；普通文本文档之外的本工具即结构化结果）。result 直接透传 JSON 值。
-参数：
-- result: 符合契约 JSON Schema 的 JSON 对象。`,
+  summary: 'Report the structured result required by the delegation contract (from inside the sub-task session).',
+  description: `When the delegation instruction supplies a JSON Schema contract, report the complete result object with this tool. Call it once; this is the structured result separate from the plain-text report. The result value is passed through as JSON.
+Parameters:
+- result: JSON object that satisfies the contract schema.`,
   parameters: {
     type: 'object',
     properties: {
-      result: { type: 'object', description: '符合契约 JSON Schema 的 JSON 对象' },
+      result: { type: 'object', description: 'JSON object satisfying the contract schema' },
     },
     required: ['result'],
   },

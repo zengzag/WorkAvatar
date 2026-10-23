@@ -335,7 +335,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           if (m.id !== streamState.assistantMessageId) return m
           let segs = [...(m.segments || [])]
 
-          // launch_agents 特殊处理：按 runIds 建立/更新并行组 delegation 段（同组横排渲染）
+          // launch_agents 特殊处理：按 runIds 建立/更新并行组 delegation 段（同组纵向堆叠渲染）
           if (name === 'launch_agents') {
             const runIds: string[] = Array.isArray(rawResult?.runIds) ? rawResult.runIds : []
             // 收尾 launch_agents 自身的工具调用卡（并行派发立即返回，不代表子任务完成；
