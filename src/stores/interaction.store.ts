@@ -33,6 +33,8 @@ export interface InteractionRequest {
   diff?: DiffDisclosure
   /** 强制确认（不可逆/敏感文件）：隐藏"始终允许"类按钮，仅允许一次性确认或拒绝 */
   forced?: boolean
+  /** 模型申请本轮任务完整访问：确认后开启任务级高权限并回传 taskHighPermission */
+  taskFullAccess?: boolean
   /** 发起请求的会话 id：弹窗据此把"本轮任务不再提醒"状态标记到对应会话 */
   conversationId?: string
 }

@@ -52,6 +52,38 @@ const STRINGS = {
   },
   sensitiveFileTitle: { 'zh-CN': '确认操作敏感文件', 'en-US': 'Confirm Sensitive File Operation' },
   irreversibleConfirmTitle: { 'zh-CN': '确认不可逆操作', 'en-US': 'Confirm Irreversible Operation' },
+  sandboxTaskAccessTitle: {
+    'zh-CN': '助手申请本轮任务完整访问权限',
+    'en-US': 'Full Access Requested for This Task',
+  },
+  sandboxTaskAccessMessage: {
+    'zh-CN': `助手申请本轮任务的「完整文件访问」权限：任务无法在工作区内完成，需要读写工作区外的路径。
+
+默认可写范围：{{workspace}} 与私有临时目录
+工作目录：{{cwd}}
+
+命令：
+\`\`\`
+{{command}}
+\`\`\`
+
+批准后：本轮任务后续所有命令不再套文件沙箱，文件工具可直接读写任意路径；
+敏感文件（.git/.ssh/.env/密钥等）与删除操作仍需逐次确认；可随时在输入框的执行模式按钮切回手动审批。
+拒绝：本次命令不会执行。`,
+    'en-US': `The assistant requests full file access for this task: the task cannot be completed inside the workspace and needs to read and write paths outside it.
+
+Default writable scope: {{workspace}} and a private temp directory
+Working directory: {{cwd}}
+
+Command:
+\`\`\`
+{{command}}
+\`\`\`
+
+After approval: later commands in this task run without the file sandbox, and file tools may read and write any path.
+Sensitive files (.git/.ssh/.env/keys …) and deletions still require confirmation; you can switch back to manual approval from the execution mode button below the input box.
+Denied: this command will not run.`,
+  },
 
   ocrInitFailedTitle: { 'zh-CN': 'OCR 初始化失败', 'en-US': 'OCR Initialization Failed' },
   ocrRuntimeErrorTitle: { 'zh-CN': 'OCR 运行异常', 'en-US': 'OCR Runtime Error' },

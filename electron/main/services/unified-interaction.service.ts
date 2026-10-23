@@ -36,6 +36,8 @@ export interface InteractionRequest {
    * 渲染端据此隐藏"始终允许 / 始终允许此文件夹 / 本轮任务不再提醒"，且不消费 allowAlways 缓存。
    */
   forced?: boolean
+  /** 模型主动申请本轮任务完整访问：渲染端确认后同时开启任务级高权限并回传 taskHighPermission */
+  taskFullAccess?: boolean
   /** 发起请求的会话 id：前端据此把"本轮任务不再提醒"的高权限状态标记到对应会话 */
   conversationId?: string
 }

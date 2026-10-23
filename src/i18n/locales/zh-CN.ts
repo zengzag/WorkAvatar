@@ -1341,6 +1341,7 @@ export default {
     danger: '危险',
     securityWarning: '此操作涉及安全风险，请仔细确认',
     forcedHint: '此操作不可逆（或涉及敏感文件），无法使用"始终允许"，请确认后执行',
+    taskAccessHint: '助手申请本轮任务的完整文件访问：批准后后续命令不再受沙箱限制、文件工具可直接读写任意路径（敏感文件与删除仍需逐次确认），请确认是否授予',
     diffLabel: '文件改动预览',
     diffTruncatedHint: '改动内容过长已截断，仅展示部分差异',
     inputPlaceholder: '请输入...',

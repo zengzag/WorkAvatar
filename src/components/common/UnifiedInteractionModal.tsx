@@ -83,6 +83,13 @@ const UnifiedInteractionModal: React.FC = () => {
     if (!currentRequest) return
     switch (currentRequest.type) {
       case 'confirm':
+        // 模型申请的本轮任务完整访问：确认即开启任务级高权限，界面与主进程登记同步
+        if (currentRequest.taskFullAccess) {
+          useTaskPermissionStore.getState().enable(currentRequest.conversationId)
+          respond({ confirmed: true, cancelled: false, taskHighPermission: true })
+          message.warning(t('interaction.taskHighPermissionEnabled'), 5)
+          break
+        }
         respond({ confirmed: true, cancelled: false })
         break
       case 'select':
@@ -93,7 +100,7 @@ const UnifiedInteractionModal: React.FC = () => {
         respond({ inputValue, cancelled: false })
         break
     }
-  }, [currentRequest, selectedValue, inputValue, respond])
+  }, [currentRequest, selectedValue, inputValue, respond, message, t])
 
   const handleAllowAlways = useCallback(() => {
     if (!currentRequest) return
@@ -275,7 +282,11 @@ const UnifiedInteractionModal: React.FC = () => {
         <Alert
           type="warning"
           showIcon
-          title={currentRequest.forced ? t('interaction.forcedHint') : t('interaction.securityWarning')}
+          title={
+            currentRequest.taskFullAccess ? t('interaction.taskAccessHint')
+              : currentRequest.forced ? t('interaction.forcedHint')
+              : t('interaction.securityWarning')
+          }
           style={{ marginBottom: 16 }}
         />
       )}

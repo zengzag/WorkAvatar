@@ -1341,6 +1341,7 @@ export default {
     danger: 'Danger',
     securityWarning: 'This operation involves security risks, please confirm carefully',
     forcedHint: 'This operation is irreversible (or touches sensitive files) and cannot be "always allowed"; please confirm to proceed',
+    taskAccessHint: 'The assistant requests full file access for this task: once approved, later commands run without the sandbox and file tools may read/write any path (sensitive files and deletions still require confirmation)',
     diffLabel: 'Change preview',
     diffTruncatedHint: 'Changes are too long and have been truncated; only part of the diff is shown',
     inputPlaceholder: 'Please enter...',

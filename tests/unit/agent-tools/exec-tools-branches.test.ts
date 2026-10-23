@@ -107,6 +107,7 @@ describe('agent/tools/shell-exec / 参数校验与输出组装', () => {
     expect(shellExecTool.timeoutMs).toBe(310000)
     expect(shellExecTool.parameters.required).toEqual(['command'])
     expect(Object.keys(shellExecTool.parameters.properties)).toContain('full_access')
+    expect(Object.keys(shellExecTool.parameters.properties)).toContain('task_full_access')
   })
 })
 
@@ -217,5 +218,72 @@ describe('agent/tools/shell-exec / full_access 临时提权', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('agent/tools/shell-exec / task_full_access 任务级提权', () => {
+  let dir: string
+
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-tfa-')) })
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
+    UnifiedInteractionService.getInstance().setTaskHighPermission('tfa-1', false)
+    UnifiedInteractionService.getInstance().setTaskHighPermission('tfa-approved', false)
+    UnifiedInteractionService.getInstance().setTaskHighPermission('tfa-denied', false)
+    vi.restoreAllMocks()
+  })
+
+  function spyRequest(response: Record<string, unknown>) {
+    return vi.spyOn(UnifiedInteractionService.getInstance(), 'request').mockResolvedValue(response as never)
+  }
+
+  it('无交互上下文时拒绝执行', async () => {
+    const res = await shell({ command: 'node -e "void 0"', working_dir: dir, task_full_access: true })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('无交互上下文')
+  })
+
+  it('用户批准后登记任务级高权限，并以完整访问执行', async () => {
+    const spy = spyRequest({ id: '', confirmed: true, cancelled: false, taskHighPermission: true })
+    const res = await interactionContext.run(
+      { sessionId: 'tfa-approved', employeeId: 'e1', workspacePath: dir, highPermission: false } as never,
+      () => shell({ command: 'node -e "console.log(\'TASK-FULL\')"', working_dir: dir, task_full_access: true }),
+    )
+    expect(res.success, res.error).toBe(true)
+    expect(String(res.output)).toContain('TASK-FULL')
+    expect(String(res.output)).toContain('sandbox=full-access')
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0]).toMatchObject({
+      source: 'security:task_full_access',
+      forced: true,
+      taskFullAccess: true,
+      type: 'confirm',
+    })
+    expect(UnifiedInteractionService.getInstance().isTaskHighPermission('tfa-approved')).toBe(true)
+  })
+
+  it('用户拒绝时命令不执行，且不登记任务级高权限', async () => {
+    const spy = spyRequest({ id: '', confirmed: false, cancelled: true })
+    const res = await interactionContext.run(
+      { sessionId: 'tfa-denied', employeeId: 'e1', workspacePath: dir, highPermission: false } as never,
+      () => shell({ command: 'node -e "console.log(\'SHOULD-NOT-RUN\')"', working_dir: dir, task_full_access: true }),
+    )
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('未授权')
+    expect(String(res.output || '')).not.toContain('SHOULD-NOT-RUN')
+    expect(UnifiedInteractionService.getInstance().isTaskHighPermission('tfa-denied')).toBe(false)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('已是完全允许模式时直接执行，不再弹窗', async () => {
+    UnifiedInteractionService.getInstance().setTaskHighPermission('tfa-1', true)
+    const spy = spyRequest({ id: '', confirmed: false, cancelled: true })
+    const res = await interactionContext.run(
+      { sessionId: 'tfa-1', employeeId: 'e1', workspacePath: dir, highPermission: false } as never,
+      () => shell({ command: 'node -e "console.log(\'ALREADY-FULL\')"', working_dir: dir, task_full_access: true }),
+    )
+    expect(res.success, res.error).toBe(true)
+    expect(String(res.output)).toContain('ALREADY-FULL')
+    expect(spy).not.toHaveBeenCalled()
   })
 })
