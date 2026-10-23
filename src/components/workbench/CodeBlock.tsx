@@ -12,23 +12,21 @@ interface CodeBlockProps {
 const CodeBlockInner: React.FC<CodeBlockProps> = ({ language, code }) => {
   const { token } = theme.useToken()
   const [copied, setCopied] = useState(false)
-  // 首次先用纯文本渲染，下一帧再切换语法高亮，避免高亮初始化拖慢首屏
-  const [highlightReady, setHighlightReady] = useState(false)
+  // 代码仍在流式增长时不分词：稳定 150ms 后只高亮一次。
+  // 否则一个长代码块在流式期间会被 shiki 反复全量 tokenize（单次数十毫秒，逐增量触发）
+  const [stableCode, setStableCode] = useState('')
   const grammarVersion = useSyncExternalStore(subscribeGrammarLoaded, grammarLoadVersion)
 
   useEffect(() => {
-    setHighlightReady(false)
-    const id = requestAnimationFrame(() => {
-      setHighlightReady(true)
-    })
-    return () => cancelAnimationFrame(id)
-  }, [language])
+    const id = setTimeout(() => setStableCode(code), 150)
+    return () => clearTimeout(id)
+  }, [code, language])
 
   const isDark = isColorDark(token.colorBgContainer)
   const lang = language || 'text'
   const lines = useMemo(
-    () => (highlightReady ? highlightCodeLines(code, lang, isDark) : undefined),
-    [highlightReady, code, lang, isDark, grammarVersion],
+    () => (stableCode === code && code ? highlightCodeLines(code, lang, isDark) : undefined),
+    [stableCode, code, lang, isDark, grammarVersion],
   )
 
   const handleCopy = useCallback(() => {

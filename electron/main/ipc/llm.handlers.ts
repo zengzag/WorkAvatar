@@ -14,7 +14,7 @@ import { createPiProvider } from '../services/agent/llm/pi-provider-factory'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
 import { safeHandle } from './_shared'
-import { registerSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
+import { flushRunStream, registerSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
 import SubAgentRuntime from '../services/agent-runtime/runtime'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 
@@ -125,35 +125,58 @@ export function registerLLMHandlers(
 
     interactionService.registerSession(sessionId, event.sender)
 
-    // chunk 批量合并缓冲：避免 100+ tokens/sec 触发 100+ 次 IPC 往返
-    // 用 setImmediate 在当前事件循环结束后批量发送，渲染端一次性接收多 token
-    const chunkBuffer: string[] = []
-    let flushScheduled = false
+    // 流式增量统一按时间窗口合并推送（≈16fps）。
+    // 逐条 IPC 会让渲染进程每个 token 都完整重渲染一次（markdown 全量解析、代码块重新高亮），
+    // 这是输出期间 CPU 占用的主要来源；setImmediate 只能合并同一事件循环内的增量，实际≈逐条发送。
+    const STREAM_FLUSH_INTERVAL_MS = 60
+
+    // 正文增量
+    let chunkBuffer = ''
+    let chunkTimer: NodeJS.Timeout | null = null
     const flushChunks = () => {
-      flushScheduled = false
-      if (chunkBuffer.length === 0) return
-      if (abortController.signal.aborted) { chunkBuffer.length = 0; return }
-      const chunks = chunkBuffer.splice(0)
+      if (chunkTimer) { clearTimeout(chunkTimer); chunkTimer = null }
+      if (!chunkBuffer) return
+      if (abortController.signal.aborted) { chunkBuffer = ''; return }
+      const chunks = [chunkBuffer]
+      chunkBuffer = ''
       if (!event.sender.isDestroyed()) {
         try {
           event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
         } catch {
-          // 窗口在 setImmediate 延迟回调执行前被销毁，WebFrameMain 已 dispose，忽略该竞态错误
+          // 定时器触发前窗口被销毁，WebFrameMain 已 dispose，忽略该竞态错误
         }
       }
     }
-    const scheduleFlush = () => {
-      if (!flushScheduled) {
-        flushScheduled = true
-        setImmediate(flushChunks)
-      }
+    const scheduleChunkFlush = () => {
+      if (!chunkTimer) chunkTimer = setTimeout(flushChunks, STREAM_FLUSH_INTERVAL_MS)
     }
 
-    // tool_call delta 批量缓冲：LLM 生成工具参数时可能产生大量增量，合并后发送
+    // 思考增量（推理模型输出密度同样很高）
+    let thoughtBuffer = ''
+    let thoughtTimer: NodeJS.Timeout | null = null
+    const flushThoughts = () => {
+      if (thoughtTimer) { clearTimeout(thoughtTimer); thoughtTimer = null }
+      if (!thoughtBuffer) return
+      if (abortController.signal.aborted) { thoughtBuffer = ''; return }
+      const thought = thoughtBuffer
+      thoughtBuffer = ''
+      if (!event.sender.isDestroyed()) {
+        try {
+          event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought })
+        } catch {
+          // 同上：窗口销毁竞态
+        }
+      }
+    }
+    const scheduleThoughtFlush = () => {
+      if (!thoughtTimer) thoughtTimer = setTimeout(flushThoughts, STREAM_FLUSH_INTERVAL_MS)
+    }
+
+    // 工具参数增量：同一 index 在窗口内累积成一份完整片段
     const toolCallDeltaBuffer: Map<number, { index: number; id?: string; name?: string; arguments: string }> = new Map()
-    let toolCallDeltaFlushScheduled = false
+    let toolDeltaTimer: NodeJS.Timeout | null = null
     const flushToolCallDeltas = () => {
-      toolCallDeltaFlushScheduled = false
+      if (toolDeltaTimer) { clearTimeout(toolDeltaTimer); toolDeltaTimer = null }
       if (toolCallDeltaBuffer.size === 0) return
       if (abortController.signal.aborted) { toolCallDeltaBuffer.clear(); return }
       const deltas = Array.from(toolCallDeltaBuffer.values())
@@ -162,15 +185,17 @@ export function registerLLMHandlers(
         try {
           event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, { sessionId, deltas })
         } catch {
-          // 窗口在 setImmediate 延迟回调执行前被销毁，WebFrameMain 已 dispose，忽略该竞态错误
+          // 同上：窗口销毁竞态
         }
       }
     }
     const scheduleToolCallDeltaFlush = () => {
-      if (!toolCallDeltaFlushScheduled) {
-        toolCallDeltaFlushScheduled = true
-        setImmediate(flushToolCallDeltas)
-      }
+      if (!toolDeltaTimer) toolDeltaTimer = setTimeout(flushToolCallDeltas, STREAM_FLUSH_INTERVAL_MS)
+    }
+    const flushAllStreams = () => {
+      flushChunks()
+      flushThoughts()
+      flushToolCallDeltas()
     }
 
     interactionContext.run(
@@ -206,20 +231,32 @@ export function registerLLMHandlers(
             {
               onChunk: (chunk: string) => {
                 if (!abortController.signal.aborted) {
-                  chunkBuffer.push(chunk)
-                  scheduleFlush()
+                  chunkBuffer += chunk
+                  scheduleChunkFlush()
                 }
               },
-              onThought: (thought: string) => { if (!abortController.signal.aborted && !event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
+              onThought: (thought: string) => {
+                if (abortController.signal.aborted) return
+                thoughtBuffer += thought
+                scheduleThoughtFlush()
+              },
               onToolCallDelta: (delta: { index: number; id?: string; name?: string; arguments: string }) => {
-                if (!abortController.signal.aborted) {
-                  toolCallDeltaBuffer.set(delta.index, delta)
-                  scheduleToolCallDeltaFlush()
-                }
+                if (abortController.signal.aborted) return
+                const prev = toolCallDeltaBuffer.get(delta.index)
+                toolCallDeltaBuffer.set(delta.index, {
+                  index: delta.index,
+                  id: delta.id || prev?.id,
+                  name: delta.name || prev?.name,
+                  // 增量片段（agent 路径）直接拼接；整段快照（provider 的 toolcall_end）以新值为准
+                  arguments: prev && !delta.arguments.startsWith(prev.arguments)
+                    ? prev.arguments + delta.arguments
+                    : delta.arguments,
+                })
+                scheduleToolCallDeltaFlush()
               },
               onToolCall: (toolCall: { id: string; name: string; args: any; iteration?: number }) => {
                 if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
-                  flushToolCallDeltas()
+                  flushAllStreams()
                   event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args, iteration: toolCall.iteration })
                 }
               },
@@ -236,8 +273,9 @@ export function registerLLMHandlers(
                 }
               },
               onDone: (metadata?: any) => {
-                flushChunks() // 确保缓冲区中的 token 不丢失
-                flushToolCallDeltas()
+                flushAllStreams() // 确保缓冲区中的增量不丢失
+                // 子任务流式增量先于主管 done 下发，避免收尾后仍有零星 chunk 落到已结束的消息上
+                flushRunStream(sessionId)
                 // abort 时也发送 metadata（含 tokenUsage/contextStats），让前端能显示用量
                 if (!event.sender.isDestroyed()) {
                   // 合并子会话 token 用量到主管会话 metadata（经 run 运行时聚合）
@@ -265,8 +303,7 @@ export function registerLLMHandlers(
                 unregisterSessionWebContents(sessionId)
               },
               onError: (error: string) => {
-                flushChunks()
-                flushToolCallDeltas()
+                flushAllStreams()
                 if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
                   event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
                   sentError = true
@@ -279,8 +316,7 @@ export function registerLLMHandlers(
             abortController.signal
           )
         } catch (error: any) {
-          flushChunks()
-          flushToolCallDeltas()
+          flushAllStreams()
           if (abortController.signal.aborted) {
             if (!event.sender.isDestroyed()) {
               event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })

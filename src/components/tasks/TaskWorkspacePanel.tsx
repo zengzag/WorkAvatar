@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, theme, Tooltip, Typography } from 'antd'
 import type { GlobalToken } from 'antd'
 import {
@@ -496,4 +496,20 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   )
 }
 
-export default TaskWorkspacePanel
+/** 产物列表按内容比较：流式期间父组件每次刷新都会生成新数组，引用比较会失效 */
+const sameArtifacts = (a?: GeneratedFileInfo[], b?: GeneratedFileInfo[]): boolean => {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].path !== b[i].path || a[i].name !== b[i].name) return false
+  }
+  return true
+}
+
+// 流式输出期间聊天区高频更新，面板与文件树/终端无需跟着重渲染
+export default memo(TaskWorkspacePanel, (prev, next) =>
+  prev.rootPath === next.rootPath &&
+  prev.terminalId === next.terminalId &&
+  prev.onClose === next.onClose &&
+  sameArtifacts(prev.artifacts, next.artifacts)
+)
