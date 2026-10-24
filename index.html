@@ -5,9 +5,71 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WorkAvatar 数字员工</title>
+    <style>
+      /* 启动骨架：React 首帧前先渲染，窗口可立即显示，避免首屏空白的长时间等待 */
+      html, body { margin: 0; height: 100%; }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: #f0f0f0;
+        color: rgba(0, 0, 0, 0.65);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        transition: opacity 160ms ease;
+        -webkit-app-region: drag;
+      }
+      #boot-splash.is-hidden { opacity: 0; }
+      .boot-splash__logo {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: #fff;
+        background: linear-gradient(135deg, #4b7bec, #3867d6);
+      }
+      .boot-splash__name { font-size: 14px; letter-spacing: 1px; }
+      .boot-splash__bar {
+        width: 112px;
+        height: 3px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: rgba(0, 0, 0, 0.08);
+      }
+      .boot-splash__bar span {
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: 2px;
+        background: #4b7bec;
+        animation: boot-splash-move 1.1s ease-in-out infinite;
+      }
+      @keyframes boot-splash-move {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(280%); }
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot-splash { background: #0a0a0a; color: rgba(255, 255, 255, 0.65); }
+        .boot-splash__bar { background: rgba(255, 255, 255, 0.12); }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash">
+      <div class="boot-splash__logo">WA</div>
+      <div class="boot-splash__name">WorkAvatar</div>
+      <div class="boot-splash__bar"><span></span></div>
+    </div>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/boot.ts"></script>
   </body>
 </html>

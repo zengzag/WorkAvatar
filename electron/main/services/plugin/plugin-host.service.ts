@@ -5,6 +5,7 @@ import path from 'path'
 import fs from 'fs'
 import Database from 'better-sqlite3'
 import { createLogger } from '../logger'
+import { startupMark } from '../startup-timer'
 import DatabaseService from '../database.service'
 import mainUiI18n from '../ui-i18n.service'
 import { IPC_CHANNELS } from '../../../shared/ipc-channels'
@@ -254,6 +255,7 @@ class PluginHostService {
 
     const disabled = this.readDisabledList()
     this.scanAndActivate(disabled)
+    startupMark(`插件激活完成（共 ${this.records.size} 个，已启用 ${Array.from(this.records.values()).filter(r => r.enabled).length} 个）`)
   }
 
   /** 扫描目录 → 校验 → 激活。init 与 reload 复用（全量重建 records） */
@@ -594,6 +596,7 @@ class PluginHostService {
 
   private activateRecord(record: PluginRecord): void {
     const { manifest, rootDir } = record
+    const startedAt = performance.now()
     try {
       const req = createRequire(__filename)
       const mod = req(path.join(rootDir, manifest.main)) as {
@@ -613,7 +616,7 @@ class PluginHostService {
       this.registerManifestEmployees(record)
       // 插件激活成功后注册其内置 skills（<插件根>/skills/，source='plugin'，异常隔离单技能跳过）
       this.registerPluginSkills(record)
-      logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})`)
+      logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})，耗时 ${(performance.now() - startedAt).toFixed(0)}ms`)
     } catch (err: any) {
       record.status = 'error'
       record.statusMessage = err?.message || String(err)

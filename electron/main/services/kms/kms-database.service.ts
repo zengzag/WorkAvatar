@@ -2,7 +2,6 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
 import { isMainThread } from 'worker_threads'
-import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
 import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
@@ -209,6 +208,7 @@ class KMSDatabaseService {
    * 无法识别 asar 虚拟路径，需要转换为 app.asar.unpacked 的真实文件系统路径。
    */
   private loadSqliteVec(db: Database.Database): void {
+    const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec')
     let extPath = sqliteVec.getLoadablePath()
     if (extPath.includes('app.asar')) {
       extPath = extPath.replace('app.asar', 'app.asar.unpacked')

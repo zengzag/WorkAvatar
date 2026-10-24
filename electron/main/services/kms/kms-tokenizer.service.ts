@@ -1,5 +1,4 @@
-import { Jieba } from '@node-rs/jieba'
-import { dict } from '@node-rs/jieba/dict'
+import type { Jieba } from '@node-rs/jieba'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMSTokenizer')
@@ -32,10 +31,12 @@ class KMSTokenizerService {
   private jieba: Jieba | null = null
 
   /**
-   * 懒加载 Jieba 实例（首次调用时加载字典，约 50ms）
+   * 懒加载 Jieba 实例（首次调用时加载原生模块与字典，约 50ms）
    */
   private getInstance(): Jieba {
     if (this.jieba === null) {
+      const { Jieba } = require('@node-rs/jieba') as typeof import('@node-rs/jieba')
+      const { dict } = require('@node-rs/jieba/dict') as typeof import('@node-rs/jieba/dict')
       this.jieba = Jieba.withDict(dict)
       logger.info('jieba 分词器初始化完成')
     }

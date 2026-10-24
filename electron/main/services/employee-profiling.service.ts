@@ -61,12 +61,11 @@ export interface ContextFile {
 }
 
 class EmployeeProfilingService {
-  private kmsDb: KMSDatabaseService
   private db: DatabaseService
   private static instance: EmployeeProfilingService
 
   private constructor() {
-    this.kmsDb = KMSDatabaseService.getInstance()
+    // KMS 库（1GB+）按需打开：启动时打开会额外耗时数百 ms
     this.db = DatabaseService.getInstance()
   }
 
@@ -205,7 +204,7 @@ Write every field in the language of the user's feedback.`
 
   private loadCollectionContents(collectionIds: string[]): CollectionContent[] {
     const results: CollectionContent[] = []
-    const db = this.kmsDb.getDb()
+    const db = KMSDatabaseService.getInstance().getDb()
 
     for (const collectionId of collectionIds) {
       const collection = db.prepare('SELECT * FROM kms_collections WHERE id = ?').get(collectionId) as any

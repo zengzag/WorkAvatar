@@ -1,4 +1,5 @@
-import { app, BrowserWindow, shell, Tray, Menu, nativeImage, protocol, session, desktopCapturer, dialog } from 'electron'
+import { mainBootElapsedMs, startupMark } from './services/startup-timer'
+import { app, BrowserWindow, shell, Tray, Menu, nativeImage, nativeTheme, protocol, session, desktopCapturer, dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { Readable } from 'stream'
@@ -467,6 +468,7 @@ try {
   logger.info(
     `Application starting (v${buildInfo.version}(${buildInfo.commit}), build=${buildInfo.buildTime}, dev=${isDev}, log=${LoggerBackend.getInstance().getLogFilePath()})`
   )
+  startupMark('主进程模块加载完成', `进程启动至此 ${mainBootElapsedMs.toFixed(0)}ms（含 electron 引导 + 全部 import 求值）`)
 } catch (err: any) {
   // 日志初始化失败不阻断启动
   logger.warn('Logger init failed, falling back to console-only:', err?.message || err)
@@ -511,6 +513,7 @@ function getAppIconPath(): string {
 const MAIN_WINDOW_DEFAULTS = { width: 1160, height: 720, minWidth: 1024, minHeight: 640 }
 
 async function createWindow() {
+  startupMark('开始创建主窗口')
   // 还原上次退出时的窗口尺寸/位置/最大化状态（首次启动或显示器变更时用默认值）
   const windowState = WindowStateService.getInstance().restore(MAIN_WINDOW_DEFAULTS)
 
@@ -537,20 +540,26 @@ async function createWindow() {
     },
     autoHideMenuBar: true,
     frame: false,
+    // 与 index.html 启动骨架同色，避免窗口出现瞬间的白底闪屏
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0a' : '#f0f0f0',
     show: false
   })
 
   WindowStateService.getInstance().track(mainWindow)
+  startupMark('BrowserWindow 构造完成')
 
   mainWindow.on('ready-to-show', () => {
-    // 先最大化再显示，避免窗口以正常尺寸闪现后再跳变
-    if (windowState.maximized) {
-      mainWindow?.maximize()
-    }
-    mainWindow?.show()
+    startupMark('主窗口 ready-to-show（首帧绘制）')
     if (isDev) {
       mainWindow?.webContents.openDevTools()
     }
+  })
+
+  mainWindow.webContents.once('dom-ready', () => {
+    startupMark('主窗口 dom-ready')
+  })
+  mainWindow.webContents.once('did-finish-load', () => {
+    startupMark('主窗口 did-finish-load')
   })
 
   mainWindow.on('close', (event) => {
@@ -577,6 +586,15 @@ async function createWindow() {
   } else {
     mainWindow.loadFile(getDistPath('dist', 'index.html'))
   }
+  startupMark('页面加载请求已发出')
+
+  // 立即显示窗口（backgroundColor 与启动骨架同色），不等首帧：
+  // 先给出可见反馈，index.html 的骨架与应用内容随后绘制，避免长时间"点了没反应"
+  if (windowState.maximized) {
+    mainWindow.maximize()
+  }
+  mainWindow.show()
+  startupMark('主窗口已显示（等待首帧）')
 
   // 页面加载完成后，把启动时暂存的待打开 .md 文件推送给渲染进程
   mainWindow.webContents.once('did-finish-load', () => {
@@ -639,6 +657,7 @@ app.whenReady().then(() => {
     return
   }
   logger.info('App ready, registering IPC handlers and creating window')
+  startupMark('app ready')
 
   // 插件协议：plugin://<id>/<相对路径> → 插件目录内文件（宿主校验启停与路径越权）
   protocol.handle('plugin', (request) => {
@@ -652,13 +671,16 @@ app.whenReady().then(() => {
   } catch (err: any) {
     logger.error('PluginHost init failed:', err?.message || err)
   }
+  startupMark('插件宿主初始化完成（扫描+激活）')
 
   // 注册员工（内置/插件）影子记录落库：保证 conversations 等外键引用有效（幂等，id 跨版本不变）
   EmployeeRegistryService.getInstance().ensureDbRecords()
+  startupMark('员工注册表落库完成')
 
   registerAppFileProtocol()
   registerAttachmentProtocol()
   registerIpcHandlers()
+  startupMark('IPC 注册与内核服务初始化完成')
 
   // 配置 getDisplayMedia 请求处理器，用于系统音频录制（Windows loopback）
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {

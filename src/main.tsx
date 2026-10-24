@@ -17,10 +17,12 @@ import {
 } from './stores/appearance.store'
 import { useNavConfigStore } from './stores/nav.store'
 import { installConsoleForwarder } from './utils/logger'
+import { startupMark } from './utils/startup-timer'
 import { injectHostGlobals, loadPlugins } from './plugins/loader'
 
 // 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
 installConsoleForwarder()
+startupMark('渲染进程入口执行', '含 preload 与入口模块加载执行')
 
 // 共享库单例注入（插件经 __WA_HOST__ 复用宿主 React/antd/i18n，防止双实例）
 injectHostGlobals()
@@ -28,6 +30,14 @@ injectHostGlobals()
 const ANT_LOCALE_MAP: Record<string, any> = {
   'zh-CN': zhCN,
   'en-US': enUS,
+}
+
+/** 淡出启动骨架（index.html 内的静态节点，不属于 React 树） */
+function hideBootSplash(): void {
+  const splash = document.getElementById('boot-splash')
+  if (!splash) return
+  splash.classList.add('is-hidden')
+  setTimeout(() => splash.remove(), 200)
 }
 
 const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -43,6 +53,12 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     const cleanup = listenSystemThemeChange()
     return cleanup
   }, [initialize, initializeNav])
+
+  // React 首次提交后再淡出启动骨架，避免骨架消失时露出一片空白
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => requestAnimationFrame(hideBootSplash))
+    return () => cancelAnimationFrame(raf)
+  }, [])
 
   const effectiveTheme = useMemo(() => getEffectiveTheme(themeMode), [themeMode])
 
@@ -149,10 +165,14 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
 // 启动时序：读取导航配置 → 共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配静态路由（插件路由为占位动态分发）→ 挂载
 async function bootstrap() {
+  startupMark('bootstrap 开始')
   // 必须先读完持久化导航配置再加载插件：插件注入导航项时才能保留用户已保存的排序/显隐
   await useNavConfigStore.getState().initialize()
+  startupMark('导航配置加载完成')
   await loadPlugins()
+  startupMark('插件渲染端加载完成')
   const router = buildRouter()
+  startupMark('路由构建完成')
 
   // 插件集合变更订阅：主进程导入/启停/删除/重新扫描后广播变更，
   // 渲染端重新拉取清单并增量加载/卸载（导航/路由/视图），免整页 reload，不影响进行中的对话。
@@ -168,6 +188,11 @@ async function bootstrap() {
       </AppWithTheme>
     </React.StrictMode>
   )
+  startupMark('React render 调用完成')
+  // 双 rAF ≈ 首次绘制完成（窗口 ready-to-show 以此为前置）
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => startupMark('首帧绘制完成'))
+  })
 }
 
 bootstrap()
