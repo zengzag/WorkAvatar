@@ -939,9 +939,9 @@ const Tasks: React.FC = () => {
         {!panelExpanded && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* 顶部状态栏：侧边栏展开/新建任务 + 任务标题/员工/时间 + 右侧操作区 */}
-          <div style={{
-            flexShrink: 0, height: 40, display: 'flex', alignItems: 'center', gap: 8,
-            padding: '0 12px',
+          <div className="wa-workbench-topbar" style={{
+            flexShrink: 0, height: 46, display: 'flex', alignItems: 'center', gap: 8,
+            padding: '0 14px',
           }}>
             {!showSidePanel && (
               <>
@@ -963,7 +963,7 @@ const Tasks: React.FC = () => {
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
               <span title={statusConv?.title} style={{
-                fontSize: 13, fontWeight: 600, color: token.colorText,
+                fontSize: 13.5, fontWeight: 620, color: token.colorText, letterSpacing: '-0.01em',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
               }}>
                 {statusConv?.title || t('tasks.newTask')}
@@ -1073,13 +1073,14 @@ const Tasks: React.FC = () => {
                 />
               ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
+                  className="wa-message-scroll"
                   style={{
                     flex: 1,
                     overflow: 'auto',
-                    padding: '16px 3%',
+                    padding: '18px 3% 8px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 16,
+                    gap: 20,
                   }}
                 >
                   <MessageList

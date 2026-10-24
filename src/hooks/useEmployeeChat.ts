@@ -937,6 +937,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       if (version !== selectConvVersionRef.current) return
       setMessages(cachedMsgs)
       setLoadingConversationId(null)
+      // 切换任务直接定位到底部，不做平滑滚动
+      forceScrollToBottom('auto')
       return
     }
 
@@ -1031,6 +1033,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
     setMessages(msgs)
     setLoadingConversationId(null)
+    // 切换任务直接定位到底部，不做平滑滚动
+    forceScrollToBottom('auto')
 
     const convData = allConversations.find(c => c.id === convId)
     if (convData) {

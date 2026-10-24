@@ -1433,8 +1433,8 @@ const ChatInput: React.FC<{
 
   return (
     <div style={centerMode
-      ? { padding: '0 16px', flexShrink: 0, maxWidth: 680, width: '100%', margin: '0 auto' }
-      : { padding: '8px 6% 12px 6%', flexShrink: 0 }
+      ? { padding: '0 16px', flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto' }
+      : { padding: '8px 6% 12px 6%', flexShrink: 0, maxWidth: 900, width: '100%', margin: '0 auto' }
     }>
       {showEmployeeSelector && employees && employees.length > 0 && (
         <div ref={railWrapRef} style={{ paddingTop: 6, paddingBottom: 6, width: '100%' }}>
@@ -1651,17 +1651,17 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 12, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
+      <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 14, padding: '8px 8px 8px 14px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorder}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorderSecondary }}>
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorder }}>
         {isDragOver && (
           <div style={{
             position: 'absolute', inset: 0,
-            borderRadius: 9,
+            borderRadius: 13,
             background: token.colorPrimaryBg,
             border: `2px dashed ${token.colorPrimary}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',

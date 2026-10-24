@@ -194,8 +194,15 @@ const Settings: React.FC = () => {
         }
         .settings-tabs .ant-tabs-tab {
           margin: 2px 0 !important;
-          padding: 6px 10px !important;
-          border-radius: 4px;
+          padding: 7px 10px !important;
+          border-radius: 7px;
+          transition: background 0.15s ease;
+        }
+        .settings-tabs .ant-tabs-tab:hover {
+          background: var(--wa-hover);
+        }
+        .settings-tabs .ant-tabs-tab-active {
+          background: var(--wa-panel-3);
         }
         .settings-tabs .ant-tabs-body-holder {
           border-left: 1px solid var(--border-color, #f0f0f0);

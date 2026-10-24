@@ -101,6 +101,9 @@ export default {
     selectedCount: '已选 {{count}} 项',
     batchDelete: '批量删除',
     loadMore: '加载更多',
+    groupToday: '今日',
+    groupWeek: '本周',
+    groupEarlier: '更早',
   },
   digitalEmployees: {
     title: '数字员工',

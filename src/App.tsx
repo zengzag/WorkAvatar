@@ -199,7 +199,7 @@ const App: React.FC = () => {
   }, [t, navigate, handleNavClick, detachedTabs])
 
   // 按统一配置（config 已含插件项）的完整顺序构建菜单（内置 + 插件混合排序）
-  // 折叠图标栏高度有限：插件图标超出可用高度时，多余项收进"更多"弹出子菜单
+  // 内置项始终在插件之前，中间用分隔线隔开；折叠图标栏高度有限，插件超出时收进"更多"
   const allMenuItems = useMemo<NonNullable<MenuProps['items']>>(() => {
     // 过滤已停用插件保留的排序条目（不在 pluginItems 中），避免占用"更多"折叠预算
     const visibleConfig = getVisibleNavItems(navConfig).filter(
@@ -207,23 +207,26 @@ const App: React.FC = () => {
     )
     // settings 固定在底部，不参与"更多"折叠
     const rootConfig = visibleConfig.filter((c) => c.key !== 'settings')
-    const builtinCount = rootConfig.filter((c) => navItemDefs[c.key as NavItemKey]).length
-    const pluginCount = rootConfig.length - builtinCount
-    // 根级图标可容纳数；超出时才为"更多"图标预留 1 个位置
-    const rootBudget = Math.max(builtinCount, Math.floor(mainMenuHeight / MENU_ITEM_HEIGHT))
+    const builtinConfig = rootConfig.filter((c) => navItemDefs[c.key as NavItemKey])
+    const pluginConfig = rootConfig.filter((c) => !navItemDefs[c.key as NavItemKey])
+    const builtinCount = builtinConfig.length
+    const pluginCount = pluginConfig.length
+    // 分隔线占位（约 14px），需要从根级可用高度中扣除
+    const divider = pluginCount > 0 ? 1 : 0
+    const rootBudget = Math.max(builtinCount, Math.floor((mainMenuHeight - divider * 14) / MENU_ITEM_HEIGHT))
     const pluginInlineCap = pluginCount > rootBudget - builtinCount
       ? Math.max(0, rootBudget - builtinCount - 1)
       : rootBudget - builtinCount
 
     const items: NonNullable<MenuProps['items']> = []
+    for (const item of builtinConfig) {
+      items.push({ key: item.key, ...navItemDefs[item.key as NavItemKey] })
+    }
+
     const moreChildren: NonNullable<MenuProps['items']> = []
     let placedPlugins = 0
-    for (const item of rootConfig) {
-      const def = navItemDefs[item.key as NavItemKey]
-      if (def) {
-        items.push({ key: item.key, ...def })
-        continue
-      }
+    if (pluginCount > 0) items.push({ type: 'divider' })
+    for (const item of pluginConfig) {
       const plugin = pluginNavItems.find((p) => p.key === item.key)
       if (!plugin) continue
       const NavIconComp = getPluginNavIcon(plugin.key)
@@ -306,9 +309,14 @@ const App: React.FC = () => {
   const navContextItems = useMemo<MenuProps['items']>(() => {
     if (!navContextMenu) return []
     const key = navContextMenu.key
-    const idx = sortedVisibleKeys.indexOf(key as NavItemKey)
-    const isFirst = idx <= 0
-    const isLast = idx < 0 || idx >= sortedVisibleKeys.length - 1
+    const idx = sortedVisibleKeys.indexOf(key)
+    const isPluginKey = pluginNavItems.some((p) => p.key === key)
+    const sameGroup = (k?: string) =>
+      !!k && pluginNavItems.some((p) => p.key === k) === isPluginKey
+    // 内置项与插件项之间不允许交叉排序；settings 锁定不可移动
+    const isLocked = key === 'settings'
+    const isFirst = idx <= 0 || !sameGroup(sortedVisibleKeys[idx - 1])
+    const isLast = idx < 0 || idx >= sortedVisibleKeys.length - 1 || !sameGroup(sortedVisibleKeys[idx + 1])
     const isDetached = detachedTabs.includes(key)
     // settings 不可分离（无独立窗口）
     const canDetach = key !== 'settings' && !isDetached
@@ -333,20 +341,18 @@ const App: React.FC = () => {
       key: 'moveUp',
       icon: <ArrowUpOutlined />,
       label: t('tabWindow.moveUp'),
-      disabled: isFirst,
+      disabled: isLocked || isFirst,
       onClick: () => { moveUp(key as NavItemKey); setNavContextMenu(null) },
     })
     items.push({
       key: 'moveDown',
       icon: <ArrowDownOutlined />,
       label: t('tabWindow.moveDown'),
-      disabled: isLast,
+      disabled: isLocked || isLast,
       onClick: () => { moveDown(key as NavItemKey); setNavContextMenu(null) },
     })
     return items
-  }, [navContextMenu, sortedVisibleKeys, detachedTabs, t, moveUp, moveDown])
-
-  const siderBg = effectiveTheme === 'dark' ? '#1a1a1a' : '#ffffff'
+  }, [navContextMenu, sortedVisibleKeys, detachedTabs, pluginNavItems, t, moveUp, moveDown])
 
   return (
     <Layout style={{ height: '100vh', flexDirection: 'column' }}>
@@ -364,7 +370,7 @@ const App: React.FC = () => {
           className="app-sider"
           style={{
             borderRight: `1px solid ${token.colorBorderSecondary}`,
-            background: siderBg,
+            background: 'transparent',
           }}
         >
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

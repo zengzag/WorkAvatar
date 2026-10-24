@@ -75,9 +75,9 @@ const TitleBar: React.FC = () => {
   }
 
   const btnStyle: React.CSSProperties = {
-    width: 28,
-    height: 28,
-    minWidth: 28,
+    width: 34,
+    height: 34,
+    minWidth: 34,
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -87,11 +87,10 @@ const TitleBar: React.FC = () => {
   }
 
   const dragStyle: React.CSSProperties = {
-    height: 32,
+    height: 34,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    background: token.colorBgContainer,
     borderBottom: `1px solid ${token.colorBorderSecondary}`,
     flexShrink: 0,
     userSelect: 'none',
@@ -100,22 +99,21 @@ const TitleBar: React.FC = () => {
 
   return (
     <div
+      className="wa-titlebar"
       style={dragStyle}
       onDoubleClick={handleToggleMaximize}
     >
-      {/* 左侧：应用名称 */}
+      {/* 左侧：品牌标识 */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
           paddingLeft: 12,
-          fontSize: 12,
-          color: token.colorTextSecondary,
-          fontWeight: 500,
         }}
       >
-        <span>WorkAvatar</span>
+        <span className="wa-brand-mark">W</span>
+        <span className="wa-brand-name">WorkAvatar</span>
       </div>
 
       {/* 右侧：分离当前 tab + 主题切换 + 窗口控制（no-drag 区域）*/}

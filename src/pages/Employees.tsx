@@ -392,8 +392,9 @@ const Employees: React.FC = () => {
                 onClick={() => handleCardClick(emp)}
                 style={{
                   border: `1px solid ${token.colorBorderSecondary}`,
-                  borderRadius: 8,
+                  borderRadius: 10,
                   background: token.colorBgContainer,
+                  boxShadow: 'var(--wa-glass-sheen)',
                   padding: 16,
                   display: 'flex',
                   flexDirection: 'column',
@@ -578,11 +579,12 @@ const Employees: React.FC = () => {
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* 工具栏 */}
-      <div style={{
+      <div className="wa-workbench-topbar" style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '10px 16px',
+        padding: '0 16px',
+        height: 46,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         flexShrink: 0,
         gap: 12,

@@ -9,19 +9,19 @@
   --font-size-sm: 12px;
   --font-size-lg: 15px;
   --font-size-xl: 18px;
-  --bg-primary: #f7f7f8;
+  --bg-primary: #f7f8fa;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #fafafa;
-  --border-color: #ececec;
-  --text-primary: rgba(0, 0, 0, 0.88);
-  --text-secondary: rgba(0, 0, 0, 0.65);
-  --text-tertiary: rgba(0, 0, 0, 0.45);
-  --shadow-color: rgba(0, 0, 0, 0.04);
+  --bg-tertiary: #f6f7f9;
+  --border-color: #e4e7ec;
+  --text-primary: #16181d;
+  --text-secondary: #565d68;
+  --text-tertiary: #6b7280;
+  --shadow-color: rgba(16, 24, 40, 0.04);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
   --xy-controls-button-background-color-default: #ffffff;
-  --xy-controls-button-background-color-hover-default: #f5f5f5;
-  --xy-controls-button-border-color-default: #e8e8e8;
+  --xy-controls-button-background-color-hover-default: #f6f7f9;
+  --xy-controls-button-border-color-default: #e4e7ec;
   --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
   --xy-minimap-background-color-default: #ffffff;
   --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
@@ -30,13 +30,13 @@
 }
 
 html.dark {
-  --bg-primary: #141414;
-  --bg-secondary: #1a1a1a;
-  --bg-tertiary: #1f1f1f;
-  --border-color: #2a2a2a;
-  --text-primary: rgba(255, 255, 255, 0.88);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-tertiary: rgba(255, 255, 255, 0.45);
+  --bg-primary: #0a0b0d;
+  --bg-secondary: #0e0f12;
+  --bg-tertiary: #121418;
+  --border-color: #23262d;
+  --text-primary: #e8eaed;
+  --text-secondary: #a2a8b3;
+  --text-tertiary: #8a919c;
   --shadow-color: rgba(0, 0, 0, 0.3);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
@@ -51,7 +51,7 @@ html.dark {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: var(--font-size-base);

@@ -22,6 +22,22 @@ import type { Conversation, Employee } from '../../types'
 const { Text } = Typography
 
 const SIDEBAR_WIDTH_KEY = 'tasks:sidebarWidth'
+
+type TaskGroupKey = 'today' | 'week' | 'earlier'
+
+/** 任务按最后活跃时间分组：今日 / 本周（周一起算）/ 更早 */
+function getTaskTimeGroup(ts: string | number | null | undefined): TaskGroupKey {
+  if (!ts) return 'earlier'
+  // 时间戳统一按秒存储，转换为毫秒后再交给 dayjs
+  const d = typeof ts === 'number' ? dayjs(ts < 1e12 ? ts * 1000 : ts) : dayjs(ts)
+  if (!d.isValid()) return 'earlier'
+  const now = dayjs()
+  if (!d.isBefore(now.startOf('day'))) return 'today'
+  const weekday = (now.day() + 6) % 7
+  const weekStart = now.startOf('day').subtract(weekday, 'day')
+  return d.isBefore(weekStart) ? 'earlier' : 'week'
+}
+
 const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 560
 const SIDEBAR_DEFAULT_WIDTH = 260
@@ -300,13 +316,14 @@ const TaskItem = memo(({
         onMouseLeave={() => { setHovered(false); setDeleteConfirm(false) }}
         onDoubleClick={(e) => { if (!selectionMode) startEdit(e) }}
         style={{
-          padding: '5px 10px',
-          borderRadius: 6,
+          padding: '6px 9px',
+          borderRadius: 7,
           cursor: isEditing ? 'text' : 'pointer',
           background: selectionMode
-            ? (selected ? token.colorPrimaryBg : (hovered ? token.colorBgTextHover : 'transparent'))
-            : (active ? token.colorPrimaryBg : (hovered ? token.colorBgTextHover : 'transparent')),
-          border: active && !selectionMode ? `1px solid ${token.colorPrimaryBorder}` : (selected ? `1px solid ${token.colorPrimaryBorder}` : '1px solid transparent'),
+            ? (selected ? 'var(--wa-accent-soft)' : (hovered ? 'var(--wa-hover)' : 'transparent'))
+            : (active ? 'var(--wa-panel-3)' : (hovered ? 'var(--wa-hover)' : 'transparent')),
+          border: active && !selectionMode ? '1px solid var(--wa-line)' : (selected ? '1px solid var(--wa-accent-line)' : '1px solid transparent'),
+          boxShadow: active && !selectionMode ? 'var(--wa-glass-sheen)' : 'none',
           transition: 'all 0.15s',
           display: 'flex',
           alignItems: 'center',
@@ -324,7 +341,7 @@ const TaskItem = memo(({
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 22 }}>
             {streaming && (
               <span style={{
                 width: 6, height: 6, borderRadius: '50%',
@@ -345,91 +362,85 @@ const TaskItem = memo(({
                 style={{ flex: 1, minWidth: 0, fontSize: 14, padding: '0 8px', height: 24 }}
               />
             ) : (
-              <>
-                <Text
-                  strong={active}
-                  ellipsis
-                  style={{ fontSize: 14, flex: 1, minWidth: 0 }}
-                >
-                  {task.title || t('workbench.untitledConv')}
-                </Text>
-                {/* 固定宽度时间槽：悬停时时间淡出、操作按钮原位淡入，标题不位移 */}
-                <span style={{ position: 'relative', width: 56, height: '100%', flexShrink: 0 }}>
-                  <span style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    fontSize: 12,
-                    color: token.colorTextTertiary,
-                    whiteSpace: 'nowrap',
-                    opacity: hovered && !isEditing && !selectionMode ? 0 : 1,
-                    transition: 'opacity 0.15s',
-                  }}>
-                    {formatTaskTime(task.last_message_at ?? task.created_at, t)}
-                  </span>
-                </span>
-              </>
+              <Text
+                strong={active}
+                ellipsis
+                style={{ fontSize: 13, flex: 1, minWidth: 0 }}
+              >
+                {task.title || t('workbench.untitledConv')}
+              </Text>
             )}
           </div>
-        </div>
-        <div
-          style={{
-            position: 'absolute',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            right: 10,
-            opacity: hovered && !isEditing && !selectionMode ? 1 : 0,
-            pointerEvents: hovered && !isEditing && !selectionMode ? 'auto' : 'none',
-            transition: 'opacity 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 2,
-          }}
-        >
-          {!deleteConfirm && (
-            <Button
-              type="text"
-              size="small"
-              icon={<EditOutlined style={{ fontSize: 12 }} />}
-              onClick={(e) => startEdit(e)}
-              title={t('common.rename')}
-              style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
-            />
+          {!isEditing && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              marginTop: 1,
+              fontSize: 11,
+              color: token.colorTextTertiary,
+              minWidth: 0,
+            }}>
+              {task.employee_name && (
+                <>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                    {task.employee_name}
+                  </span>
+                  <span style={{ flexShrink: 0 }}>·</span>
+                </>
+              )}
+              <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                {formatTaskTime(task.last_message_at ?? task.created_at, t)}
+              </span>
+            </div>
           )}
-          {deleteConfirm ? (
-            <>
+        </div>
+        {hovered && !isEditing && !selectionMode && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+            {!deleteConfirm && (
               <Button
                 type="text"
                 size="small"
-                onClick={(e) => confirmDelete(e)}
-                title={t('common.confirm')}
-                danger
-                style={{ padding: '0 4px', width: 'auto', height: 20, minWidth: 20, fontSize: 12 }}
-              >
-                {t('common.confirm')}
-              </Button>
-              <Button
-                type="text"
-                size="small"
-                onClick={() => cancelDeleteConfirm()}
-                title={t('common.cancel')}
+                icon={<EditOutlined style={{ fontSize: 12 }} />}
+                onClick={(e) => startEdit(e)}
+                title={t('common.rename')}
                 style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
-              >
-                <CloseOutlined style={{ fontSize: 12 }} />
-              </Button>
-            </>
-          ) : (
-            <Button
-              type="text"
-              size="small"
-              icon={<DeleteOutlined style={{ fontSize: 12 }} />}
-              onClick={(e) => handleDeleteClick(e)}
-              title={t('common.delete')}
-              style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
-            />
-          )}
-        </div>
+              />
+            )}
+            {deleteConfirm ? (
+              <>
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={(e) => confirmDelete(e)}
+                  title={t('common.confirm')}
+                  danger
+                  style={{ padding: '0 4px', width: 'auto', height: 20, minWidth: 20, fontSize: 12 }}
+                >
+                  {t('common.confirm')}
+                </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  onClick={() => cancelDeleteConfirm()}
+                  title={t('common.cancel')}
+                  style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
+                >
+                  <CloseOutlined style={{ fontSize: 12 }} />
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="text"
+                size="small"
+                icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                onClick={(e) => handleDeleteClick(e)}
+                title={t('common.delete')}
+                style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
+              />
+            )}
+          </div>
+        )}
       </div>
     </Dropdown>
   )
@@ -564,14 +575,27 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
     return () => el.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
+  // 按时间分组展示：今日 / 本周 / 更早（保持 tasks 原有顺序）
+  const groupedTasks = useMemo(() => {
+    const buckets: Record<TaskGroupKey, TaskWithEmployee[]> = { today: [], week: [], earlier: [] }
+    for (const task of tasks) {
+      buckets[getTaskTimeGroup(task.last_message_at ?? task.created_at)].push(task)
+    }
+    return ([
+      { key: 'today' as const, label: t('tasks.groupToday') },
+      { key: 'week' as const, label: t('tasks.groupWeek') },
+      { key: 'earlier' as const, label: t('tasks.groupEarlier') },
+    ]).filter((g) => buckets[g.key].length > 0).map((g) => ({ ...g, tasks: buckets[g.key] }))
+  }, [tasks, t])
+
   return (
-    <div ref={sidebarRef} style={{
+    <div ref={sidebarRef} className="wa-task-sidebar" style={{
       width,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',
       borderRight: `1px solid ${token.colorBorderSecondary}`,
-      background: token.colorBgContainer,
+      background: 'transparent',
       height: '100%',
       position: 'relative',
       userSelect: resizing ? 'none' : undefined,
@@ -639,11 +663,11 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
             </div>
             {/* 搜索框 */}
             <div style={{
-              height: 28,
+              height: 30,
               display: selectionMode ? 'none' : 'flex',
-              borderRadius: 6,
-              border: `1px solid ${token.colorBorderSecondary}`,
-              background: token.colorBgElevated,
+              borderRadius: 7,
+              border: '1px solid var(--wa-line)',
+              background: 'var(--wa-panel-2)',
               alignItems: 'center',
               padding: '0 4px 0 8px',
               transition: 'border-color 0.15s',
@@ -849,24 +873,38 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           </div>
         ) : (
           <>
-            {tasks.map(task => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                active={task.id === activeTaskId}
-                streaming={isTaskStreaming?.(task.id) ?? false}
-                selectionMode={selectionMode}
-                selected={selectedIds.has(task.id)}
-                onToggleSelect={toggleSelect}
-                onSelect={onSelect}
-                onDelete={onDelete}
-                onExport={onExport}
-                onGenerateTitle={onGenerateTitle}
-                onRename={onRename}
-                onExtractMemory={onExtractMemory}
-                t={t}
-                token={token}
-              />
+            {groupedTasks.map((group, groupIdx) => (
+              <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <div style={{
+                  padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: '0.05em',
+                  color: token.colorTextTertiary,
+                  userSelect: 'none',
+                }}>
+                  {group.label}
+                </div>
+                {group.tasks.map(task => (
+                  <TaskItem
+                    key={task.id}
+                    task={task}
+                    active={task.id === activeTaskId}
+                    streaming={isTaskStreaming?.(task.id) ?? false}
+                    selectionMode={selectionMode}
+                    selected={selectedIds.has(task.id)}
+                    onToggleSelect={toggleSelect}
+                    onSelect={onSelect}
+                    onDelete={onDelete}
+                    onExport={onExport}
+                    onGenerateTitle={onGenerateTitle}
+                    onRename={onRename}
+                    onExtractMemory={onExtractMemory}
+                    t={t}
+                    token={token}
+                  />
+                ))}
+              </div>
             ))}
             {/* 加载更多区域 */}
             {(hasMore || loadingMore) && (

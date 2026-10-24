@@ -454,14 +454,14 @@ const MessageBubble: React.FC<{
         <div style={{
           width: 30,
           height: 30,
-          borderRadius: 6,
+          borderRadius: 8,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
           background: msg.role === 'assistant'
             ? (assistantEmployee ? 'transparent' : token.colorPrimaryBg)
-            : token.colorInfoBg,
+            : 'var(--wa-panel-3)',
         }}>
           {msg.role === 'assistant' ? (
             assistantEmployee ? (
@@ -516,13 +516,13 @@ const MessageBubble: React.FC<{
               </div>
             ) : (
               <div style={{
-                padding: '8px 12px',
-                borderRadius: 8,
-                background: token.colorInfoBg,
+                padding: '9px 13px',
+                borderRadius: 12,
+                background: 'var(--wa-user-bubble)',
                 color: token.colorText,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
-                lineHeight: 1.6,
+                lineHeight: 1.72,
               }}>
                 {userContentParts.map((part, index) => (
                   part.type === 'text'
@@ -580,12 +580,12 @@ const MessageBubble: React.FC<{
               (displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0)) ||
               (displayContent && !displayIsStreaming)) && (
               <div style={{
-                background: token.colorBgContainer,
+                background: 'transparent',
                 borderRadius: 8,
-                padding: '8px 12px',
+                padding: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 6,
+                gap: 10,
               }}>
                 {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
                   <Text style={{ color: token.colorTextQuaternary, fontSize: 15, lineHeight: 1.6 }}>{t('workbench.thinking')}</Text>
@@ -603,7 +603,7 @@ const MessageBubble: React.FC<{
                 )}
 
                 {(!displayMsg.segments || displayMsg.segments.length === 0) && displayContent && !displayIsStreaming && (
-                  <div className="markdown-content" style={{ fontSize: 15, color: displayIsError ? token.colorError : token.colorText, lineHeight: 1.6, wordBreak: 'break-word' }}>
+                  <div className="markdown-content" style={{ fontSize: 15, color: displayIsError ? token.colorError : token.colorText, lineHeight: 1.78, wordBreak: 'break-word' }}>
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
                       rehypePlugins={[rehypeKatex]}

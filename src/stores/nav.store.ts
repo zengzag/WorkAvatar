@@ -66,14 +66,19 @@ function persist(config: NavItemConfig[]): void {
   } catch { /* ignore */ }
 }
 
+/** 内置项分组权重：内置在前、插件居中、锁定项（设置）固定最后 */
+function groupRank(key: string): number {
+  if (LOCKED_KEYS.includes(key as NavItemKey)) return 2
+  return DEFAULT_NAV_CONFIG.some((d) => d.key === key) ? 0 : 1
+}
+
 function reindex(config: NavItemConfig[]): NavItemConfig[] {
-  // 锁定项（settings）始终排在最后，忽略持久化中的历史排序
+  // 分组优先于 order：内置项不能被排到插件后面，settings 始终最后
   return config
     .slice()
     .sort((a, b) => {
-      const aLocked = LOCKED_KEYS.includes(a.key as NavItemKey) ? 1 : 0
-      const bLocked = LOCKED_KEYS.includes(b.key as NavItemKey) ? 1 : 0
-      if (aLocked !== bLocked) return aLocked - bLocked
+      const diff = groupRank(a.key) - groupRank(b.key)
+      if (diff !== 0) return diff
       return a.order - b.order
     })
     .map((item, idx) => ({ ...item, order: idx }))
@@ -143,10 +148,11 @@ export const useNavConfigStore = create<NavConfigState>()(
         const sorted = state.config.slice().sort((a, b) => a.order - b.order)
         const idx = sorted.findIndex((c) => c.key === key)
         if (idx <= 0) return
+        // 内置项与插件项之间不允许交叉换位（分组由 reindex 固化）
+        if (groupRank(sorted[idx - 1].key) !== groupRank(key)) return
         const tmp = sorted[idx].order
         sorted[idx].order = sorted[idx - 1].order
         sorted[idx - 1].order = tmp
-        // reindex：锁定项始终排最后（与锁定项换位时归一化，避免设置项跑到上方）
         state.config = reindex(sorted)
       })
       persist(get().config)
@@ -158,6 +164,7 @@ export const useNavConfigStore = create<NavConfigState>()(
         const sorted = state.config.slice().sort((a, b) => a.order - b.order)
         const idx = sorted.findIndex((c) => c.key === key)
         if (idx < 0 || idx >= sorted.length - 1) return
+        if (groupRank(sorted[idx + 1].key) !== groupRank(key)) return
         const tmp = sorted[idx].order
         sorted[idx].order = sorted[idx + 1].order
         sorted[idx + 1].order = tmp

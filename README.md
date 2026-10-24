@@ -135,6 +135,16 @@ Already cloned? Fetch the plugin sources with `git submodule update --init --rec
 
 ---
 
+## Interface design
+
+The 2026 visual direction is "precision grayscale with a light liquid-glass touch": density first, with glass reserved for the shell — title bar, navigation rail, task list, composer and workspace panel — while content surfaces stay solid for long-form reading and tables.
+
+- Semantic tokens live in `src/styles/theme.css` (`--wa-*`) with matching light and dark sets; antd theme tokens are injected in `src/main.tsx`
+- Light / dark / follow-system, four font-size levels, zh/en locales and `prefers-reduced-motion` are preserved
+- New pages should reuse semantic variables or antd tokens instead of hard-coded colors
+
+---
+
 ## Plugin development
 
 A plugin is a folder with a `manifest.json`, a CommonJS main entry, an optional ESM renderer entry and locale files. Capabilities must be declared; the host checks them on each call, and services you did not declare are not available.

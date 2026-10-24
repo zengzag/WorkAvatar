@@ -101,6 +101,9 @@ export default {
     selectedCount: '{{count}} selected',
     batchDelete: 'Batch Delete',
     loadMore: 'Load more',
+    groupToday: 'Today',
+    groupWeek: 'This week',
+    groupEarlier: 'Earlier',
   },
   digitalEmployees: {
     title: 'Digital Employees',

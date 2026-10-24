@@ -1,0 +1,381 @@
+/**
+ * 2026 设计令牌层：精密灰阶 + 轻微液态玻璃
+ * 所有语义变量以 --wa- 前缀导出，明暗两套一一对应。
+ * 玻璃只用于壳层与浮层（标题栏/侧栏/输入区/弹出层），内容区保持实色以保证可读性。
+ */
+
+:root {
+  --wa-bg: #f7f8fa;
+  --wa-panel: #ffffff;
+  --wa-panel-2: #f6f7f9;
+  --wa-panel-3: #eef0f4;
+  --wa-line: #e4e7ec;
+  --wa-line-2: #eceef2;
+
+  --wa-ink: #16181d;
+  --wa-ink-2: #565d68;
+  --wa-ink-3: #6b7280;
+  --wa-ink-4: #9aa1ac;
+
+  --wa-accent: #1677ff;
+  --wa-accent-hover: #4096ff;
+  --wa-accent-soft: rgba(22, 119, 255, 0.1);
+  --wa-accent-line: rgba(22, 119, 255, 0.34);
+
+  --wa-glass: rgba(255, 255, 255, 0.8);
+  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --wa-shadow: 0 18px 44px -34px rgba(23, 29, 48, 0.3);
+  --wa-ambient-a: rgba(22, 119, 255, 0.05);
+  --wa-ambient-b: rgba(14, 165, 233, 0.035);
+
+  --wa-user-bubble: #eef0f5;
+  --wa-hover: rgba(16, 24, 40, 0.045);
+
+  --wa-ease: cubic-bezier(0.22, 0.8, 0.24, 1);
+  --wa-radius-sm: 5px;
+  --wa-radius: 7px;
+
+  --xy-node-background-color-default: transparent;
+  --xy-node-border-default: none;
+  --xy-controls-button-background-color-default: #ffffff;
+  --xy-controls-button-background-color-hover-default: #f6f7f9;
+  --xy-controls-button-border-color-default: #e4e7ec;
+  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
+  --xy-minimap-background-color-default: #ffffff;
+  --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
+  --xy-minimap-mask-stroke-color-default: #d9d9d9;
+  --xy-background-pattern-dot-color-default: #d9d9d9;
+}
+
+html.dark {
+  --wa-bg: #0a0b0d;
+  --wa-panel: #0e0f12;
+  --wa-panel-2: #121418;
+  --wa-panel-3: #171a1f;
+  --wa-line: #23262d;
+  --wa-line-2: #1e2128;
+
+  --wa-ink: #e8eaed;
+  --wa-ink-2: #a2a8b3;
+  --wa-ink-3: #8a919c;
+  --wa-ink-4: #646b76;
+
+  --wa-accent: #4096ff;
+  --wa-accent-hover: #69b1ff;
+  --wa-accent-soft: rgba(64, 150, 255, 0.14);
+  --wa-accent-line: rgba(64, 150, 255, 0.4);
+
+  --wa-glass: rgba(15, 17, 21, 0.76);
+  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  --wa-shadow: 0 20px 48px -34px rgba(0, 0, 0, 0.95);
+  --wa-ambient-a: rgba(64, 150, 255, 0.065);
+  --wa-ambient-b: rgba(56, 189, 248, 0.04);
+
+  --wa-user-bubble: #1a1d23;
+  --wa-hover: rgba(255, 255, 255, 0.045);
+
+  --xy-controls-button-background-color-default: #171a1f;
+  --xy-controls-button-background-color-hover-default: #1f232b;
+  --xy-controls-button-border-color-default: #2f343d;
+  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.3);
+  --xy-minimap-background-color-default: #0e0f12;
+  --xy-minimap-mask-background-color-default: rgba(255, 255, 255, 0.08);
+  --xy-minimap-mask-stroke-color-default: #555;
+  --xy-background-pattern-dot-color-default: #3a3a3a;
+}
+
+/* ---------- 基础壳层 ---------- */
+
+#root {
+  position: relative;
+  isolation: isolate;
+  background: var(--wa-bg);
+}
+
+/* 环境光：极低饱和的双色径向渐变，用于让玻璃层有可感知的深度 */
+#root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(720px 420px at 10% -10%, var(--wa-ambient-a), transparent 62%),
+    radial-gradient(560px 340px at 96% -4%, var(--wa-ambient-b), transparent 64%),
+    radial-gradient(900px 520px at 50% 112%, var(--wa-ambient-a), transparent 70%);
+}
+
+.ant-layout {
+  background: transparent !important;
+}
+
+/* 环境光层在根节点，业务内容需显式抬升一层参与层叠 */
+#root > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- 侧边导航 ---------- */
+
+.app-sider {
+  backdrop-filter: blur(16px) saturate(1.12);
+  -webkit-backdrop-filter: blur(16px) saturate(1.12);
+  background: color-mix(in srgb, var(--wa-bg) 46%, transparent) !important;
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.app-sider .ant-menu {
+  background: transparent !important;
+  border-inline-end: none !important;
+}
+
+.app-sider .ant-menu-item {
+  height: 38px !important;
+  line-height: 38px !important;
+  margin: 2px 8px !important;
+  width: 36px !important;
+  border-radius: var(--wa-radius) !important;
+  color: var(--wa-ink-3) !important;
+  transition: background 0.15s var(--wa-ease), color 0.15s var(--wa-ease) !important;
+}
+
+.app-sider .ant-menu-item:hover {
+  background: var(--wa-hover) !important;
+  color: var(--wa-ink) !important;
+}
+
+.app-sider .ant-menu-item-selected {
+  background: var(--wa-panel-3) !important;
+  color: var(--wa-ink) !important;
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.app-sider .ant-menu-item-selected::after {
+  display: none !important;
+}
+
+.app-sider .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 2px;
+  background: var(--wa-accent);
+}
+
+/* 内置导航与插件导航之间的分隔线 */
+.app-sider .ant-menu-item-divider {
+  margin: 6px 12px !important;
+  border-color: var(--wa-line) !important;
+}
+
+/* ---------- 悬浮层统一质感 ---------- */
+
+.ant-dropdown .ant-dropdown-menu,
+.ant-select-dropdown,
+.ant-picker-dropdown .ant-picker-panel-container,
+.ant-popover-inner,
+.ant-tooltip-inner {
+  background: color-mix(in srgb, var(--wa-panel) 88%, transparent) !important;
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  border: 1px solid var(--wa-line);
+  box-shadow: var(--wa-shadow) !important;
+}
+
+.ant-dropdown .ant-dropdown-menu {
+  padding: 4px !important;
+}
+
+.ant-dropdown .ant-dropdown-menu-item {
+  border-radius: var(--wa-radius-sm) !important;
+}
+
+.ant-drawer .ant-drawer-content,
+.ant-modal .ant-modal-content {
+  background: color-mix(in srgb, var(--wa-panel) 94%, transparent) !important;
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+}
+
+.ant-drawer .ant-drawer-header,
+.ant-modal .ant-modal-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--wa-line-2) !important;
+}
+
+.ant-drawer .ant-drawer-footer {
+  background: transparent !important;
+  border-top: 1px solid var(--wa-line-2) !important;
+}
+
+/* ---------- 控件 ---------- */
+
+.ant-btn {
+  font-weight: 500;
+  transition: background 0.15s var(--wa-ease), border-color 0.15s var(--wa-ease), color 0.15s var(--wa-ease) !important;
+}
+
+.ant-btn-primary:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-accent) 88%, #fff 12%), var(--wa-accent)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 6px 16px -12px var(--wa-accent) !important;
+}
+
+.ant-btn-primary:not(:disabled):hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-accent) 80%, #fff 20%), var(--wa-accent-hover)) !important;
+}
+
+/* 暗色下主按钮用更深的蓝底 + 纯白文字，避免亮蓝底白字/浅蓝底深字看不清 */
+html.dark .ant-btn-primary:not(:disabled) {
+  background: #2b6fe8 !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 6px 16px -12px #2b6fe8 !important;
+}
+
+html.dark .ant-btn-primary:not(:disabled):hover {
+  background: #3f82f5 !important;
+  color: #fff !important;
+}
+
+html.dark .ant-btn-primary:not(:disabled):active {
+  background: #1f5fd0 !important;
+  color: #fff !important;
+}
+
+.ant-btn-default {
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.ant-input:focus,
+.ant-input-focused,
+.ant-input-affix-wrapper-focused,
+.ant-input-number-focused,
+.ant-select-focused .ant-select-selector,
+.ant-picker-focused {
+  box-shadow: 0 0 0 3px var(--wa-accent-soft) !important;
+}
+
+.ant-tabs .ant-tabs-tab {
+  transition: color 0.15s var(--wa-ease);
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--wa-ink-3);
+}
+
+/* ---------- 滚动条与选择 ---------- */
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--wa-ink-4) 45%, transparent);
+  border-radius: 9px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--wa-ink-4) 70%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::selection {
+  background: var(--wa-accent-soft);
+}
+
+/* ---------- 工作台 ---------- */
+
+.wa-workbench-topbar {
+  background: color-mix(in srgb, var(--wa-panel) 52%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  border-bottom: 1px solid var(--wa-line-2);
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.wa-composer {
+  background: var(--wa-glass) !important;
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  box-shadow: var(--wa-glass-sheen), var(--wa-shadow) !important;
+}
+
+.wa-task-sidebar {
+  background: var(--wa-glass) !important;
+  backdrop-filter: blur(20px) saturate(1.12);
+  -webkit-backdrop-filter: blur(20px) saturate(1.12);
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.wa-workspace-panel {
+  background: var(--wa-glass) !important;
+  backdrop-filter: blur(20px) saturate(1.12);
+  -webkit-backdrop-filter: blur(20px) saturate(1.12);
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.wa-titlebar {
+  background: color-mix(in srgb, var(--wa-bg) 62%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: var(--wa-glass-sheen);
+}
+
+.wa-brand-mark {
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--wa-bg);
+  background: var(--wa-ink);
+  letter-spacing: 0;
+}
+
+.wa-brand-name {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--wa-ink-2);
+}
+
+/* 任务页消息区：统一正文行高与留白（切换任务需立即定位到底部，禁用平滑滚动） */
+.wa-message-scroll .markdown-content {
+  font-size: var(--font-size-lg, 15px);
+  line-height: 1.78;
+}
+
+.wa-message-scroll .markdown-content p {
+  margin: 0 0 8px;
+}
+
+.wa-message-scroll .markdown-content h1,
+.wa-message-scroll .markdown-content h2,
+.wa-message-scroll .markdown-content h3 {
+  letter-spacing: -0.01em;
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

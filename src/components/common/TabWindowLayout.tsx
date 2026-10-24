@@ -98,9 +98,9 @@ const TabWindowLayout: React.FC = () => {
   }, [tabTitle])
 
   const btnStyle: React.CSSProperties = {
-    width: 28,
-    height: 28,
-    minWidth: 28,
+    width: 34,
+    height: 34,
+    minWidth: 34,
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -110,11 +110,10 @@ const TabWindowLayout: React.FC = () => {
   }
 
   const dragStyle: React.CSSProperties = {
-    height: 32,
+    height: 34,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    background: token.colorBgContainer,
     borderBottom: `1px solid ${token.colorBorderSecondary}`,
     flexShrink: 0,
     userSelect: 'none',
@@ -124,6 +123,7 @@ const TabWindowLayout: React.FC = () => {
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <div
+        className="wa-titlebar"
         style={dragStyle}
         onDoubleClick={handleToggleMaximize}
       >

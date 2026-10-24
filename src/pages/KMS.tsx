@@ -125,13 +125,15 @@ const KMSPage: React.FC = () => {
   }, [previewFile, searchQuery])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 12 }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* 顶部工具栏：视图切换 + 设置 */}
-      <div style={{
+      <div className="wa-workbench-topbar" style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 8,
+        height: 46,
+        padding: '0 16px',
+        borderBottom: '1px solid var(--wa-line-2)',
         flexShrink: 0,
       }}>
         <Segmented
@@ -188,7 +190,7 @@ const KMSPage: React.FC = () => {
       </div>
 
       {/* 主体内容区 */}
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
         {viewMode === 'search' ? (
           <KMSSearchPanel
             searchQuery={searchQuery}

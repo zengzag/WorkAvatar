@@ -367,6 +367,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   return (
     <div
       ref={panelRef}
+      className="wa-workspace-panel"
       style={{
         width: expanded ? undefined : width,
         flex: expanded ? 1 : undefined,
@@ -375,7 +376,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
         flexDirection: 'column',
         minHeight: 0,
         borderLeft: expanded ? 'none' : `1px solid ${token.colorBorderSecondary}`,
-        background: token.colorBgContainer,
+        background: 'transparent',
         position: 'relative',
       }}
     >
