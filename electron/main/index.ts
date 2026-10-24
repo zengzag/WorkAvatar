@@ -615,11 +615,20 @@ function updateTrayMenu(): void {
 }
 
 function createTray() {
-  // Windows 上使用多尺寸 ICO 由系统选择最合适的清晰度，其他平台使用 PNG
-  const trayIcon =
-    process.platform === 'win32'
-      ? nativeImage.createFromPath(getResourcePath('resources', 'icons', 'icon.ico'))
-      : nativeImage.createFromPath(getResourcePath('resources', 'icons', 'icon.png'))
+  let trayIcon: Electron.NativeImage
+  if (process.platform === 'darwin') {
+    // macOS 菜单栏：16pt 模板图（Electron 自动加载同名 @2x），由系统按明暗主题着色
+    trayIcon = nativeImage.createFromPath(getResourcePath('resources', 'icons', 'trayTemplate.png'))
+    trayIcon.setTemplateImage(true)
+  } else if (process.platform === 'win32') {
+    // Windows 上使用多尺寸 ICO 由系统选择最合适的清晰度
+    trayIcon = nativeImage.createFromPath(getResourcePath('resources', 'icons', 'icon.ico'))
+  } else {
+    // Linux 托盘：512px 原图会被原样显示导致过大，缩放到托盘常规尺寸
+    trayIcon = nativeImage
+      .createFromPath(getResourcePath('resources', 'icons', 'icon.png'))
+      .resize({ width: 22, height: 22, quality: 'best' })
+  }
   tray = new Tray(trayIcon)
   updateTrayMenu()
   mainUiI18n.onLocaleChange(() => updateTrayMenu())

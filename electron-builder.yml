@@ -41,15 +41,14 @@ files:
   #    渲染端库（react/antd/vditor 等）与插件端库（@dbml/@xyflow 等）已移至 devDependencies：
   #    前者由 Vite 打进 dist/，后者由插件构建打进插件自身 dist，均不出现在生产依赖树，
   #    故不再需要大批量的 node_modules 排除规则，既加快 node-module 收集又缩小产物体积。
-  # ── 原生模块平台修剪：仅保留当前平台二进制 ──
-  - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
-  - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
-  - "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
-  - "!node_modules/sherpa-onnx-darwin-arm64/**"
-  - "!node_modules/sherpa-onnx-darwin-x64/**"
-  - "!node_modules/sherpa-onnx-linux-x64/**"
-  - "!node_modules/sherpa-onnx-linux-arm64/**"
-  - "!node_modules/sherpa-onnx-win-ia32/**"
+  # ── 原生模块平台修剪：只保留当前打包平台/架构的二进制 ──
+  # ${platform}/${arch} 由 electron-builder 按本次打包目标展开（darwin|win32|linux / x64|arm64），
+  # 配合 minimatch 的否定扩展 `!(...)` 排除其余平台目录；不写死平台名，mac/win 各自只带自己的二进制。
+  # （不要改用 mac.files/win.files：平台级 files 会整体替换本白名单，导致把 plugins/、release/ 全量打进 asar）
+  - "!node_modules/onnxruntime-node/bin/napi-v6/!(${platform})/**"
+  - "!node_modules/onnxruntime-node/bin/napi-v6/${platform}/!(${arch})/**"
+  - "!node_modules/sherpa-onnx-!(${platform})*/**"
+  - "!node_modules/better-sqlite3/prebuilds/!(${platform}-${arch}).node"
   # ── better-sqlite3：运行时使用预编译 .node，源码（sqlite3.c ~9MB）无需打包 ──
   - "!node_modules/better-sqlite3/deps/**"
   - "!node_modules/better-sqlite3/src/**"
