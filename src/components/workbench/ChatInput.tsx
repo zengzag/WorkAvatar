@@ -88,6 +88,15 @@ export interface AvailableSkill {
 /** 文件令牌在 HTML 中的标记类名 */
 const FILE_TOKEN_CLASS = 'chat-input-file-token'
 
+/** 零宽字符：contentEditable 聚焦/清空时常会插入，不能当作有效内容 */
+const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF]/g
+
+/** 编辑器是否实际为空（忽略纯空白与零宽字符，文件令牌视为有内容） */
+const isEditorEffectivelyEmpty = (editor: HTMLElement): boolean => {
+  if (editor.querySelectorAll(`.${FILE_TOKEN_CLASS}`).length > 0) return false
+  return (editor.textContent || '').replace(ZERO_WIDTH_CHARS, '').trim().length === 0
+}
+
 /** 生成文件令牌唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
@@ -410,10 +419,11 @@ const ChatInput: React.FC<{
   /** 同步：内容变化后通知父组件（草稿），并更新空状态（控制 placeholder 与发送按钮） */
   const emitDraftChange = useCallback(() => {
     if (!editorRef.current) return
-    const draftStr = serializeEditorDraft(editorRef.current)
-    onDraftChange?.(draftStr)
+    // 仅换行/空格/零宽字符不算有效内容（contentEditable 常残留 <br>），避免空白草稿让 placeholder 永久消失
+    const empty = isEditorEffectivelyEmpty(editorRef.current)
+    onDraftChange?.(empty ? '' : serializeEditorDraft(editorRef.current))
     // 同步更新空状态（即使未提供 onDraftChange 也必须更新，否则 placeholder 不消失、发送按钮不恢复）
-    setEditorEmpty(!editorRef.current.textContent && editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`).length === 0)
+    setEditorEmpty(empty)
   }, [onDraftChange])
 
   /** 仅用于统计文件令牌数量（供删除回调使用，避免重复状态） */
@@ -423,10 +433,18 @@ const ChatInput: React.FC<{
 
   /** 恢复草稿到 contentEditable 编辑器 */
   const restoreDraft = useCallback((draftStr: string) => {
-    if (!editorRef.current) return
-    deserializeDraftToEditor(editorRef.current, draftStr || '', token, removeFileById)
-    setEditorEmpty(!draftStr)
-  }, [token, removeFileById])
+    const editor = editorRef.current
+    if (!editor) return
+    deserializeDraftToEditor(editor, draftStr || '', token, removeFileById)
+    // 以恢复后的真实内容判断是否为空：空白字符/孤立 <br> 一律清空，保证 placeholder 可见
+    const empty = isEditorEffectivelyEmpty(editor)
+    if (empty) {
+      editor.innerHTML = ''
+      // 草稿里只有空白时顺手清掉缓存，避免每次进入都恢复出一段"看不见的内容"
+      if (draftStr) onDraftChange?.('')
+    }
+    setEditorEmpty(empty)
+  }, [token, removeFileById, onDraftChange])
 
   // restoreDraft / getInitialDraft 的 ref 镜像：useEffect 通过 ref 读取最新实现，
   // 避免其引用变化（如主题 token 变化、onDraftChange 重建）触发恢复草稿覆盖编辑器内容
@@ -590,10 +608,7 @@ const ChatInput: React.FC<{
   /** 编辑器是否有内容（文字 或 文件令牌） */
   const hasEditorContent = useCallback((): boolean => {
     if (!editorRef.current) return false
-    const tokens = editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`)
-    if (tokens.length > 0) return true
-    const text = (editorRef.current.textContent || '').replace(/\u200B/g, '').trim()
-    return text.length > 0
+    return !isEditorEffectivelyEmpty(editorRef.current)
   }, [])
 
   const handleSend = useCallback(() => {
@@ -1674,7 +1689,7 @@ const ChatInput: React.FC<{
             </div>
           </div>
         )}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* contentEditable 输入框，支持在光标位置嵌入文件令牌 */}
           <div
             ref={editorRef}
@@ -1710,14 +1725,15 @@ const ChatInput: React.FC<{
               onClick={() => editorRef.current?.focus()}
               style={{
                 position: 'absolute',
+                zIndex: 1,
                 pointerEvents: 'none',
-                color: token.colorTextQuaternary,
+                color: token.colorTextTertiary,
                 fontSize: 13,
                 lineHeight: 1.6,
                 padding: '4px 0',
-                left: 12,
-                right: 40,
-                top: 4,
+                left: 0,
+                right: 0,
+                top: 0,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -1731,13 +1747,14 @@ const ChatInput: React.FC<{
               aria-hidden
               style={{
                 position: 'absolute',
+                zIndex: 1,
                 pointerEvents: 'none',
-                color: token.colorTextQuaternary,
+                color: token.colorTextTertiary,
                 fontSize: 13,
                 lineHeight: 1.6,
                 padding: '4px 0',
-                left: 12,
-                top: 4,
+                left: 0,
+                top: 0,
               }}
             >
               {t('workbench.compactingPlaceholder')}
