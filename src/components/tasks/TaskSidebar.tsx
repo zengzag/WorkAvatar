@@ -23,9 +23,9 @@ const { Text } = Typography
 
 const SIDEBAR_WIDTH_KEY = 'tasks:sidebarWidth'
 
-type TaskGroupKey = 'today' | 'week' | 'earlier'
+type TaskGroupKey = 'today' | 'yesterday' | 'week' | 'earlier'
 
-/** 任务按最后活跃时间分组：今日 / 本周（周一起算）/ 更早 */
+/** 任务按最后活跃时间分组：今日 / 昨天 / 本周（周一起算）/ 更早 */
 function getTaskTimeGroup(ts: string | number | null | undefined): TaskGroupKey {
   if (!ts) return 'earlier'
   // 时间戳统一按秒存储，转换为毫秒后再交给 dayjs
@@ -33,6 +33,7 @@ function getTaskTimeGroup(ts: string | number | null | undefined): TaskGroupKey 
   if (!d.isValid()) return 'earlier'
   const now = dayjs()
   if (!d.isBefore(now.startOf('day'))) return 'today'
+  if (!d.isBefore(now.subtract(1, 'day').startOf('day'))) return 'yesterday'
   const weekday = (now.day() + 6) % 7
   const weekStart = now.startOf('day').subtract(weekday, 'day')
   return d.isBefore(weekStart) ? 'earlier' : 'week'
@@ -575,14 +576,15 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
     return () => el.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
-  // 按时间分组展示：今日 / 本周 / 更早（保持 tasks 原有顺序）
+  // 按时间分组展示：今日 / 昨天 / 本周 / 更早（保持 tasks 原有顺序）
   const groupedTasks = useMemo(() => {
-    const buckets: Record<TaskGroupKey, TaskWithEmployee[]> = { today: [], week: [], earlier: [] }
+    const buckets: Record<TaskGroupKey, TaskWithEmployee[]> = { today: [], yesterday: [], week: [], earlier: [] }
     for (const task of tasks) {
       buckets[getTaskTimeGroup(task.last_message_at ?? task.created_at)].push(task)
     }
     return ([
       { key: 'today' as const, label: t('tasks.groupToday') },
+      { key: 'yesterday' as const, label: t('tasks.groupYesterday') },
       { key: 'week' as const, label: t('tasks.groupWeek') },
       { key: 'earlier' as const, label: t('tasks.groupEarlier') },
     ]).filter((g) => buckets[g.key].length > 0).map((g) => ({ ...g, tasks: buckets[g.key] }))
