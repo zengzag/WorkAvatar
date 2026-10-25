@@ -91,7 +91,8 @@ const TitleBar: React.FC = () => {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+    // 暗色下描边比两侧底色更亮，会形成一条明显的割裂细线；改为无描边，靠底色自然过渡
+    borderBottom: isDark ? 'none' : `1px solid ${token.colorBorderSecondary}`,
     flexShrink: 0,
     userSelect: 'none',
     ...({ WebkitAppRegion: 'drag' } as React.CSSProperties),

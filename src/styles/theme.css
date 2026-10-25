@@ -5,41 +5,46 @@
  */
 
 :root {
-  --wa-bg: #f7f8fa;
+  --wa-bg: #f3f6fb;
   --wa-panel: #ffffff;
-  --wa-panel-2: #f6f7f9;
-  --wa-panel-3: #eef0f4;
-  --wa-line: #e4e7ec;
-  --wa-line-2: #eceef2;
+  --wa-panel-2: #f7f9fd;
+  --wa-panel-3: #eaeff7;
+  --wa-line: #dfe6f0;
+  --wa-line-2: #edf1f7;
 
-  --wa-ink: #16181d;
-  --wa-ink-2: #565d68;
-  --wa-ink-3: #6b7280;
-  --wa-ink-4: #9aa1ac;
+  --wa-ink: #101828;
+  --wa-ink-2: #4a5568;
+  --wa-ink-3: #667085;
+  --wa-ink-4: #98a2b3;
 
   --wa-accent: #1677ff;
-  --wa-accent-hover: #4096ff;
-  --wa-accent-soft: rgba(22, 119, 255, 0.1);
-  --wa-accent-line: rgba(22, 119, 255, 0.34);
+  --wa-accent-hover: #3d8bff;
+  --wa-accent-soft: rgba(22, 119, 255, 0.09);
+  --wa-accent-line: rgba(22, 119, 255, 0.28);
 
-  --wa-glass: rgba(255, 255, 255, 0.8);
-  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --wa-shadow: 0 18px 44px -34px rgba(23, 29, 48, 0.3);
-  --wa-ambient-a: rgba(22, 119, 255, 0.05);
-  --wa-ambient-b: rgba(14, 165, 233, 0.035);
+  --wa-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.7));
+  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  --wa-glass-lift: 0 24px 50px -40px rgba(20, 32, 64, 0.4), 0 2px 10px -8px rgba(20, 32, 64, 0.12);
+  --wa-ambient-a: rgba(22, 119, 255, 0.085);
+  --wa-ambient-b: rgba(56, 189, 248, 0.065);
+  --wa-ambient-c: rgba(0, 194, 224, 0.045);
+  --wa-noise-opacity: 0.022;
 
-  --wa-user-bubble: #eef0f5;
-  --wa-hover: rgba(16, 24, 40, 0.045);
+  --wa-user-bubble: #e9f0fa;
+  --wa-card-bg: #ffffff;
+  --wa-code-bg: #f5f8fd;
+  --wa-selection: rgba(22, 119, 255, 0.18);
+  --wa-hover: rgba(16, 24, 40, 0.05);
+  --wa-focus: 0 0 0 3px rgba(22, 119, 255, 0.16);
 
   --wa-ease: cubic-bezier(0.22, 0.8, 0.24, 1);
-  --wa-radius-sm: 5px;
   --wa-radius: 7px;
 
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
   --xy-controls-button-background-color-default: #ffffff;
-  --xy-controls-button-background-color-hover-default: #f6f7f9;
-  --xy-controls-button-border-color-default: #e4e7ec;
+  --xy-controls-button-background-color-hover-default: #f7f9fd;
+  --xy-controls-button-border-color-default: #dfe6f0;
   --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
   --xy-minimap-background-color-default: #ffffff;
   --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
@@ -48,37 +53,43 @@
 }
 
 html.dark {
-  --wa-bg: #0a0b0d;
-  --wa-panel: #0e0f12;
-  --wa-panel-2: #121418;
-  --wa-panel-3: #171a1f;
-  --wa-line: #23262d;
-  --wa-line-2: #1e2128;
+  --wa-bg: #07090d;
+  --wa-panel: #0f1218;
+  --wa-panel-2: #141925;
+  --wa-panel-3: #1a2130;
+  --wa-line: #2a3342;
+  --wa-line-2: #1e2533;
 
-  --wa-ink: #e8eaed;
-  --wa-ink-2: #a2a8b3;
-  --wa-ink-3: #8a919c;
-  --wa-ink-4: #646b76;
+  --wa-ink: #e9eef8;
+  --wa-ink-2: #a7b1c2;
+  --wa-ink-3: #7e8a9d;
+  --wa-ink-4: #5b6478;
 
   --wa-accent: #4096ff;
   --wa-accent-hover: #69b1ff;
   --wa-accent-soft: rgba(64, 150, 255, 0.14);
-  --wa-accent-line: rgba(64, 150, 255, 0.4);
+  --wa-accent-line: rgba(64, 150, 255, 0.32);
 
-  --wa-glass: rgba(15, 17, 21, 0.76);
-  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  --wa-shadow: 0 20px 48px -34px rgba(0, 0, 0, 0.95);
-  --wa-ambient-a: rgba(64, 150, 255, 0.065);
-  --wa-ambient-b: rgba(56, 189, 248, 0.04);
+  --wa-glass-bg: linear-gradient(180deg, rgba(23, 28, 39, 0.8), rgba(12, 15, 22, 0.72));
+  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+  --wa-glass-lift: 0 28px 60px -42px rgba(0, 0, 0, 1), 0 2px 12px -10px rgba(0, 0, 0, 0.85);
+  --wa-ambient-a: rgba(64, 150, 255, 0.13);
+  --wa-ambient-b: rgba(56, 189, 248, 0.08);
+  --wa-ambient-c: rgba(13, 148, 196, 0.06);
+  --wa-noise-opacity: 0.03;
 
-  --wa-user-bubble: #1a1d23;
-  --wa-hover: rgba(255, 255, 255, 0.045);
+  --wa-user-bubble: #1a2230;
+  --wa-card-bg: #141925;
+  --wa-code-bg: #0b0e14;
+  --wa-selection: rgba(64, 150, 255, 0.3);
+  --wa-hover: rgba(255, 255, 255, 0.055);
+  --wa-focus: 0 0 0 3px rgba(64, 150, 255, 0.2);
 
-  --xy-controls-button-background-color-default: #171a1f;
-  --xy-controls-button-background-color-hover-default: #1f232b;
-  --xy-controls-button-border-color-default: #2f343d;
+  --xy-controls-button-background-color-default: #1a2130;
+  --xy-controls-button-background-color-hover-default: #232c3d;
+  --xy-controls-button-border-color-default: #2f3a4c;
   --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.3);
-  --xy-minimap-background-color-default: #0e0f12;
+  --xy-minimap-background-color-default: #0f1218;
   --xy-minimap-mask-background-color-default: rgba(255, 255, 255, 0.08);
   --xy-minimap-mask-stroke-color-default: #555;
   --xy-background-pattern-dot-color-default: #3a3a3a;
@@ -92,7 +103,7 @@ html.dark {
   background: var(--wa-bg);
 }
 
-/* 环境光：极低饱和的双色径向渐变，用于让玻璃层有可感知的深度 */
+/* 环境光：三层低饱和光场 + 极细噪点，让玻璃层有可感知的深度与材质 */
 #root::before {
   content: '';
   position: fixed;
@@ -100,9 +111,20 @@ html.dark {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(720px 420px at 10% -10%, var(--wa-ambient-a), transparent 62%),
-    radial-gradient(560px 340px at 96% -4%, var(--wa-ambient-b), transparent 64%),
-    radial-gradient(900px 520px at 50% 112%, var(--wa-ambient-a), transparent 70%);
+    radial-gradient(760px 460px at 8% -12%, var(--wa-ambient-a), transparent 60%),
+    radial-gradient(620px 380px at 98% -8%, var(--wa-ambient-b), transparent 62%),
+    radial-gradient(1100px 700px at 50% 120%, var(--wa-ambient-c), transparent 70%);
+}
+
+#root::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--wa-noise-opacity);
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 .ant-layout {
@@ -118,10 +140,10 @@ html.dark {
 /* ---------- 侧边导航 ---------- */
 
 .app-sider {
-  backdrop-filter: blur(16px) saturate(1.12);
-  -webkit-backdrop-filter: blur(16px) saturate(1.12);
-  background: color-mix(in srgb, var(--wa-bg) 46%, transparent) !important;
-  box-shadow: var(--wa-glass-sheen);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  background: var(--wa-glass-bg) !important;
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift);
 }
 
 .app-sider .ant-menu {
@@ -145,9 +167,9 @@ html.dark {
 }
 
 .app-sider .ant-menu-item-selected {
-  background: var(--wa-panel-3) !important;
-  color: var(--wa-ink) !important;
-  box-shadow: var(--wa-glass-sheen);
+  background: var(--wa-accent-soft) !important;
+  color: var(--wa-accent) !important;
+  box-shadow: inset 0 0 0 1px var(--wa-accent-line), 0 8px 18px -16px var(--wa-accent);
 }
 
 .app-sider .ant-menu-item-selected::after {
@@ -177,28 +199,67 @@ html.dark {
 .ant-dropdown .ant-dropdown-menu,
 .ant-select-dropdown,
 .ant-picker-dropdown .ant-picker-panel-container,
-.ant-popover-inner,
-.ant-tooltip-inner {
-  background: color-mix(in srgb, var(--wa-panel) 88%, transparent) !important;
-  backdrop-filter: blur(22px) saturate(1.2);
-  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+.ant-popover-inner {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-panel) 94%, transparent), color-mix(in srgb, var(--wa-panel) 86%, transparent)) !important;
+  backdrop-filter: blur(34px) saturate(1.6);
+  -webkit-backdrop-filter: blur(34px) saturate(1.6);
   border: 1px solid var(--wa-line);
-  box-shadow: var(--wa-shadow) !important;
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+}
+
+/* Tooltip 保持深底白字，避免玻璃底导致浅色主题文字不可见 */
+.ant-tooltip .ant-tooltip-inner {
+  background: #1d2128 !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 12px;
+  box-shadow: 0 12px 28px -18px rgba(0, 0, 0, 0.6);
+}
+
+html.dark .ant-tooltip .ant-tooltip-inner {
+  background: #262d3a !important;
+}
+
+.ant-tooltip .ant-tooltip-arrow::before,
+.ant-tooltip .ant-tooltip-arrow::after {
+  background: #1d2128 !important;
+}
+
+html.dark .ant-tooltip .ant-tooltip-arrow::before,
+html.dark .ant-tooltip .ant-tooltip-arrow::after {
+  background: #262d3a !important;
 }
 
 .ant-dropdown .ant-dropdown-menu {
-  padding: 4px !important;
+  padding: 5px !important;
+  border-radius: 10px !important;
 }
 
 .ant-dropdown .ant-dropdown-menu-item {
-  border-radius: var(--wa-radius-sm) !important;
+  border-radius: 6px !important;
+  padding: 6px 9px !important;
+}
+
+.ant-dropdown .ant-dropdown-menu-item:hover {
+  background: var(--wa-hover) !important;
 }
 
 .ant-drawer .ant-drawer-content,
 .ant-modal .ant-modal-content {
-  background: color-mix(in srgb, var(--wa-panel) 94%, transparent) !important;
-  backdrop-filter: blur(20px) saturate(1.1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  background: var(--wa-glass-bg) !important;
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+}
+
+.ant-drawer .ant-drawer-content {
+  border-left: 1px solid var(--wa-line-2);
+}
+
+.ant-modal .ant-modal-content {
+  border: 1px solid var(--wa-line);
 }
 
 .ant-drawer .ant-drawer-header,
@@ -246,8 +307,20 @@ html.dark .ant-btn-primary:not(:disabled):active {
   color: #fff !important;
 }
 
-.ant-btn-default {
+.ant-btn-default:not(:disabled) {
+  background: color-mix(in srgb, var(--wa-panel) 72%, transparent);
+  border-color: var(--wa-line);
   box-shadow: var(--wa-glass-sheen);
+}
+
+.ant-btn-default:not(:disabled):hover {
+  background: var(--wa-panel);
+  border-color: var(--wa-line-2);
+  color: var(--wa-ink);
+}
+
+.ant-btn-text:not(:disabled):hover {
+  background: var(--wa-hover);
 }
 
 .ant-input:focus,
@@ -256,11 +329,76 @@ html.dark .ant-btn-primary:not(:disabled):active {
 .ant-input-number-focused,
 .ant-select-focused .ant-select-selector,
 .ant-picker-focused {
-  box-shadow: 0 0 0 3px var(--wa-accent-soft) !important;
+  box-shadow: var(--wa-focus) !important;
 }
 
 .ant-tabs .ant-tabs-tab {
   transition: color 0.15s var(--wa-ease);
+}
+
+.ant-tabs .ant-tabs-tab:hover {
+  color: var(--wa-accent) !important;
+}
+
+/* 卡片、分段器、表格、标签统一到同一平面层级 */
+.ant-card {
+  border-radius: 12px !important;
+  border-color: var(--wa-line) !important;
+  background: var(--wa-card-bg) !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 18px 36px -34px rgba(20, 32, 64, 0.4);
+}
+
+html.dark .ant-card {
+  background: var(--wa-card-bg) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* 员工卡片走同一套表面与悬停层级 */
+.emp-card {
+  background: var(--wa-card-bg) !important;
+  transition: border-color 0.18s var(--wa-ease), box-shadow 0.18s var(--wa-ease), transform 0.18s var(--wa-ease);
+}
+
+.emp-card:hover {
+  border-color: var(--wa-accent-line) !important;
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+  transform: translateY(-1px);
+}
+
+.ant-segmented {
+  background: var(--wa-panel-2) !important;
+  border: 1px solid var(--wa-line-2);
+  border-radius: 8px !important;
+  padding: 3px !important;
+}
+
+.ant-segmented .ant-segmented-item {
+  border-radius: 6px !important;
+  color: var(--wa-ink-3);
+  transition: color 0.15s var(--wa-ease), background 0.15s var(--wa-ease);
+}
+
+.ant-segmented .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: var(--wa-ink);
+  background: var(--wa-hover);
+}
+
+.ant-segmented .ant-segmented-item-selected {
+  background: var(--wa-panel) !important;
+  color: var(--wa-ink) !important;
+  box-shadow: var(--wa-glass-sheen), 0 2px 6px -4px rgba(0, 0, 0, 0.28);
+}
+
+html.dark .ant-segmented {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+
+html.dark .ant-segmented .ant-segmented-item-selected {
+  background: var(--wa-panel-3) !important;
+}
+
+.ant-table-wrapper .ant-table {
+  background: transparent !important;
 }
 
 .ant-table-wrapper .ant-table-thead > tr > th {
@@ -269,6 +407,79 @@ html.dark .ant-btn-primary:not(:disabled):active {
   text-transform: uppercase;
   font-weight: 600;
   color: var(--wa-ink-3);
+  background: var(--wa-panel-2) !important;
+  border-bottom: 1px solid var(--wa-line) !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  border-bottom-color: var(--wa-line-2) !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:hover > td {
+  background: var(--wa-hover) !important;
+}
+
+.ant-tag {
+  border-radius: 5px;
+  border-color: var(--wa-line);
+}
+
+/* 开关：轨道内阴影 + 浮起的滑块，避免扁平感 */
+.ant-switch {
+  background: color-mix(in srgb, var(--wa-ink-4) 45%, transparent) !important;
+  box-shadow: inset 0 1px 2px rgba(16, 24, 40, 0.16), inset 0 0 0 1px rgba(16, 24, 40, 0.06);
+  transition: background 0.2s var(--wa-ease), box-shadow 0.2s var(--wa-ease) !important;
+}
+
+.ant-switch:hover:not(.ant-switch-disabled) {
+  background: color-mix(in srgb, var(--wa-ink-4) 60%, transparent) !important;
+}
+
+.ant-switch .ant-switch-handle::before {
+  background: #fff !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.3), 0 3px 8px -4px rgba(16, 24, 40, 0.45) !important;
+}
+
+.ant-switch.ant-switch-checked {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-accent) 78%, #fff), var(--wa-accent)) !important;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.2),
+    0 0 0 1px color-mix(in srgb, var(--wa-accent) 45%, transparent),
+    0 4px 10px -6px var(--wa-accent);
+}
+
+.ant-switch.ant-switch-checked:hover:not(.ant-switch-disabled) {
+  filter: brightness(1.06);
+}
+
+html.dark .ant-switch {
+  background: rgba(255, 255, 255, 0.16) !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+html.dark .ant-switch:hover:not(.ant-switch-disabled) {
+  background: rgba(255, 255, 255, 0.24) !important;
+}
+
+html.dark .ant-switch.ant-switch-checked {
+  background: linear-gradient(180deg, #4a9dff, #2b6fe8) !important;
+}
+
+.ant-switch .ant-switch-handle::before,
+html.dark .ant-switch .ant-switch-handle::before {
+  background: #fff !important;
+}
+
+.ant-empty .ant-empty-description {
+  color: var(--wa-ink-3);
+}
+
+.ant-message .ant-message-notice-content,
+.ant-notification .ant-notification-notice {
+  background: var(--wa-card-bg) !important;
+  border: 1px solid var(--wa-line);
+  border-radius: 10px !important;
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
 }
 
 /* ---------- 滚动条与选择 ---------- */
@@ -279,70 +490,75 @@ html.dark .ant-btn-primary:not(:disabled):active {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--wa-ink-4) 45%, transparent);
+  background: color-mix(in srgb, var(--wa-ink-4) 55%, transparent);
   border-radius: 9px;
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--wa-ink-4) 70%, transparent);
+  background: color-mix(in srgb, var(--wa-ink-4) 80%, transparent);
   border: 3px solid transparent;
   background-clip: padding-box;
 }
 
 ::selection {
-  background: var(--wa-accent-soft);
+  background: var(--wa-selection);
 }
 
 /* ---------- 工作台 ---------- */
 
 .wa-workbench-topbar {
-  background: color-mix(in srgb, var(--wa-panel) 52%, transparent) !important;
-  backdrop-filter: blur(16px) saturate(1.1);
-  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-panel) 64%, transparent), color-mix(in srgb, var(--wa-panel) 44%, transparent)) !important;
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   border-bottom: 1px solid var(--wa-line-2);
   box-shadow: var(--wa-glass-sheen);
 }
 
 .wa-composer {
-  background: var(--wa-glass) !important;
-  backdrop-filter: blur(22px) saturate(1.2);
-  -webkit-backdrop-filter: blur(22px) saturate(1.2);
-  box-shadow: var(--wa-glass-sheen), var(--wa-shadow) !important;
+  background: var(--wa-glass-bg) !important;
+  backdrop-filter: blur(28px) saturate(1.55);
+  -webkit-backdrop-filter: blur(28px) saturate(1.55);
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+}
+
+.wa-composer:focus-within {
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift), var(--wa-focus) !important;
 }
 
 .wa-task-sidebar {
-  background: var(--wa-glass) !important;
-  backdrop-filter: blur(20px) saturate(1.12);
-  -webkit-backdrop-filter: blur(20px) saturate(1.12);
-  box-shadow: var(--wa-glass-sheen);
+  background: var(--wa-glass-bg) !important;
+  backdrop-filter: blur(24px) saturate(1.45);
+  -webkit-backdrop-filter: blur(24px) saturate(1.45);
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift);
 }
 
 .wa-workspace-panel {
-  background: var(--wa-glass) !important;
-  backdrop-filter: blur(20px) saturate(1.12);
-  -webkit-backdrop-filter: blur(20px) saturate(1.12);
-  box-shadow: var(--wa-glass-sheen);
+  background: var(--wa-glass-bg) !important;
+  backdrop-filter: blur(24px) saturate(1.45);
+  -webkit-backdrop-filter: blur(24px) saturate(1.45);
+  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift);
 }
 
 .wa-titlebar {
-  background: color-mix(in srgb, var(--wa-bg) 62%, transparent) !important;
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-bg) 74%, transparent), color-mix(in srgb, var(--wa-bg) 56%, transparent)) !important;
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   box-shadow: var(--wa-glass-sheen);
 }
 
 .wa-brand-mark {
   width: 17px;
   height: 17px;
-  border-radius: 4px;
+  border-radius: 5px;
   display: grid;
   place-items: center;
   font-size: 9px;
   font-weight: 800;
   color: var(--wa-bg);
-  background: var(--wa-ink);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--wa-ink) 86%, var(--wa-accent)), var(--wa-ink));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 4px 10px -6px rgba(0, 0, 0, 0.5);
   letter-spacing: 0;
 }
 
@@ -367,6 +583,20 @@ html.dark .ant-btn-primary:not(:disabled):active {
 .wa-message-scroll .markdown-content h2,
 .wa-message-scroll .markdown-content h3 {
   letter-spacing: -0.01em;
+}
+
+.wa-message-scroll .markdown-content pre {
+  background: var(--wa-code-bg) !important;
+  border: 1px solid var(--wa-line);
+  border-radius: 8px !important;
+  padding: 10px 12px !important;
+}
+
+.wa-message-scroll .markdown-content :not(pre) > code {
+  background: var(--wa-code-bg);
+  border: 1px solid var(--wa-line-2);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 /* 减少动效偏好 */

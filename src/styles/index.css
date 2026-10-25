@@ -9,19 +9,19 @@
   --font-size-sm: 12px;
   --font-size-lg: 15px;
   --font-size-xl: 18px;
-  --bg-primary: #f7f8fa;
+  --bg-primary: #f3f6fb;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f6f7f9;
-  --border-color: #e4e7ec;
-  --text-primary: #16181d;
-  --text-secondary: #565d68;
-  --text-tertiary: #6b7280;
+  --bg-tertiary: #f7f9fd;
+  --border-color: #dfe6f0;
+  --text-primary: #101828;
+  --text-secondary: #4a5568;
+  --text-tertiary: #667085;
   --shadow-color: rgba(16, 24, 40, 0.04);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
   --xy-controls-button-background-color-default: #ffffff;
-  --xy-controls-button-background-color-hover-default: #f6f7f9;
-  --xy-controls-button-border-color-default: #e4e7ec;
+  --xy-controls-button-background-color-hover-default: #f7f9fd;
+  --xy-controls-button-border-color-default: #dfe6f0;
   --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
   --xy-minimap-background-color-default: #ffffff;
   --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
@@ -30,13 +30,13 @@
 }
 
 html.dark {
-  --bg-primary: #0a0b0d;
-  --bg-secondary: #0e0f12;
-  --bg-tertiary: #121418;
-  --border-color: #23262d;
-  --text-primary: #e8eaed;
-  --text-secondary: #a2a8b3;
-  --text-tertiary: #8a919c;
+  --bg-primary: #07090d;
+  --bg-secondary: #0f1218;
+  --bg-tertiary: #141925;
+  --border-color: #2a3342;
+  --text-primary: #e9eef8;
+  --text-secondary: #a7b1c2;
+  --text-tertiary: #7e8a9d;
   --shadow-color: rgba(0, 0, 0, 0.3);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;

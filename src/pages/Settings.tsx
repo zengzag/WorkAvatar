@@ -202,7 +202,7 @@ const Settings: React.FC = () => {
           background: var(--wa-hover);
         }
         .settings-tabs .ant-tabs-tab-active {
-          background: var(--wa-panel-3);
+          background: var(--wa-accent-soft);
         }
         .settings-tabs .ant-tabs-body-holder {
           border-left: 1px solid var(--border-color, #f0f0f0);

@@ -519,6 +519,7 @@ const MessageBubble: React.FC<{
                 padding: '9px 13px',
                 borderRadius: 12,
                 background: 'var(--wa-user-bubble)',
+                border: '1px solid var(--wa-line-2)',
                 color: token.colorText,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',

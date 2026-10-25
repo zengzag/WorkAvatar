@@ -323,7 +323,7 @@ const ToolCallSegmentInner: React.FC<{
                 <pre ref={argsScrollRef} onScroll={argsOnScroll} style={{
                   margin: 0,
                   padding: '8px 10px',
-                  background: token.colorBgLayout,
+                  background: 'var(--wa-code-bg)',
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
@@ -344,7 +344,7 @@ const ToolCallSegmentInner: React.FC<{
                 </Text>
                 <div ref={progressScrollRef} onScroll={progressOnScroll} style={{
                   padding: '6px 10px',
-                  background: token.colorBgLayout,
+                  background: 'var(--wa-code-bg)',
                   borderRadius: 6,
                   fontSize: 11,
                   lineHeight: 1.6,
@@ -419,7 +419,7 @@ const ToolCallSegmentInner: React.FC<{
                 <pre style={{
                   margin: 0,
                   padding: '8px 10px',
-                  background: token.colorBgLayout,
+                  background: 'var(--wa-code-bg)',
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
