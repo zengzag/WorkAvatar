@@ -15,8 +15,10 @@ import type { WorkspaceFileEntry } from '../../../electron/shared/ipc-channels'
 import type { GeneratedFileInfo } from '../../types'
 import { useTaskPanelStore, type TaskPanelTab } from '../../stores/task-panel.store'
 import WorkspaceFileTree from './WorkspaceFileTree'
+import WorkspaceEntryMenu from './WorkspaceEntryMenu'
 import TaskTerminal from './TaskTerminal'
 import FilePreview, { getFileColor, getFileIcon } from '../workbench/FilePreview'
+import { pathToAppFileUrl } from '../../utils/file-url'
 
 const { Text } = Typography
 
@@ -176,6 +178,30 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   const [refreshKey, setRefreshKey] = useState(0)
   const refresh = useCallback(() => setRefreshKey((value) => value + 1), [])
   const [artifactsCollapsed, setArtifactsCollapsed] = useState(false)
+  const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
+
+  // 产物可能已被 agent / 用户移除：探测后仍展示，但加删除线并禁止打开
+  useEffect(() => {
+    if (artifacts.length === 0) {
+      setMissingPaths((prev) => (prev.size === 0 ? prev : new Set()))
+      return
+    }
+    let cancelled = false
+    Promise.all(artifacts.map(async (file): Promise<[string, boolean]> => {
+      try {
+        const res = await fetch(pathToAppFileUrl(file.path), { method: 'HEAD' })
+        return [file.path, res.ok]
+      } catch {
+        return [file.path, false]
+      }
+    })).then((results) => {
+      if (cancelled) return
+      const missing = new Set<string>()
+      for (const [path, ok] of results) if (!ok) missing.add(path)
+      setMissingPaths(missing)
+    })
+    return () => { cancelled = true }
+  }, [artifacts, refreshKey])
 
   // 每次切到文件标签时自动刷新，保证看到 agent / 终端刚写入的产物
   const prevActiveRef = useRef<string | null>(null)
@@ -307,37 +333,62 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
               }}>
                 {artifacts.map(file => {
                   const IconComp = getFileIcon(file.ext)
+                  const isMissing = missingPaths.has(file.path)
                   return (
-                    <div
+                    <WorkspaceEntryMenu
                       key={file.path}
-                      title={file.path}
-                      onClick={() => openPreview(file)}
-                      onMouseEnter={(event) => { event.currentTarget.style.background = token.colorBgTextHover }}
-                      onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent' }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '5px 6px',
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        minWidth: 0,
-                        transition: 'background 0.15s',
-                      }}
+                      path={file.path}
+                      missing={isMissing}
+                      onPreview={() => openPreview(file)}
                     >
-                      <IconComp style={{ color: getFileColor(file.ext), fontSize: 16, flexShrink: 0 }} />
-                      <span style={{
-                        flex: 1,
-                        minWidth: 0,
-                        fontSize: 13,
-                        color: token.colorText,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {file.name}
-                      </span>
-                    </div>
+                      <div
+                        title={file.path}
+                        onClick={isMissing ? undefined : () => openPreview(file)}
+                        onMouseEnter={(event) => { event.currentTarget.style.background = token.colorBgTextHover }}
+                        onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent' }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '5px 6px',
+                          borderRadius: 6,
+                          cursor: isMissing ? 'not-allowed' : 'pointer',
+                          minWidth: 0,
+                          opacity: isMissing ? 0.75 : 1,
+                          transition: 'background 0.15s',
+                        }}
+                      >
+                        <IconComp style={{
+                          color: getFileColor(file.ext),
+                          fontSize: 16,
+                          flexShrink: 0,
+                          opacity: isMissing ? 0.5 : 1,
+                        }} />
+                        <span style={{
+                          flex: 1,
+                          minWidth: 0,
+                          fontSize: 13,
+                          color: isMissing ? token.colorTextTertiary : token.colorText,
+                          textDecoration: isMissing ? 'line-through' : undefined,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {file.name}
+                        </span>
+                        {isMissing && (
+                          <span style={{
+                            fontSize: 11,
+                            fontWeight: 500,
+                            color: token.colorError,
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {t('workbench.fileDeleted')}
+                          </span>
+                        )}
+                      </div>
+                    </WorkspaceEntryMenu>
                   )
                 })}
               </div>
