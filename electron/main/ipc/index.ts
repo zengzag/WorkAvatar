@@ -60,7 +60,9 @@ export function registerIpcHandlers() {
 
   // 播种内置子智能体模板（explore/general）：幂等刷新，作为开箱即用的委托执行者
   SubAgentProfileService.getInstance().seedBuiltinProfiles()
-  startupMark('内置子智能体模板播种完成')
+  // 首次安装播种默认员工「通用专家」（普通员工，仅一次；已有员工的老用户不受影响）
+  workspaceManager.ensureDefaultEmployee()
+  startupMark('内置子智能体模板与默认员工播种完成')
 
   // 附件后台维护（存量 base64 迁移为附件引用 + 孤儿文件 GC，异步不阻塞启动）
   AttachmentService.getInstance().startupMaintenance()

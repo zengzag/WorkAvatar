@@ -20,6 +20,26 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 const logger = createLogger('WorkspaceManager')
 
+/** 默认员工播种标记（settings KV）：只在首次安装时创建一次，用户删除后不再重建 */
+const DEFAULT_EMPLOYEE_SEEDED_KEY = 'bootstrap.default_employee_seeded'
+
+/** 新用户开箱即用的默认员工（普通员工，非内置注册员工，可编辑可删除） */
+const DEFAULT_EMPLOYEE = {
+  name: '通用专家',
+  description: '全能型数字员工：信息检索、文档写作、表格与演示、数据处理、代码脚本及日常事务，开箱即用。',
+  rules: [
+    'You are "General Expert", a general-purpose digital employee who takes everyday work requests from start to finish: research, writing, document processing, data analysis, spreadsheets and presentations, coding/scripting, and file management.',
+    'Working style:',
+    '- Clarify the goal first, then plan the steps and carry them out yourself instead of asking the user to do manual work.',
+    '- Choose the right tools: search the local knowledge base or the web for facts, use file and scripting tools for the actual work, and activate a skill when a task matches one.',
+    '- Prefer internal knowledge and existing files, then fall back to external sources.',
+    '- Keep every deliverable inside the task workspace. Anything outside it needs the user\'s confirmation.',
+    '- Ask the user only when the request is genuinely ambiguous or the decision is theirs to make; otherwise make a reasonable choice and state it.',
+    'Output:',
+    '- Report concisely what was done, where the result is (file path or URL), and what still needs the user\'s attention.',
+  ].join('\n'),
+}
+
 class WorkspaceManagerService {
   private db: DatabaseService
   private static instance: WorkspaceManagerService
@@ -119,6 +139,34 @@ class WorkspaceManagerService {
 
     this.notifyPluginEvent('employee:created', { id: employeeId, name })
     return this.getEmployee(employeeId)!
+  }
+
+  /**
+   * 首次安装播种默认员工「通用专家」，让新用户开箱即用。
+   * 仅在从未播种且库中没有任何用户员工时创建（老用户升级不受影响）；
+   * 播种后写标记，用户删除后不再重建。
+   */
+  ensureDefaultEmployee(): void {
+    const db = this.db.getDb()
+    try {
+      const seeded = db.prepare('SELECT value FROM settings WHERE key = ?')
+        .get(DEFAULT_EMPLOYEE_SEEDED_KEY) as { value: string } | undefined
+      if (seeded?.value === '1') return
+      const hasUserEmployee = this.getEmployeeList().some(e => !e.is_registered)
+      if (!hasUserEmployee) {
+        this.createEmployee(
+          DEFAULT_EMPLOYEE.name,
+          DEFAULT_EMPLOYEE.description,
+          JSON.stringify({ roleName: DEFAULT_EMPLOYEE.name, roleDescription: DEFAULT_EMPLOYEE.rules }),
+          DEFAULT_EMPLOYEE.rules,
+        )
+        logger.info(`已创建默认员工：${DEFAULT_EMPLOYEE.name}`)
+      }
+      db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run(DEFAULT_EMPLOYEE_SEEDED_KEY, '1')
+    } catch (err: any) {
+      logger.warn('默认员工播种失败:', err?.message || err)
+    }
   }
 
   updateEmployee(id: string, data: {

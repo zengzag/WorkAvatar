@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Form, Input, Select, Button, Alert, Typography, theme, App } from 'antd'
-import { CheckCircleFilled, SettingOutlined, PlusOutlined } from '@ant-design/icons'
+import { CheckCircleFilled, PlusOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { PROVIDER_TYPES, PROVIDER_DEFAULTS } from '../../components/settings/LLMSettings'
 import { invalidateProvidersCache } from '../../hooks/useLlmSettings'
@@ -13,14 +13,14 @@ const { Text, Title } = Typography
 interface ModelStepProps {
   providers: LLMProvider[]
   onConfigured: () => void
-  onGoSettings: () => void
 }
 
-const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSettings }) => {
+const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
   const [form] = Form.useForm()
+  const [providerType, setProviderType] = useState('deepseek')
   const [saving, setSaving] = useState(false)
   const [errorText, setErrorText] = useState('')
   const [success, setSuccess] = useState(false)
@@ -29,6 +29,7 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
   const [showForm, setShowForm] = useState(false)
 
   const hasProvider = providers.length > 0
+  const needsBaseUrl = providerType === 'openai-compatible'
 
   const groupLabel = (group: string) => {
     switch (group) {
@@ -53,13 +54,8 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
   }
 
   const handleTypeChange = (type: string) => {
-    const defaults = PROVIDER_DEFAULTS[type]
-    if (defaults?.baseURL && !form.getFieldValue('base_url')) {
-      form.setFieldsValue({ base_url: defaults.baseURL })
-    }
-    if (!form.getFieldValue('name')) {
-      form.setFieldsValue({ name: typeLabel(type) })
-    }
+    setProviderType(type)
+    form.setFieldsValue({ base_url: PROVIDER_DEFAULTS[type]?.baseURL || '' })
   }
 
   const validateBaseUrl = (_: unknown, value: string) => {
@@ -69,8 +65,18 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
     return Promise.resolve()
   }
 
+  const openNewForm = () => {
+    setCreatedProviderId(null)
+    setModelEntryId(null)
+    setSuccess(false)
+    setErrorText('')
+    form.resetFields()
+    setProviderType('deepseek')
+    setShowForm(true)
+  }
+
   const handleSaveAndTest = async () => {
-    let values: { provider_type: string; name: string; base_url?: string; api_key?: string; model: string }
+    let values: { provider_type: string; base_url?: string; api_key?: string; model: string }
     try {
       values = await form.validateFields()
     } catch {
@@ -90,7 +96,7 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
         context_window: 256 * 1024,
       }]
       const payload: any = {
-        name: values.name,
+        name: typeLabel(values.provider_type),
         provider_type: values.provider_type,
         base_url: values.base_url || undefined,
         model: values.model,
@@ -118,6 +124,7 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
       invalidateProvidersCache()
       await setSceneDefaultModel('workbench', { provider_id: providerId, model_id: entryId })
       setSuccess(true)
+      setShowForm(false)
       onConfigured()
       message.success(t('onboarding.model.testSuccess'))
     } catch (e: any) {
@@ -131,10 +138,8 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
     <Form
       form={form}
       layout="vertical"
-      style={{ maxWidth: 520, margin: '0 auto' }}
       initialValues={{
         provider_type: 'deepseek',
-        name: typeLabel('deepseek'),
         base_url: PROVIDER_DEFAULTS.deepseek?.baseURL || '',
       }}
     >
@@ -144,20 +149,6 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
         rules={[{ required: true }]}
       >
         <Select options={typeOptions} showSearch optionFilterProp="label" onChange={handleTypeChange} placeholder={t('onboarding.model.typePlaceholder')} />
-      </Form.Item>
-      <Form.Item
-        name="name"
-        label={t('onboarding.model.name')}
-        rules={[{ required: true, message: t('onboarding.model.nameRequired') }]}
-      >
-        <Input placeholder={t('onboarding.model.namePlaceholder')} />
-      </Form.Item>
-      <Form.Item
-        name="base_url"
-        label={t('onboarding.model.baseUrl')}
-        rules={[{ validator: validateBaseUrl }]}
-      >
-        <Input placeholder={t('onboarding.model.baseUrlPlaceholder')} />
       </Form.Item>
       <Form.Item name="api_key" label={t('onboarding.model.apiKey')}>
         <Input.Password placeholder={t('onboarding.model.apiKeyPlaceholder')} autoComplete="new-password" />
@@ -169,18 +160,25 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
       >
         <Input placeholder={t('onboarding.model.modelIdPlaceholder')} />
       </Form.Item>
-      <div style={{ textAlign: 'center' }}>
-        <Button type="primary" size="large" loading={saving} onClick={handleSaveAndTest}>
-          {t('onboarding.model.saveAndTest')}
-        </Button>
-      </div>
+      {needsBaseUrl && (
+        <Form.Item
+          name="base_url"
+          label={t('onboarding.model.baseUrl')}
+          rules={[{ validator: validateBaseUrl }]}
+        >
+          <Input placeholder={t('onboarding.model.baseUrlPlaceholder')} />
+        </Form.Item>
+      )}
+      <Button type="primary" loading={saving} onClick={handleSaveAndTest}>
+        {t('onboarding.model.saveAndTest')}
+      </Button>
     </Form>
   )
 
   return (
-    <div style={{ textAlign: 'center', padding: '8px 0' }}>
-      <Title level={3} style={{ marginBottom: 8 }}>{t('onboarding.model.title')}</Title>
-      <Text type="secondary" style={{ display: 'block', maxWidth: 520, margin: '0 auto 28px' }}>
+    <div>
+      <Title level={4} style={{ marginBottom: 8 }}>{t('onboarding.model.title')}</Title>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>
         {t('onboarding.model.desc')}
       </Text>
 
@@ -191,7 +189,7 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
           icon={<CheckCircleFilled />}
           message={t('onboarding.model.successTitle')}
           description={t('onboarding.model.successDesc')}
-          style={{ maxWidth: 520, margin: '0 auto 20px', textAlign: 'left' }}
+          style={{ marginBottom: 16 }}
         />
       )}
 
@@ -206,30 +204,28 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured, onGoSett
               <Text type="secondary" style={{ fontSize: 12 }}>{t('onboarding.model.retryHint')}</Text>
             </div>
           }
-          style={{ maxWidth: 520, margin: '0 auto 20px', textAlign: 'left' }}
+          style={{ marginBottom: 16 }}
         />
       )}
 
       {hasProvider && !showForm ? (
-        <div style={{ maxWidth: 520, margin: '0 auto' }}>
-          <div
-            style={{
-              padding: '28px 20px', borderRadius: 12, marginBottom: 16,
-              background: token.colorSuccessBg, border: `1px solid ${token.colorSuccessBorder}`,
-            }}
-          >
-            <CheckCircleFilled style={{ fontSize: 40, color: token.colorSuccess, marginBottom: 12 }} />
-            <Title level={4} style={{ marginBottom: 8 }}>{t('onboarding.model.configuredTitle')}</Title>
-            <Text type="secondary">{t('onboarding.model.configuredDesc', { total: providers.length })}</Text>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+            borderRadius: 8, background: token.colorSuccessBg,
+            border: `1px solid ${token.colorSuccessBorder}`,
+          }}
+        >
+          <CheckCircleFilled style={{ fontSize: 16, color: token.colorSuccess }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ display: 'block' }}>{t('onboarding.model.configuredTitle')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('onboarding.model.configuredDesc', { total: providers.length })}
+            </Text>
           </div>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            <Button icon={<SettingOutlined />} onClick={onGoSettings}>
-              {t('onboarding.model.goSettings')}
-            </Button>
-            <Button type="text" icon={<PlusOutlined />} onClick={() => setShowForm(true)}>
-              {t('onboarding.model.addAnother')}
-            </Button>
-          </div>
+          <Button size="small" icon={<PlusOutlined />} onClick={openNewForm}>
+            {t('onboarding.model.addAnother')}
+          </Button>
         </div>
       ) : (
         renderForm()

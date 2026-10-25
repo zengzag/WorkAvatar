@@ -361,6 +361,33 @@ describe('workspace-manager / 员工 CRUD', () => {
   })
 })
 
+describe('workspace-manager / 默认员工播种', () => {
+  it('无用户员工时创建普通员工「通用专家」并写播种标记', () => {
+    service.ensureDefaultEmployee()
+    const list = service.getEmployeeList()
+    expect(list).toHaveLength(1)
+    expect(list[0].name).toBe('通用专家')
+    expect(list[0].rules).toContain('General Expert')
+    expect(fs.existsSync(list[0].workspace_path!)).toBe(true)
+    expect(mockState.settings.get('bootstrap.default_employee_seeded')).toBe('1')
+  })
+
+  it('已有用户员工时不创建（老用户升级不受影响）', () => {
+    service.createEmployee('已有员工')
+    service.ensureDefaultEmployee()
+    expect(service.getEmployeeList()).toHaveLength(1)
+    expect(mockState.settings.get('bootstrap.default_employee_seeded')).toBe('1')
+  })
+
+  it('用户删除默认员工后不再重建', () => {
+    service.ensureDefaultEmployee()
+    const emp = service.getEmployeeList()[0]
+    service.deleteEmployee(emp.id)
+    service.ensureDefaultEmployee()
+    expect(service.getEmployeeList()).toHaveLength(0)
+  })
+})
+
 describe('workspace-manager / createConversation 任务工作区', () => {
   it('未知员工且非注册员工时抛错', () => {
     expect(() => service.createConversation('ghost-employee')).toThrow('Employee not found')
