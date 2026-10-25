@@ -567,6 +567,8 @@ const ChatInput: React.FC<{
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      // 流式回复/压缩期间禁用发送：否则消息会被下游静默丢弃，而输入框已被清空导致内容丢失
+      if (isStreaming || isCompacting) return
       const plain = getPlainText()
       // skill 命令唯一匹配且无参数：替换 /xxx 为 `/<name> ` 让用户继续输入参数
       if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
@@ -579,7 +581,7 @@ const ChatInput: React.FC<{
       }
       handleSendRef.current()
     }
-  }, [getPlainText, currentSlashItems, emitDraftChange])
+  }, [getPlainText, currentSlashItems, emitDraftChange, isStreaming, isCompacting])
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
   // skill 激活统一通过 activate_skill 工具；一条消息内可含多个技能命令，逐个转换
@@ -612,6 +614,8 @@ const ChatInput: React.FC<{
   }, [])
 
   const handleSend = useCallback(() => {
+    // 流式回复/压缩期间禁用发送，避免消息被下游丢弃后输入框仍被清空
+    if (isStreaming || isCompacting) return
     if (!hasEditorContent() && attachedImages.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
     let content = editorRef.current ? extractContentFromEditor(editorRef.current).replace(/\u200B/g, '') : ''
@@ -627,7 +631,7 @@ const ChatInput: React.FC<{
     if (editorRef.current) editorRef.current.innerHTML = ''
     emitDraftChange()
     onDraftChange?.('')
-  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange, isStreaming, isCompacting])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
