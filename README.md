@@ -75,7 +75,7 @@ A bundled **Plugin Development Assistant** lets an employee write a plugin insid
 | **Automation** | Runs an employee task daily, weekly or monthly, retries on failure, and notifies you when done. Every run links back to its conversation. |
 | **Task Templates** | Build multi-step workflows on a canvas with agent, review, condition, loop, parallel and human nodes, plus pass / fail gating and round limits. A built-in Template Designer turns a written requirement into a runnable template. |
 | **AI Aggregator** | Opens third-party AI sites such as Doubao and DeepSeek inside the app in single, dual or tabbed layouts, with isolated login state per site. Any HTTPS page can be added. Subject to each site's own terms. |
-| **Image Studio** | Built for slide visuals, research figures, architecture and flow diagrams: purpose presets for PPT slides and covers, scientific schematics, paper figures, charts, infographics, architecture diagrams, flowcharts and academic posters that set aspect ratio, text space, palette and no-text constraints automatically, plus AI prompt optimization. Works with Volcengine Seedream, Qwen Image and OpenAI GPT Image, with transparent backgrounds, reference images and crisp title overlays. Results are saved locally and employees can generate images through an agent tool. |
+| **Image Studio** | Built for slide visuals, research figures, architecture and flow diagrams: purpose presets for PPT slides and covers, scientific schematics, paper figures, charts, infographics, architecture diagrams, flowcharts and academic posters that set aspect ratio, text space, palette and no-text constraints automatically, plus AI prompt optimization. Works with Volcengine Seedream, Qwen Image and OpenAI GPT Image, with transparent backgrounds and reference images. Results are saved locally and employees can generate images through an agent tool. |
 
 <div align="center">
   <table><tr>
@@ -97,7 +97,7 @@ A bundled **Plugin Development Assistant** lets an employee write a plugin insid
 
 Download the latest build from [Releases](https://github.com/zengzag/WorkAvatar/releases/latest) (Windows 10/11 installer). On macOS, [build from source](#build-from-source).
 
-The first launch opens a wizard that walks you through connecting a model service, creating your first employee and adding a folder to the knowledge base. You can skip it and run it again from Settings → General.
+The first launch opens a short setup that walks you through connecting a model service and creating your first employee. You can skip it and run it again from Settings → General.
 
 ### First run
 
