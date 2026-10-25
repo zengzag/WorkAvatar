@@ -81,6 +81,7 @@ import type {
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
+  PluginSettingsInfo,
   ShellBgKillResult,
   ShellBgTaskItem,
   SubAgentProfile,
@@ -580,6 +581,10 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_COMMANDS) as Promise<Array<{ pluginId: string; id: string; title: string }>>,
     resolveFileOwner: (extension: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
+    getSettings: (pluginId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_GET_SETTINGS, { pluginId }) as Promise<PluginSettingsInfo>,
+    setSettings: (pluginId: string, values: Record<string, unknown>) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_SET_SETTINGS, { pluginId, values }) as Promise<PluginSettingsInfo>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
   },
 

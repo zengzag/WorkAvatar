@@ -120,6 +120,7 @@ export type {
   PluginImportParams,
   PluginImportResult,
   PluginMessageActionInfo,
+  PluginSettingsInfo,
 } from './channels/plugin'
 export type {
   NotifyPayload,

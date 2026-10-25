@@ -55,11 +55,12 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 | `name` / `version` | ✓      | 展示名 / semver                                                                          |
 | `engine`           | ✓      | 宿主协议 semver range（当前为 `>=0.2.0`），不满足则禁用并提示                                            |
 | `main`             | ✓      | 主进程入口（cjs），相对根目录                                                                      |
-| `renderer`         | <br /> | 渲染端入口（ESM）；纯后台插件可省略                                                                   |
+| `renderer`         | <br /> | 渲染端入口（ESM）；**无界面插件（纯后台）可省略**，不影响主进程工具/技能/员工贡献 |
 | `locale`           | <br /> | locale 目录名，默认 `locale`                                                                |
 | `ipc`              | <br /> | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀                                           |
 | `capabilities`     | <br /> | 能力域授权声明（见 §5）                                                                         |
-| `nav`              | <br /> | 导航项：`label`、`icon`、`order`、`detachable`                                               |
+| `nav`              | <br /> | 导航项：`label`、`icon`、`order`、`detachable`；无界面插件省略                                      |
+| `settings`         | <br /> | 插件参数表单声明：宿主「设置 → 插件 → 插件设置」按此渲染并落库（见 §5.1）                                          |
 | `dependencies`     | <br /> | 插件依赖（pluginId → semver range），缺失/不满足/未启用则标记 invalid，按拓扑激活                             |
 
 参考真实示例：开发包 `plugin-template/` 模板工程的 `manifest.json`（最小可构建示例）。
@@ -92,6 +93,7 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 export const migrations?: PluginMigration[]    // 可选，见 §10
 export function activate(ctx: PluginContext): void | Promise<void>
 export function deactivate?(): void | Promise<void>   // 释放定时器/窗口/DB 连接
+export function onSettingsChanged?(values: Record<string, unknown>): void // 可选：设置页保存后热应用
 ```
 
 ## 5. ctx（PluginContext）能力
@@ -103,6 +105,7 @@ interface PluginContext {
   paths: { root; data; resources }    // 安装根 / userData/plugin-data/<id> / resources
   ipc: PluginIpc                      // handle / broadcast
   storage: PluginStorage              // openSqlite / KV
+  settings: PluginSettingsApi         // getAll / get / onChanged，见 §5.1
   services: PluginServices            // 按 capabilities 注入，见 §6-9
   contributions: PluginContributionsApi // 见 §10
   webview: PluginWebviewApi           // allowOrigins：运行时追加内嵌域名
@@ -118,6 +121,40 @@ interface PluginContext {
 - `storage.openSqlite(name?)`：独立分库（WAL）；`storage.get/set/delete/keys`：插件作用域 KV（存 `plugin_kv` 表，不写内核 settings）。
 
 - `webview.allowOrigins(hosts)`：运行时追加本插件的内嵌网页域名白名单（如用户自定义网页），需 manifest 声明 `capabilities.webview.allowUserOrigins: true`。每项必须是精确主机名（不支持通配/协议/端口/路径），宿主恒按 https 放行；每次调用整体替换，插件下线时自动清空。
+
+### 5.1 插件设置（manifest.settings + ctx.settings）
+
+无界面插件（不声明 `renderer` / `nav`）的主要配置入口：在 manifest 声明表单，宿主设置页渲染并落库，插件读取后即时应用。
+
+```json
+{
+  "settings": [
+    { "key": "apiBase", "type": "string", "label": "settings.apiBase", "description": "settings.apiBaseDesc",
+      "default": "https://example.com", "required": true },
+    { "key": "interval", "type": "number", "label": "settings.interval", "default": 30, "min": 5, "max": 600 },
+    { "key": "enabled", "type": "boolean", "label": "settings.enabled", "default": true },
+    { "key": "mode", "type": "select", "label": "settings.mode", "default": "fast",
+      "options": [{ "value": "fast", "label": "settings.modeFast" }, { "value": "full", "label": "settings.modeFull" }] },
+    { "key": "notes", "type": "textarea", "label": "settings.notes" }
+  ]
+}
+```
+
+- 字段类型：`string` / `textarea` / `number` / `boolean` / `select`；`label`、`description`、`placeholder`、`options[].label` 支持插件 locale 的 i18n key（缺键时按原文展示）
+- 值存内核 settings 表（不占插件分库）；读取时自动合并 `default`，非法存量值回退默认值
+- 宿主侧校验：`key` 唯一且匹配 `/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/`，`number` 受 `min/max` 约束，`select` 必须命中 `options`，`required` 非空；校验失败直接提示用户
+
+```ts
+interface PluginSettingsApi {
+  getAll(): Record<string, unknown>
+  get<T = unknown>(key: string): T | undefined
+  onChanged(cb: (values: Record<string, unknown>) => void): () => void
+}
+```
+
+- 激活期间可直接 `ctx.settings.get('interval')` 读取当前值
+- 用户在设置页修改后：`onChanged` 监听器（含 `ctx.settings.onChanged`）与入口导出的 `onSettingsChanged(values)` 依次触发，并广播 `settings:changed` 给插件渲染端（`bridge.onEvent('settings:changed')`）
+- 无界面插件无需任何 UI 代码即可获得完整参数配置能力
 
 **文案本地化（始终可用，无能力要求）**：
 

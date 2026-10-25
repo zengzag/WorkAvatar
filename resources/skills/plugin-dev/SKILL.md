@@ -86,7 +86,14 @@ WorkAvatar 插件 = **manifest 声明 + 双入口插件包（主进程 CJS + 渲
     "icon": "<svg .../>",
     "order": 100,
     "detachable": true
-  }
+  },
+  "settings": [
+    { "key": "apiBase", "type": "string", "label": "settings.apiBase", "default": "https://example.com", "required": true },
+    { "key": "interval", "type": "number", "label": "settings.interval", "default": 30, "min": 5, "max": 600 },
+    { "key": "enabled", "type": "boolean", "label": "settings.enabled", "default": true },
+    { "key": "mode", "type": "select", "label": "settings.mode", "default": "fast",
+      "options": [{ "value": "fast", "label": "settings.modeFast" }, { "value": "full", "label": "settings.modeFull" }] }
+  ]
 }
 ```
 
@@ -96,6 +103,9 @@ WorkAvatar 插件 = **manifest 声明 + 双入口插件包（主进程 CJS + 渲
 - `ipc`：主进程要注册的通道**短名**白名单（配合 `ctx.ipc.handle`），宿主自动加 `plugin:<id>:` 前缀
 - `capabilities`：未声明的能力域对应服务为 `undefined`；**最小权限原则**，只声明实际需要的
 - `nav`：只有"要有侧边栏页面"的插件才需要；纯后台插件整体省略。`label` 填 locale 文件中的 key
+- **无界面插件**：省略 `renderer` 与 `nav`，仍可注册 agent 工具 / MCP 工具 / 技能（`skills/` 目录）/ 命令 / 定时任务 / 员工；
+  运行参数用 `settings` 声明，宿主「设置 → 插件 → 插件设置」自动渲染表单并落库
+- `settings`：类型 `string`/`textarea`/`number`/`boolean`/`select`；`label`/`description`/`options[].label` 可填 locale key；插件用 `ctx.settings.get/getAll` 读取，导出 `onSettingsChanged` 或订阅 `ctx.settings.onChanged` 热应用
 
 ### 能力选型表
 
@@ -155,6 +165,17 @@ export function activate(ctx: PluginContext): void {
 }
 
 export function deactivate(): void { /* 关定时器/窗口/DB 连接 */ }
+
+// 可选：设置页保存后热应用（无需重启插件；ctx 建议存模块级变量后在回调中复用）
+export function onSettingsChanged(values: Record<string, unknown>): void {
+  // 按新 values 更新定时器 / 缓存 / 连接等
+}
+```
+
+设置读取（manifest.settings 声明后可用）：
+
+```ts
+const interval = ctx.settings.get<number>('interval') ?? 30
 ```
 
 ## 渲染端入口（src/renderer/index.tsx）

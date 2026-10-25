@@ -60,7 +60,10 @@ export function activate(ctx: PluginContext): void {
   // ====== 1. IPC：greet / count（基础调用 + 广播到渲染端） ======
   ctx.ipc.handle('greet', (payload: unknown) => {
     const name = (payload as { name?: string })?.name ?? 'World'
-    return { message: `Hello, ${name}!` }
+    const greeting = ctx.settings.get<string>('greeting') || 'Hello'
+    const message = `${greeting}, ${name}!`
+    // manifest.settings 声明的参数由宿主设置页渲染，greet 读取其中的 greeting / shout
+    return { message: ctx.settings.get<boolean>('shout') ? message.toUpperCase() : message }
   })
 
   ctx.ipc.handle('count', () => {
@@ -326,4 +329,10 @@ export function deactivate(): void {
   }
   pluginCtx = null
   count = 0
+}
+
+// ====== 宿主设置页保存后的热应用回调（可选） ======
+// manifest.settings 由宿主渲染表单并落库；此处无需重启即可让新配置生效（示例仅记录日志）
+export function onSettingsChanged(values: Record<string, unknown>): void {
+  pluginCtx?.services.logger.info('hello-world 设置已更新', values)
 }

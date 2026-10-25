@@ -39,6 +39,23 @@
     { "domain": "system", "features": ["notification", "scheduler", "windows", "native", "globalShortcuts"] },
     { "domain": "collaboration", "shared": { "write": true }, "call": ["example-hello-world:echo"] }
   ],
+  "settings": [
+    {
+      "key": "greeting",
+      "type": "string",
+      "label": "settings.greeting",
+      "description": "settings.greetingDesc",
+      "placeholder": "Hello",
+      "default": "Hello"
+    },
+    {
+      "key": "shout",
+      "type": "boolean",
+      "label": "settings.shout",
+      "description": "settings.shoutDesc",
+      "default": false
+    }
+  ],
   "nav": {
     "label": "navLabel",
     "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"8\" cy=\"8\" r=\"6.5\"/><path d=\"M5.5 8.5l1.5 1.5 3.5-3.5\"/></svg>",

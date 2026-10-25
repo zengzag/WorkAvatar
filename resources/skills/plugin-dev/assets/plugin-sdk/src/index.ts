@@ -3,6 +3,9 @@ export type {
   PluginManifestEmployee,
   PluginNavContribution,
   PluginCapability,
+  PluginSettingField,
+  PluginSettingOption,
+  PluginSettingType,
   PluginDataEntity,
   PluginDataAccess,
   PluginExecuteKind,
@@ -81,6 +84,7 @@ export type {
   PluginIpc,
   PluginPaths,
   PluginMainModule,
+  PluginSettingsApi,
   PluginWebviewApi,
 } from './context'
 export type {
