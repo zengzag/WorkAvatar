@@ -223,17 +223,13 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb {
   color: var(--text-tertiary, rgba(0, 0, 0, 0.45));
 }
 
-.quick-add-input,
-.quick-add-input:hover,
-.quick-add-input:focus {
+.ant-input.quick-add-input,
+.ant-input.quick-add-input:hover,
+.ant-input.quick-add-input:focus {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
   outline: none !important;
-}
-
-.quick-add-input:focus {
-  outline: none;
 }
 
 .ant-input-textarea-focused.quick-add-input {
