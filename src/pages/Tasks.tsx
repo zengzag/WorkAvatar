@@ -293,6 +293,7 @@ const Tasks: React.FC = () => {
     handleCopy,
     handleDeleteMessage,
     handleRegenerate,
+    handleRetryMessage,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
     handleToggleSegment,
@@ -1091,6 +1092,7 @@ const Tasks: React.FC = () => {
                     onCopy={handleCopy}
                     onDeleteMessage={handleDeleteMessage}
                     onRegenerate={handleRegenerate}
+                    onRetry={handleRetryMessage}
                     onSwitchModelRegenerate={handleSwitchModelRegenerate}
                     onEditAndResubmit={handleEditAndResubmit}
                     onToggleSegment={handleToggleSegment}

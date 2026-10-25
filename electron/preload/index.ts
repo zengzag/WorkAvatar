@@ -190,6 +190,8 @@ const electronAPI = {
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
     chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
+    /** 原地重试：重新发起失败的那一次 LLM 请求 */
+    resumeEmployeeChatStream: (conversationId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_RESUME, conversationId),
     compactConversation: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, params),
     getContextStats: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
@@ -233,6 +235,12 @@ const electronAPI = {
       const handler = (_event: any, data: { sessionId: string; toolCallId: string; name: string; progress: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
+    },
+    /** 每次模型请求开始：渲染端据此记录失败重试的段回滚边界 */
+    onIterationStart: (callback: (data: { sessionId: string; iteration: number }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; iteration: number }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_ITERATION_START, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_ITERATION_START, handler)
     },
     onRunEvent: (callback: (data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => void) => {
       const handler = (_event: any, data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => callback(data)

@@ -86,6 +86,9 @@ interface EmployeeChatCallbacks {
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
   onToolResult: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
+  /** 每次模型请求开始（渲染端据此记录失败重试的回滚边界） */
+  onIterationStart?: (iteration: number) => void
+  onIterationEnd?: (iteration: number) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
 }
@@ -734,6 +737,8 @@ class EmployeeAgentService {
           onToolCallDelta: callbacks.onToolCallDelta,
           onToolResult: callbacks.onToolResult,
           onToolProgress: callbacks.onToolProgress,
+          onIterationStart: callbacks.onIterationStart,
+          onIterationEnd: callbacks.onIterationEnd,
           onDone: (metadata?: any) => {
             callbacks.onDone(metadata)
           },

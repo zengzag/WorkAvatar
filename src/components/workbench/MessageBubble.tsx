@@ -321,6 +321,8 @@ const MessageBubble: React.FC<{
   onCopy: (content: string) => void
   onDeleteMessage: (msgId: string) => void
   onRegenerate: (msgId: string) => void
+  /** 出错重试：原地从失败处继续生成 */
+  onRetry?: (msgId: string) => void
   onSwitchModelRegenerate: (msgId: string, providerId: string, modelId: string) => void
   onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
@@ -330,6 +332,8 @@ const MessageBubble: React.FC<{
   getToolDisplayName: (name: string) => string
   providers: any[]
   isLastAssistantMessage?: boolean
+  /** 是否为会话最后一条消息（出错重试只对末尾消息生效） */
+  isLastMessage?: boolean
   contextStats?: any
   isCompacting?: boolean
   onCompact?: () => void
@@ -339,7 +343,7 @@ const MessageBubble: React.FC<{
   assistantEmployee?: Employee | null
   /** 当前对话平均输出速度（tok/s），展示在用量弹窗中 */
   conversationTokensPerSec?: number
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee, conversationTokensPerSec }) => {
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onRetry, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, isLastMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee, conversationTokensPerSec }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -621,6 +625,18 @@ const MessageBubble: React.FC<{
               <GeneratedFilesBar segments={displaySegments} />
             )}
 
+            {!displayIsStreaming && displayIsError && !showBranchContent && isLastMessage && onRetry && (
+              <div style={{ marginTop: 2, marginLeft: 2 }}>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined style={{ fontSize: 12 }} />}
+                  onClick={() => onRetry(msg.id)}
+                >
+                  {t('workbench.retry')}
+                </Button>
+              </div>
+            )}
+
             {!displayIsStreaming && displayMsg.isAborted && (
               <div style={{ marginTop: 2, marginLeft: 2 }}>
                 <Tag color="warning" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
@@ -764,6 +780,7 @@ export default memo(MessageBubble, (prev, next) => {
     && prev.providers === next.providers
     && prev.assistantEmployee === next.assistantEmployee
     && prev.isLastAssistantMessage === next.isLastAssistantMessage
+    && prev.isLastMessage === next.isLastMessage
     && prev.contextStats === next.contextStats
     && prev.conversationTokensPerSec === next.conversationTokensPerSec
     && prev.isCompacting === next.isCompacting

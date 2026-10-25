@@ -15,6 +15,12 @@ import {
   appendNestedDelegation,
   mapSegmentsTree,
   toggleSegmentInTree,
+  isErrorNoticeSegment,
+  nextStreamCounters,
+  rollbackFailedAttempt,
+  markLlmRequestStart,
+  peekLlmRequestSegStart,
+  clearLlmRequestSegStart,
 } from '../../../src/hooks/chat-helpers'
 import type { MessageWithThought } from '../../../src/components/workbench'
 import type { MessageSegment } from '../../../src/components/workbench/types'
@@ -495,5 +501,65 @@ describe('chat-helpers / calcTotalOutputChars 边界', () => {
 
   it('Unicode（代理对）按 UTF-16 长度统计', () => {
     expect(calcTotalOutputChars([], '😀')).toBe(2)
+  })
+})
+
+describe('chat-helpers / 出错重试辅助', () => {
+  it('isErrorNoticeSegment：按标记或历史 id 约定识别错误提示段', () => {
+    expect(isErrorNoticeSegment({ type: 'answer', id: 'x', isErrorNotice: true })).toBe(true)
+    expect(isErrorNoticeSegment({ type: 'answer', id: 'msg_1_err_1699999999999' })).toBe(true)
+    expect(isErrorNoticeSegment({ type: 'answer', id: 'msg_1_start_err_1699999999999' })).toBe(true)
+    expect(isErrorNoticeSegment({ type: 'answer', id: 'msg_1_seg_0', content: '正文' })).toBe(false)
+  })
+
+  it('nextStreamCounters：从已有段 id 续编号，避免续写时 id 冲突', () => {
+    const segs: MessageSegment[] = [
+      { type: 'answer', id: 'msg_1_seg_2' },
+      { type: 'tool_call', id: 'msg_1_tool_1' },
+      { type: 'delegation', id: 'msg_1_run_4', subSegments: [{ type: 'answer', id: 'msg_1_run_4_seg_0' }] },
+    ]
+    expect(nextStreamCounters('msg_1', segs)).toEqual({
+      segCounter: 3,
+      toolCallCounter: 2,
+      runCounter: 5,
+      groupSeq: 0,
+    })
+  })
+
+  it('nextStreamCounters：无段时全部从 0 开始', () => {
+    expect(nextStreamCounters('msg_1')).toEqual({ segCounter: 0, toolCallCounter: 0, runCounter: 0, groupSeq: 0 })
+  })
+
+  it('rollbackFailedAttempt：回滚到失败请求起点，并丢弃错误提示段', () => {
+    const segs: MessageSegment[] = [
+      { type: 'answer', id: 'a1', content: '前文' },
+      { type: 'tool_call', id: 't1', toolName: 'x' },
+      { type: 'answer', id: 'a2', content: '失败请求的半截输出' },
+      { type: 'answer', id: 'msg_1_err_1', content: '错误', isErrorNotice: true },
+    ]
+    expect(rollbackFailedAttempt(segs, 2)).toEqual({ segments: segs.slice(0, 2), content: '前文' })
+    // 旧数据没有边界：只丢弃错误提示段
+    expect(rollbackFailedAttempt(segs)).toEqual({
+      segments: segs.slice(0, 3),
+      content: '前文失败请求的半截输出',
+    })
+  })
+
+  it('rollbackFailedAttempt：保留失败请求期间仍在运行的子任务卡', () => {
+    const segs: MessageSegment[] = [
+      { type: 'answer', id: 'a1', content: '前文' },
+      { type: 'answer', id: 'a2', content: '半截' },
+      { type: 'delegation', id: 'd1', runId: 'r1', delegationStatus: 'streaming' },
+    ]
+    const res = rollbackFailedAttempt(segs, 1)
+    expect(res.segments.map(s => s.id)).toEqual(['a1', 'd1'])
+    expect(res.content).toBe('前文')
+  })
+
+  it('模型请求段边界：按消息记录、读取后可显式清理', () => {
+    markLlmRequestStart('msg_m', 3)
+    expect(peekLlmRequestSegStart('msg_m')).toBe(3)
+    clearLlmRequestSegStart('msg_m')
+    expect(peekLlmRequestSegStart('msg_m')).toBeUndefined()
   })
 })

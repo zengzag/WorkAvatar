@@ -19,7 +19,10 @@ import {
   SCROLL_BOTTOM_THRESHOLD_PX,
   DEFAULT_TEMPERATURE,
   buildEnrichedHistory,
+  clearLlmRequestSegStart,
   createPersistentMessagesCache,
+  nextStreamCounters,
+  rollbackFailedAttempt,
   toggleSegmentInTree,
 } from './chat-helpers'
 import { useStreamListeners, getPersistentEmployeeId, setPersistentEmployeeId } from './useStreamListeners'
@@ -49,6 +52,9 @@ function stripMessageRuntimeFields(m: MessageWithThought): MessageWithThought {
   const copy: any = { ...m }
   delete copy.isStreaming
   delete copy._comparisonBranchMsgs
+  // 失败重试的运行时标记（会话/回滚点）随分支复制会指错目标
+  delete copy.failedSessionId
+  delete copy.failedRequestSegStart
   if (Array.isArray(copy.segments)) {
     copy.segments = copy.segments.map((s: any) => {
       const seg = { ...s }
@@ -361,6 +367,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           type: 'answer' as const,
           content: errorText,
           isStreaming: false,
+          isErrorNotice: true,
           timestamp: Date.now(),
           completedAt: Date.now(),
         }],
@@ -1553,6 +1560,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     assistantMessageId: string,
     providerId: string,
     modelId: string | undefined,
+    initialCounters?: Partial<Pick<ConversationStreamState, 'segCounter' | 'toolCallCounter' | 'runCounter' | 'groupSeq'>>,
   ) => {
     setConvMessages(convId, newMessages)
     await window.electronAPI.conversation.update({
@@ -1570,10 +1578,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       isStreaming: true,
       conversationId: convId,
       assistantMessageId,
-      segCounter: 0,
-      toolCallCounter: 0,
-      runCounter: 0,
-      groupSeq: 0,
+      segCounter: initialCounters?.segCounter ?? 0,
+      toolCallCounter: initialCounters?.toolCallCounter ?? 0,
+      runCounter: initialCounters?.runCounter ?? 0,
+      groupSeq: initialCounters?.groupSeq ?? 0,
     }
 
     try {
@@ -1593,7 +1601,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       if (result?.sessionId) {
         streamStatesRef.current.set(result.sessionId, streamState)
       }
-    } catch {
+    } catch (err) {
       streamState.isStreaming = false
       for (const [sid, ss] of streamStatesRef.current) {
         if (ss === streamState) {
@@ -1601,6 +1609,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           break
         }
       }
+      // 发起即失败：占位消息就地收尾为错误态，避免永远停在"生成中"
+      finalizeFailedStreamStart(convId, assistantMessageId, err)
       setIsStreaming(false)
       isStreamingRef.current = false
     }
@@ -1660,6 +1670,98 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       providerId,
       modelId,
     )
+  }
+
+  /**
+   * 出错重试：重新发起失败的那一次 LLM 请求（原地续跑）。
+   * agent 循环上下文仍保留在主进程内存中，这里只回滚该次请求的残缺输出并重新挂上
+   * 原会话的事件流；续跑后的事件继续落到同一条助手消息，流程与未出错时完全一致。
+   */
+  const handleRetryMessage = async (msgId: string) => {
+    const convId = activeConversationIdRef.current
+    if (!convId) return false
+    const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
+    if (hasActiveStream) return false
+
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
+    const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
+    // 只有末尾消息能原地续跑（后面已有新内容时上下文已不匹配）
+    if (msgIndex < 0 || msgIndex !== currentMsgs.length - 1) return false
+    const targetMsg = currentMsgs[msgIndex]
+    if (targetMsg.role !== 'assistant' || !targetMsg.isError) return false
+
+    const sessionId = targetMsg.failedSessionId
+    if (!sessionId) {
+      message.warning(t('workbench.retryUnavailable'))
+      return false
+    }
+
+    // 回滚失败请求的残缺输出：续跑等价于该请求没有发生过
+    const rollback = rollbackFailedAttempt(targetMsg.segments, targetMsg.failedRequestSegStart)
+    const retriedMsg: MessageWithThought = {
+      ...targetMsg,
+      content: rollback.content,
+      segments: rollback.segments,
+      isStreaming: true,
+      isError: false,
+      isAborted: false,
+      failedSessionId: undefined,
+      failedRequestSegStart: undefined,
+    }
+
+    const newMessages = [...currentMsgs]
+    newMessages[msgIndex] = retriedMsg
+
+    const persist = (msgs: MessageWithThought[]) => {
+      const ts = Math.floor(Date.now() / 1000)
+      window.electronAPI.conversation.update({
+        id: convId,
+        messages_json: JSON.stringify(msgs),
+        message_count: msgs.length,
+        last_message_at: ts,
+      }).catch(() => {})
+      updateConvLastMessageAt(convId, ts)
+    }
+
+    setConvMessages(convId, newMessages)
+    persist(newMessages)
+    clearLlmRequestSegStart(msgId)
+
+    setupGlobalListeners()
+    streamStatesRef.current.set(sessionId, {
+      isStreaming: true,
+      conversationId: convId,
+      assistantMessageId: msgId,
+      ...nextStreamCounters(msgId, rollback.segments),
+    })
+    setIsStreaming(true)
+    isStreamingRef.current = true
+
+    const restoreFailedState = () => {
+      streamStatesRef.current.delete(sessionId)
+      const restored = [...newMessages]
+      restored[msgIndex] = targetMsg
+      setConvMessages(convId, restored)
+      persist(restored)
+      setIsStreaming(false)
+      isStreamingRef.current = false
+    }
+
+    try {
+      const res = await window.electronAPI.llm.resumeEmployeeChatStream(convId)
+      if (!res?.success) {
+        // 可续跑状态已失效（应用重启/被新对话取代）：恢复错误态，不产生额外动作
+        restoreFailedState()
+        message.warning(t('workbench.retryUnavailable'))
+        return false
+      }
+      return true
+    } catch (err) {
+      restoreFailedState()
+      console.error('Failed to resume chat:', err)
+      message.warning(t('workbench.retryUnavailable'))
+      return false
+    }
   }
 
   const handleSwitchModelRegenerate = async (msgId: string, providerId: string, modelId: string) => {
@@ -2488,6 +2590,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     handleCopy,
     handleDeleteMessage,
     handleRegenerate,
+    handleRetryMessage,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
     handleExportConversation,

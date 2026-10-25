@@ -17,6 +17,8 @@ import { safeHandle } from './_shared'
 import { flushRunStream, registerSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
 import SubAgentRuntime from '../services/agent-runtime/runtime'
 import WorkspaceManagerService from '../services/workspace-manager.service'
+import { clearResumableRun, getResumableRun, takeResumableRun } from '../services/agent/core/resumable-runs'
+import LLMLoggerService from '../services/llm-logger.service'
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
@@ -26,6 +28,20 @@ export function registerLLMHandlers(
   // 会话附带的员工/对话信息，供前端查询"仍在运行"的会话以恢复 UI（renderer 重载后状态丢失）
   const activeSessionsMeta: Map<string, { employeeId?: string; conversationId?: string }> = new Map()
   const interactionService = UnifiedInteractionService.getInstance()
+
+  /**
+   * 把"可原地续跑"状态与发起它的 IPC 会话/窗口绑定：错误推给前端后，
+   * 前端点重试时据此把续跑事件继续推送到同一条助手消息。
+   */
+  const attachResumableContext = (conversationId: string | undefined, sessionId: string, sender: Electron.WebContents) => {
+    if (!conversationId) return
+    const run = getResumableRun(conversationId)
+    if (!run) return
+    run.sessionId = sessionId
+    run.sender = sender
+    run.interactionStore = interactionContext.getStore()
+    run.logContext = LLMLoggerService.getInstance().getCurrentContext()
+  }
 
   safeHandle(IPC_CHANNELS.LLM_ABORT_CHAT, (sessionId?: string) => {
     if (sessionId) {
@@ -119,6 +135,8 @@ export function registerLLMHandlers(
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: EmployeeChatStreamParams) => {
     const abortController = new AbortController()
     const sessionId = generateId()
+    // 新的一次对话会取代该会话遗留的续跑状态
+    clearResumableRun(params.conversation_id)
     activeSessions.set(sessionId, abortController)
     activeSessionsMeta.set(sessionId, { employeeId: params.employee_id, conversationId: params.conversation_id })
     registerSessionWebContents(sessionId, event.sender)
@@ -272,6 +290,12 @@ export function registerLLMHandlers(
                   event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
                 }
               },
+              onIterationStart: (iteration: number) => {
+                if (abortController.signal.aborted) return
+                if (!event.sender.isDestroyed()) {
+                  event.sender.send(IPC_CHANNELS.AGENT_ITERATION_START, { sessionId, iteration })
+                }
+              },
               onDone: (metadata?: any) => {
                 flushAllStreams() // 确保缓冲区中的增量不丢失
                 // 子任务流式增量先于主管 done 下发，避免收尾后仍有零星 chunk 落到已结束的消息上
@@ -305,6 +329,7 @@ export function registerLLMHandlers(
               onError: (error: string) => {
                 flushAllStreams()
                 if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                  attachResumableContext(params.conversation_id, sessionId, event.sender)
                   event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
                   sentError = true
                 }
@@ -342,6 +367,55 @@ export function registerLLMHandlers(
     })
 
     return { success: true, sessionId }
+  })
+
+  /**
+   * 原地重试：重新发起失败的那一次 LLM 请求。
+   * agent 循环上下文仍保留在主进程内存中，不新增消息、不重建历史，
+   * 续跑事件沿用原 sessionId 推回同一条助手消息，后续流程与未出错时一致。
+   */
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_RESUME, async (event, conversationId?: string) => {
+    try {
+      if (!conversationId) return { success: false, error: '缺少会话 ID' }
+      const run = takeResumableRun(conversationId)
+      if (!run?.sessionId || !run.sender || run.sender.isDestroyed()) {
+        return { success: false, error: 'no_resumable_run' }
+      }
+      const sessionId = run.sessionId
+      if (activeSessions.has(sessionId)) return { success: false, error: 'already_running' }
+
+      const abortController = new AbortController()
+      activeSessions.set(sessionId, abortController)
+      activeSessionsMeta.set(sessionId, { employeeId: run.interactionStore?.employeeId, conversationId })
+      registerSessionWebContents(sessionId, event.sender)
+      interactionService.registerSession(sessionId, event.sender)
+
+      // 续跑仍在原会话上下文里执行：权限确认/ask_user/委托路由都依赖它
+      const store = {
+        ...(run.interactionStore || {}),
+        employeeId: run.interactionStore?.employeeId || '',
+        sessionId,
+        conversationId,
+        abortSignal: abortController.signal,
+      }
+      const resume = () => run.resume(abortController.signal)
+      const logger = LLMLoggerService.getInstance()
+
+      void interactionContext.run(store, () => (
+        run.logContext ? logger.runWithContext(run.logContext, resume) : resume()
+      ))
+        .catch(() => {})
+        .finally(() => {
+          activeSessions.delete(sessionId)
+          activeSessionsMeta.delete(sessionId)
+          unregisterSessionWebContents(sessionId)
+          interactionService.unregisterSession(sessionId)
+        })
+
+      return { success: true, sessionId }
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) }
+    }
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, async (params: {

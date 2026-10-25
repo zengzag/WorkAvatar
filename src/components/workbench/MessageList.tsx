@@ -21,6 +21,8 @@ interface MessageListProps {
   onCopy: (content: string) => Promise<void>
   onDeleteMessage: (msgId: string) => void
   onRegenerate: (msgId: string) => void
+  /** 出错重试：原地从失败处继续生成 */
+  onRetry?: (msgId: string) => void
   onSwitchModelRegenerate: (msgId: string, providerId: string, modelId: string) => void
   onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
@@ -46,6 +48,7 @@ const MessageList: React.FC<MessageListProps> = ({
   onCopy,
   onDeleteMessage,
   onRegenerate,
+  onRetry,
   onSwitchModelRegenerate,
   onEditAndResubmit,
   onToggleSegment,
@@ -227,6 +230,7 @@ const MessageList: React.FC<MessageListProps> = ({
                   onCopy={onCopy}
                   onDeleteMessage={onDeleteMessage}
                   onRegenerate={onRegenerate}
+                  onRetry={onRetry}
                   onSwitchModelRegenerate={onSwitchModelRegenerate}
                   onEditAndResubmit={onEditAndResubmit}
                   onToggleSegment={onToggleSegment}
@@ -236,6 +240,7 @@ const MessageList: React.FC<MessageListProps> = ({
                   getToolDisplayName={getToolDisplayName}
                   providers={providers}
                   isLastAssistantMessage={isLastAssistantMsg}
+                  isLastMessage={fullIndex === messages.length - 1}
                   contextStats={isLastAssistantMsg ? contextStats : undefined}
                   isCompacting={isLastAssistantMsg ? isCompacting : false}
                   onCompact={isLastAssistantMsg ? onCompact : undefined}

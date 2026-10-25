@@ -31,6 +31,8 @@ export interface MessageSegment {
   toolCallId?: string
   /** LLM 正在流式生成工具参数（arguments JSON 尚未完成） */
   isToolArgsStreaming?: boolean
+  /** 该 answer 段是 LLM 调用失败的提示文本（不是模型输出，不可进入后续上下文） */
+  isErrorNotice?: boolean
   /** 流式生成中的原始参数文本（JSON 字符串，可能不完整） */
   toolArgsRaw?: string
   /** 工具调用被中断/取消/失败时的状态描述（用户停止生成、LLM 中断等场景）。
@@ -110,6 +112,10 @@ export interface MessageWithThought extends Message {
   isCompactSummary?: boolean
   /** 本次生成被中止（用户停止/切换/异常中断），UI 展示中断提醒 */
   isAborted?: boolean
+  /** LLM 调用失败时对应的 IPC 会话 id（原地重试沿用它接收续跑事件） */
+  failedSessionId?: string
+  /** 失败那次模型请求开始时的段数量：重试前回滚到该点，丢弃这次请求的残缺输出 */
+  failedRequestSegStart?: number
 }
 
 export function ensureSegments(msg: MessageWithThought): MessageWithThought {
