@@ -447,13 +447,15 @@ class WorkspaceManagerService {
     }
   }
 
-  /** 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变） */
+  /**
+   * 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变）。
+   * 只计算路径不落盘——员工列表/会话创建都会调用它，提前建目录会让从未工作的员工留下空目录；
+   * 真正的写入与打开工作区时再按需创建。
+   */
   getRegistryWorkspaceRoot(employeeId: string): string {
     // 注册员工 id 含 ':' 等路径非法字符，用稳定哈希派生目录名（sha1 前 8 hex，与 generateShortId 同构、可复现）
     const dirName = crypto.createHash('sha1').update(employeeId).digest('hex').slice(0, 8)
-    const root = path.join(PathService.getInstance().getDataDir(), 'employees', dirName)
-    fs.mkdirSync(root, { recursive: true })
-    return root
+    return path.join(PathService.getInstance().getDataDir(), 'employees', dirName)
   }
 
   /** 获取对话的任务工作区目录（未分配返回空字符串） */

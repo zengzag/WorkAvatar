@@ -55,6 +55,8 @@ interface BackgroundShellTask {
   sandboxDenied: boolean
   sandboxRunnerFailed: boolean
   sandboxCleanup: () => void
+  /** 进程结束后调用（如清理执行前临时创建、执行后仍为空的工作区目录） */
+  onExit?: () => void
 }
 
 export interface BackgroundShellSnapshot {
@@ -130,6 +132,8 @@ class BackgroundShellService {
     /** 可写边界；缺省回退到 cwd */
     workspaceRoot?: string
     sandboxMode?: SandboxMode
+    /** 进程结束后调用一次（启动失败由调用方自行清理） */
+    onExit?: () => void
   }): { ok: true; snapshot: BackgroundShellSnapshot } | { ok: false; error: string } {
     const running = this.countRunning(params.ownerKey)
     if (running >= MAX_RUNNING_PER_OWNER) {
@@ -193,6 +197,7 @@ class BackgroundShellService {
       sandboxDenied: false,
       sandboxRunnerFailed: false,
       sandboxCleanup: confined.cleanup,
+      onExit: params.onExit,
     }
     this.tasks.set(id, task)
 
@@ -337,6 +342,9 @@ class BackgroundShellService {
     task.launchTempFile = undefined
     task.sandboxCleanup()
     task.sandboxCleanup = () => {}
+    // 执行结束：清理本次执行为空的工作区目录（命令有产出时目录非空，不会被删除）
+    try { task.onExit?.() } catch { /* 清理失败不影响任务结果 */ }
+    task.onExit = undefined
     this.wake(task)
     this.notifyChange()
   }

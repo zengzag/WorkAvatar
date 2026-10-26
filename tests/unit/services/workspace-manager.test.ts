@@ -237,13 +237,14 @@ describe('workspace-manager / isWithinEmployeesRoot', () => {
 })
 
 describe('workspace-manager / getRegistryWorkspaceRoot', () => {
-  it('生成稳定 8 位哈希目录并落盘', () => {
+  it('生成稳定 8 位哈希目录（懒创建，不落盘）', () => {
     const first = service.getRegistryWorkspaceRoot('builtin:knowledge-base')
     const second = service.getRegistryWorkspaceRoot('builtin:knowledge-base')
     expect(first).toBe(second)
     expect(path.dirname(first)).toBe(employeesRoot)
     expect(path.basename(first)).toMatch(/^[0-9a-f]{8}$/)
-    expect(fs.existsSync(first)).toBe(true)
+    // 员工列表/会话创建都会调用该路径，提前建目录会给从未工作的员工留下空目录
+    expect(fs.existsSync(first)).toBe(false)
   })
 
   it('不同员工 id 映射到不同目录', () => {

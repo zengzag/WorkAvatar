@@ -22,6 +22,24 @@ import {
 /** 脚本内容扫描上限：超过则跳过（避免读取大文件拖慢执行） */
 const MAX_SCRIPT_SCAN_BYTES = 256 * 1024
 
+/**
+ * 执行前懒创建工作区内的 cwd 与工作区根目录，返回执行结束后的清理回调。
+ * 只清理「执行前不存在、执行后仍为空」的目录：命令没有产出文件时不留下空目录。
+ */
+function prepareExecDirs(cwd: string, workspaceRoot: string): () => void {
+  const created = [workspaceRoot, cwd]
+    .filter((dir, index, arr) => !!dir && arr.indexOf(dir) === index)
+    .filter((dir) => filePermission.isPathInWorkspace(dir) && !fs.existsSync(dir))
+  for (const dir of created) ensureDir(dir)
+  if (created.length === 0) return () => {}
+  return () => {
+    // 由深到浅：先删子目录，父目录才可能同样变空被清理
+    for (const dir of [...created].sort((a, b) => b.length - a.length)) {
+      try { fs.rmdirSync(dir) } catch { /* 非空或已被删除 */ }
+    }
+  }
+}
+
 /** 删除被拒绝时返回给模型的引导文案（工具名与 file_delete 保持一致） */
 export const DELETION_FORBIDDEN_HINT =
   '删除操作已被安全策略禁止通过命令/脚本执行：请改用 file_delete 工具删除文件或目录' +
@@ -200,16 +218,21 @@ On failure you get stdout, the full stderr, the exit code, the working directory
       const { command, stdinContent, cwd, timeoutSec, workspaceRoot, sandboxMode } = prep
       const timeoutMs = timeoutSec * 1000
 
-      // 工作区懒创建：cwd 位于工作区内时执行前确保目录存在（区外 cwd 不代为创建）
-      if (filePermission.isPathInWorkspace(cwd)) ensureDir(cwd)
+      // 工作区懒创建：cwd/工作区根目录不存在时临时创建供本次命令使用，执行后仍为空则清理
+      const cleanupExecDirs = prepareExecDirs(cwd, workspaceRoot)
 
-      const runResult = await runCommandPlatform(command, {
-        cwd,
-        timeoutMs,
-        stdinContent,
-        workspaceRoot,
-        sandboxMode,
-      })
+      let runResult: Awaited<ReturnType<typeof runCommandPlatform>>
+      try {
+        runResult = await runCommandPlatform(command, {
+          cwd,
+          timeoutMs,
+          stdinContent,
+          workspaceRoot,
+          sandboxMode,
+        })
+      } finally {
+        cleanupExecDirs()
+      }
 
       if (runResult.sandboxError) {
         return {
@@ -434,8 +457,8 @@ function startBackgroundTask(prep: ShellPrepareOk) {
   const ctx = interactionContext.getStore()
   // 属主键与授权缓存一致：优先 conversationId，无 DB 会话时降级 sessionId
   const ownerKey = ctx?.conversationId || ctx?.sessionId || 'unknown'
-  // 工作区懒创建与前台一致：cwd 在区内时先建目录，否则 spawn 会因 cwd 不存在失败
-  if (filePermission.isPathInWorkspace(prep.cwd)) ensureDir(prep.cwd)
+  // 工作区懒创建与前台一致：cwd 在区内时先建目录（否则 spawn 会因 cwd 不存在失败），退出后仍为空则清理
+  const cleanupExecDirs = prepareExecDirs(prep.cwd, prep.workspaceRoot)
   const started = BackgroundShellService.getInstance().start({
     command: prep.command,
     stdinContent: prep.stdinContent,
@@ -443,8 +466,12 @@ function startBackgroundTask(prep: ShellPrepareOk) {
     ownerKey,
     workspaceRoot: prep.workspaceRoot,
     sandboxMode: prep.sandboxMode,
+    onExit: cleanupExecDirs,
   })
-  if (!started.ok) return { success: false, error: started.error }
+  if (!started.ok) {
+    cleanupExecDirs()
+    return { success: false, error: started.error }
+  }
 
   const snapshot = started.snapshot
   const scope = prep.sandboxMode === 'danger-full-access'
