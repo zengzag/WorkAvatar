@@ -139,9 +139,9 @@ const PluginsSection: React.FC = () => {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-              gap: 12,
-              marginTop: 16,
+              gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))',
+              gap: 10,
+              marginTop: 12,
             }}
           >
             {plugins.map((plugin) => (
@@ -149,38 +149,69 @@ const PluginsSection: React.FC = () => {
                 key={plugin.id}
                 size="small"
                 style={{ height: '100%', borderColor: 'var(--wa-line)', background: 'var(--wa-panel)' }}
-                styles={{ body: { display: 'flex', flexDirection: 'column', gap: 10, height: '100%', padding: 14 } }}
+                styles={{ body: { display: 'flex', flexDirection: 'column', gap: 6, height: '100%', padding: 12 } }}
               >
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 600, fontSize: 14 }}>{plugin.name}</span>
-                      <Tag color={STATUS_COLOR[plugin.status]} style={{ marginInlineEnd: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 13.5,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {plugin.name}
+                      </span>
+                      <Tag color={STATUS_COLOR[plugin.status]} style={{ marginInlineEnd: 0, flexShrink: 0 }}>
                         {t(`settings.plugins.status_${plugin.status}`)}
                       </Tag>
                       {!plugin.hasRenderer && (
                         <Tooltip title={t('settings.plugins.headlessHint')}>
-                          <Tag style={{ marginInlineEnd: 0 }}>{t('settings.plugins.headless')}</Tag>
+                          <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>{t('settings.plugins.headless')}</Tag>
                         </Tooltip>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--wa-ink-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 11.5, color: 'var(--wa-ink-3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {plugin.id} · v{plugin.version}
                     </div>
                   </div>
-                  <Switch
-                    size="small"
-                    checked={plugin.enabled}
-                    onChange={(checked) => handleToggle(plugin, checked)}
-                  />
+                  <Space size={2} style={{ flexShrink: 0 }}>
+                    <Switch
+                      size="small"
+                      checked={plugin.enabled}
+                      onChange={(checked) => handleToggle(plugin, checked)}
+                    />
+                    <Tooltip title={t('settings.plugins.settingsAction')}>
+                      <span style={{ display: 'inline-flex' }}>
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<SettingOutlined />}
+                          disabled={!plugin.hasSettings}
+                          onClick={() => setSettingsPlugin(plugin)}
+                        />
+                      </span>
+                    </Tooltip>
+                    <Popconfirm
+                      title={t('settings.plugins.deleteConfirm')}
+                      onConfirm={() => handleDelete(plugin)}
+                    >
+                      <Tooltip title={t('common.delete')}>
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                      </Tooltip>
+                    </Popconfirm>
+                  </Space>
                 </div>
 
                 <Typography.Paragraph
                   type="secondary"
                   style={{
-                    fontSize: 12.5,
+                    fontSize: 12,
+                    lineHeight: 1.5,
                     marginBottom: 0,
-                    minHeight: 36,
                     display: '-webkit-box',
                     WebkitLineClamp: 2,
                     WebkitBoxOrient: 'vertical',
@@ -194,29 +225,12 @@ const PluginsSection: React.FC = () => {
                   <Tooltip title={plugin.statusMessage}>
                     <Typography.Text
                       type="danger"
-                      style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                     >
                       {plugin.statusMessage}
                     </Typography.Text>
                   </Tooltip>
                 )}
-
-                <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
-                  <Button
-                    size="small"
-                    icon={<SettingOutlined />}
-                    disabled={!plugin.hasSettings}
-                    onClick={() => setSettingsPlugin(plugin)}
-                  >
-                    {t('settings.plugins.settingsAction')}
-                  </Button>
-                  <Popconfirm
-                    title={t('settings.plugins.deleteConfirm')}
-                    onConfirm={() => handleDelete(plugin)}
-                  >
-                    <Button size="small" danger type="text" icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </div>
               </Card>
             ))}
           </div>
