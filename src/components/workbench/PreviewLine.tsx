@@ -1,23 +1,47 @@
-import { useLayoutEffect, useRef, useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 /**
- * 折叠态预览行：内容按容器宽度折行，仅暴露最后一行。
- * 一行写满后整行清空跳到下一行，避免整段文本横向滚动。
+ * 折叠态预览行：按容器宽度折行，只暴露最后一行（新行从下方平滑滑入）。
  *
- * 只渲染尾部片段：思考内容/工具参数可能是几万字符且每次增量都在变长，
- * 整段塞进 DOM 会在每次更新时重排全文（流式期间 CPU 占用的重要来源）。
- *
- * 流式增量按 60ms 窗口批量到达，单批文本往往接近甚至超出一行宽度，
- * 直接渲染会退化成"每批文本各占一行闪一下"；这里按帧匀速揭示积压文本，
- * 恢复逐字填满一行的观感（DOM 写入仍按批进行，不增加增量次数）。
+ * 1. 文本只追加（appendData）：换行位置固定，可见行是被逐字填满的；
+ *    每次重设"尾部 N 字窗口"会让换行点随起点漂移，行内内容会左右乱跳。
+ * 2. 缓冲超过 TRIM_AT 时裁到"当前行起点"：被裁掉的都是上方整行，可见内容与换行位置不变。
+ * 3. 滚动位置按指数缓动跟随（SMOOTH_MS）：换行时的行间位移平滑滑入，而不是瞬跳。
  */
-const MAX_PREVIEW_CHARS = 400
-/** 积压文本的补齐窗口：越小越实时，越大越平缓 */
-const REVEAL_WINDOW_MS = 700
-/** 最低揭示速度（字符/秒），慢速模型也保持连续增长而非整批跳动 */
-const MIN_REVEAL_CPS = 30
-/** 绘制间隔（≈30fps），避免每帧写 DOM 抵消流式渲染优化 */
-const MIN_PAINT_INTERVAL_MS = 32
+const TRIM_AT = 3000
+const KEEP = 1000
+/** 滚动跟随的时间常数（ms）：越大越柔和，代价是与最新文本的滞后越明显 */
+const SMOOTH_MS = 150
+
+/** 当前可见（最后一行）在文本节点中的起始偏移 */
+function lastLineStart(node: Text): number {
+  const whole = document.createRange()
+  whole.selectNodeContents(node)
+  const rects = whole.getClientRects()
+  if (rects.length <= 1) return 0
+  const lastTop = rects[rects.length - 1].top
+  const range = document.createRange()
+  let lo = 0
+  let hi = node.length - 1
+  let found = 0
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    range.setStart(node, mid)
+    range.setEnd(node, mid + 1)
+    const rect = range.getClientRects()[0]
+    if (!rect) {
+      lo = mid + 1
+      continue
+    }
+    if (rect.top >= lastTop - 1) {
+      found = mid
+      hi = mid - 1
+    } else {
+      lo = mid + 1
+    }
+  }
+  return found
+}
 
 const PreviewLine: React.FC<{
   text: string
@@ -26,79 +50,75 @@ const PreviewLine: React.FC<{
   color: string
 }> = ({ text, fontSize, lineHeight, color }) => {
   const ref = useRef<HTMLDivElement>(null)
-  /** 最新目标文本（只增不减，段切换时整体替换） */
-  const targetRef = useRef(text)
-  /** 已揭示到的字符下标 */
-  const revealedRef = useRef(text.length)
   const rafRef = useRef<number | null>(null)
-  const lastPaintTsRef = useRef(0)
-  const mountedRef = useRef(false)
+  const prevTextRef = useRef(text)
+  /** 文本缓冲在 text 中的起始下标 */
+  const bufferStartRef = useRef(0)
+  /** 已渲染到的 text 下标 */
+  const renderedEndRef = useRef(text.length)
 
-  const paint = () => {
+  const follow = () => {
     const el = ref.current
     if (!el) return
-    const end = revealedRef.current
-    el.textContent = targetRef.current.slice(Math.max(0, end - MAX_PREVIEW_CHARS), end)
-    el.scrollTop = el.scrollHeight
+    const target = el.scrollHeight - el.clientHeight
+    if (target <= el.scrollTop + 1) {
+      el.scrollTop = target
+      return
+    }
+    if (rafRef.current !== null) return
+
+    let lastTs = 0
+    const step = (ts: number) => {
+      const node = ref.current
+      if (!node) {
+        rafRef.current = null
+        return
+      }
+      const goal = node.scrollHeight - node.clientHeight
+      const diff = goal - node.scrollTop
+      if (diff <= 1) {
+        node.scrollTop = goal
+        rafRef.current = null
+        return
+      }
+      const dt = lastTs ? Math.min(64, ts - lastTs) : 16
+      lastTs = ts
+      node.scrollTop += diff * (1 - Math.exp(-dt / SMOOTH_MS))
+      rafRef.current = requestAnimationFrame(step)
+    }
+    rafRef.current = requestAnimationFrame(step)
   }
 
   useLayoutEffect(() => {
-    const target = text
-    const prev = targetRef.current
-    targetRef.current = target
+    const el = ref.current
+    if (!el) return
+    const prev = prevTextRef.current
+    prevTextRef.current = text
+    const node = el.firstChild as Text | null
 
-    // 首次挂载：直接显示已有内容，历史段不重新逐字播放
-    if (!mountedRef.current) {
-      mountedRef.current = true
-      revealedRef.current = target.length
-      paint()
+    // 首次挂载 / 段切换 / 回滚：整体重建并直接对齐最新位置
+    if (!node || !text.startsWith(prev) || text.length < renderedEndRef.current) {
+      bufferStartRef.current = Math.max(0, text.length - KEEP)
+      renderedEndRef.current = text.length
+      el.textContent = text.slice(bufferStartRef.current)
+      el.scrollTop = el.scrollHeight
       return
     }
 
-    // 内容被替换或回退（新段落、重试回滚）：直接对齐
-    if (!target.startsWith(prev)) {
-      revealedRef.current = target.length
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-      paint()
-      return
-    }
+    if (text.length > renderedEndRef.current) {
+      node.appendData(text.slice(renderedEndRef.current))
+      renderedEndRef.current = text.length
 
-    if (revealedRef.current > target.length) revealedRef.current = target.length
-    if (rafRef.current !== null) return
-
-    const step = (ts: number) => {
-      rafRef.current = null
-      const goal = targetRef.current.length
-      const backlog = goal - revealedRef.current
-      if (backlog <= 0) {
-        lastPaintTsRef.current = 0
-        return
-      }
-      if (!lastPaintTsRef.current) {
-        lastPaintTsRef.current = ts
-        rafRef.current = requestAnimationFrame(step)
-        return
-      }
-      const elapsed = ts - lastPaintTsRef.current
-      if (elapsed < MIN_PAINT_INTERVAL_MS) {
-        rafRef.current = requestAnimationFrame(step)
-        return
-      }
-      lastPaintTsRef.current = ts
-      const cps = Math.max(MIN_REVEAL_CPS, backlog / (REVEAL_WINDOW_MS / 1000))
-      const stepChars = Math.max(1, Math.round((cps * elapsed) / 1000))
-      revealedRef.current = Math.min(goal, revealedRef.current + stepChars)
-      paint()
-      if (revealedRef.current < targetRef.current.length) {
-        rafRef.current = requestAnimationFrame(step)
-      } else {
-        lastPaintTsRef.current = 0
+      // 超限裁剪：裁到当前行起点，可见行与换行位置都不变
+      if (node.length > TRIM_AT) {
+        const cut = lastLineStart(node)
+        if (cut > 0) {
+          node.deleteData(0, cut)
+          bufferStartRef.current += cut
+        }
       }
     }
-    rafRef.current = requestAnimationFrame(step)
+    follow()
   }, [text])
 
   useEffect(() => () => {
