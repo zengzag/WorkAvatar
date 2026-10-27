@@ -9,7 +9,7 @@
  */
 
 /** 系统提示词格式标记：用于识别并丢弃旧版本缓存的 conversations.system_prompt */
-export const PROMPT_FORMAT_MARKER = '<workavatar-prompt format="4"/>'
+export const PROMPT_FORMAT_MARKER = '<workavatar-prompt format="5"/>'
 
 const SHORT_INSTRUCTION_LIMIT = 100
 
@@ -48,7 +48,7 @@ function buildOperatingRules(options: Pick<SystemPromptOptions, 'hasReportGenera
   ]
   if (options.hasReportGeneratedFiles) {
     lines.push(
-      '- Before your final reply, call report_generated_files once with the absolute path of every user-facing deliverable you created or modified (documents, spreadsheets, presentations, PDFs, images). Exclude temporary files, configuration files, and scripts.'
+      '- Call report_generated_files only when you produced user-facing files, passing their absolute paths; skip it when there are none. Exclude temporary files, configuration files, and scripts.'
     )
   }
   if (options.hasFileDelete) {

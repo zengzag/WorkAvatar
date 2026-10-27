@@ -15,6 +15,7 @@ import {
   MEMORY_SCOPE_EMPLOYEE,
   MEMORY_SCOPE_GLOBAL,
   isGlobalScope,
+  MEMORY_DEFAULT_TOPIC,
   MEMORY_MAX_CHARS,
   MEMORY_MAX_COUNT,
   MEMORY_CONTENT_MAX_CHARS,
@@ -41,6 +42,7 @@ import {
   buildMemoryPromptBlock,
 } from './employee-memory-helpers'
 import { segmentMemoryText, buildMemoryFtsMatch } from './employee-memory-fts'
+import { measureMemoryChars } from '../../shared/memory-metrics'
 
 const logger = createLogger('Memory')
 
@@ -245,6 +247,20 @@ class EmployeeMemoryService {
     ).get(id) as EmployeeMemory | undefined
   }
 
+  /** 按内容生成同桶内唯一的 key（截取前 24 字符，冲突时追加序号） */
+  private generateMemoryKey(bucket: MemoryBucket, content: string): string {
+    const base = content.replace(/\s+/g, ' ').trim().slice(0, 24) || 'memory'
+    const owner = this.ownerClause(bucket)
+    const exists = (key: string) => !!this.db.getDb().prepare(
+      `SELECT 1 FROM employee_memories WHERE ${owner.sql} AND key = ?`
+    ).get(...owner.params, key)
+    let key = base
+    for (let i = 2; exists(key); i++) {
+      key = `${base} (${i})`
+    }
+    return key
+  }
+
   // ---------------------------------------------------------------- 写入
 
   createMemory(params: EmployeeMemoryCreateParams & { scope?: MemoryScope }): EmployeeMemory {
@@ -253,6 +269,10 @@ class EmployeeMemoryService {
     const content = clampContent(params.content)
     const scope: MemoryScope = isGlobalScope(params.scope) ? MEMORY_SCOPE_GLOBAL : MEMORY_SCOPE_EMPLOYEE
     const employeeId = scope === MEMORY_SCOPE_GLOBAL ? null : (params.employee_id ?? '')
+    const topic = (params.topic || '').trim() || MEMORY_DEFAULT_TOPIC
+    // 手动添加不要求填标识符：按内容生成可读且同桶内唯一的 key
+    const key = (params.key || '').trim()
+      || this.generateMemoryKey({ scope, employeeId: employeeId ?? undefined }, content)
     this.db.getDb().prepare(
       `INSERT INTO employee_memories (id, employee_id, scope, key, topic, content, is_pinned, source, importance, created_at, updated_at, last_referenced_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -260,8 +280,8 @@ class EmployeeMemoryService {
       id,
       employeeId,
       scope,
-      params.key,
-      params.topic,
+      key,
+      topic,
       content,
       params.is_pinned ? 1 : 0,
       params.source || 'manual',
@@ -270,7 +290,7 @@ class EmployeeMemoryService {
       now,
       now
     )
-    this.syncMemoryFTS(id, employeeId, params.key, params.topic, content)
+    this.syncMemoryFTS(id, employeeId, key, topic, content)
     this.markChanged()
     // 新增记忆立即生成向量，使语义召回即时可用（自动提取路径由定时回填覆盖）
     EmployeeMemoryEmbeddingService.getInstance().embedMemoryAsync(id)
@@ -468,7 +488,6 @@ class EmployeeMemoryService {
     const row = this.db.getDb().prepare(`
       SELECT
         COUNT(*) as count,
-        COALESCE(SUM(LENGTH(content)), 0) as totalChars,
         SUM(CASE WHEN is_pinned = 1 THEN 1 ELSE 0 END) as pinnedCount,
         SUM(CASE WHEN source = 'auto' THEN 1 ELSE 0 END) as autoCount,
         SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) as manualCount,
@@ -480,9 +499,17 @@ class EmployeeMemoryService {
       FROM employee_memories WHERE ${owner.sql} AND deleted_at IS NULL
     `).get(staleThreshold, staleThreshold, ...owner.params) as any
 
+    // 容量按字符当量计算（CJK 1 / 其他 0.5），避免英文记忆过早触发精炼
+    const contents = this.db.getDb().prepare(
+      `SELECT content FROM employee_memories WHERE ${owner.sql} AND deleted_at IS NULL`
+    ).all(...owner.params) as Array<{ content: string }>
+    const totalChars = Math.round(
+      contents.reduce((sum, item) => sum + measureMemoryChars(item.content), 0)
+    )
+
     return {
       count: row?.count ?? 0,
-      totalChars: row?.totalChars ?? 0,
+      totalChars,
       pinnedCount: row?.pinnedCount ?? 0,
       autoCount: row?.autoCount ?? 0,
       manualCount: row?.manualCount ?? 0,

@@ -203,8 +203,8 @@ export const reportGeneratedFilesTool: ToolDefinition = {
   id: 'report_generated_files',
   name: 'report_generated_files',
   title: '展示生成文件',
-  summary: 'Declare this task\'s deliverable files so the UI can render preview cards below the reply.',
-  description: `Declare the deliverable files this task produced (Word / Excel / PowerPoint / PDF / images) so the user gets preview cards.
+  summary: 'Declare deliverable files so the UI can render preview cards below the reply; only when files exist.',
+  description: `Declare the user-facing files this task produced (Word / Excel / PowerPoint / PDF / images) so the user gets preview cards. Skip it when there are none.
 
 Paths that do not exist, are not files, or have an extension outside the preview whitelist are filtered out and listed in the result.`,
   parameters: {

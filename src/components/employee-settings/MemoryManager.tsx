@@ -30,6 +30,13 @@ import {
   RestOutlined,
 } from '@ant-design/icons'
 import { getSceneDefaultModel } from '../../utils/default-model'
+import {
+  MEMORY_ALWAYS_ON_MAX_CHARS,
+  MEMORY_ALWAYS_ON_MAX_COUNT,
+  MEMORY_CONTENT_MAX_CHARS,
+  MEMORY_MAX_CHARS,
+  MEMORY_MAX_COUNT,
+} from '../../../electron/shared/memory-metrics'
 
 const { Text, Paragraph } = Typography
 
@@ -53,6 +60,7 @@ interface MemoryItem {
 
 interface MemoryStats {
   count: number
+  /** 记忆库容量（字符当量：CJK 计 1，其余计 0.5），由主进程计算 */
   totalChars: number
   pinnedCount: number
   autoCount: number
@@ -91,12 +99,6 @@ const TOPIC_COLORS: Record<string, string> = {
   [MEMORY_TOPIC.FACT]: 'orange',
 }
 
-// 常驻注入上限（与后端 employee-memory-types 保持一致）
-const MEMORY_ALWAYS_ON_MAX_COUNT = 12
-const MEMORY_ALWAYS_ON_MAX_CHARS = 1500
-// 记忆库总量上限（仅用于触发精炼，不再约束注入）
-const MEMORY_MAX_COUNT = 100
-const MEMORY_MAX_CHARS = 8000
 const IMPORTANCE_ORDER: Record<MemoryItem['importance'], number> = {
   critical: 0,
   normal: 1,
@@ -189,8 +191,6 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
     try {
       await window.electronAPI.employee.createMemory({
         ...scopeParams,
-        key: values.key,
-        topic: values.topic,
         content: values.content,
         source: 'manual',
         importance: values.importance || 'normal',
@@ -209,8 +209,6 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
     try {
       await window.electronAPI.employee.updateMemory({
         id: editingMemory.id,
-        key: values.key,
-        topic: values.topic,
         content: values.content,
         importance: values.importance,
       })
@@ -377,8 +375,6 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
   const openEditModal = useCallback((memory: MemoryItem) => {
     setEditingMemory(memory)
     addForm.setFieldsValue({
-      key: memory.key,
-      topic: memory.topic,
       content: memory.content,
       importance: memory.importance,
     })
@@ -435,11 +431,13 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-            <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>
-              {m.topic}
-            </Tag>
             {m.source === 'auto' && (
-              <Tag style={{ margin: 0 }}>{t('employeeSettings.memorySourceAuto')}</Tag>
+              <>
+                <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>
+                  {m.topic}
+                </Tag>
+                <Tag style={{ margin: 0 }}>{t('employeeSettings.memorySourceAuto')}</Tag>
+              </>
             )}
             {m.source === 'manual' && (
               <Tag color="purple" style={{ margin: 0 }}>{t('employeeSettings.memorySourceManual')}</Tag>
@@ -450,9 +448,11 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
             {m.importance === 'low' && (
               <Tag style={{ margin: 0 }}>{t('employeeSettings.memoryImportanceLow')}</Tag>
             )}
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {m.key}
-            </Text>
+            {m.source === 'auto' && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {m.key}
+              </Text>
+            )}
           </div>
           <Paragraph style={{ margin: 0 }} ellipsis={{ rows: 3, expandable: true, symbol: t('employeeSettings.expand') }}>
             {m.content}
@@ -570,7 +570,7 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
                     {t('employeeSettings.memoryLibraryUsage')}
                   </Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('employeeSettings.memoryUsageValue', {
+                    {t('employeeSettings.memoryUsageValueWeighted', {
                       count: stats.count,
                       maxCount: MEMORY_MAX_COUNT,
                       chars: stats.totalChars,
@@ -582,8 +582,11 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
                   percent={capacityPercent}
                   status={capacityStatus}
                   size="small"
-                  style={{ marginBottom: 8 }}
+                  style={{ marginBottom: 4 }}
                 />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  {t('employeeSettings.memoryLibraryHint')}
+                </Text>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <Tag>{t('employeeSettings.memoryCount', { count: stats.count })}</Tag>
                   <Tag color="blue">{t('employeeSettings.memoryPinnedCount', { count: stats.pinnedCount })}</Tag>
@@ -677,25 +680,16 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
       >
         <Form form={addForm} layout="vertical">
           <Form.Item
-            name="key"
-            label={t('employeeSettings.memoryKey')}
-            rules={[{ required: true, message: t('employeeSettings.memoryKeyRequired') }]}
-          >
-            <Input placeholder={t('employeeSettings.memoryKeyPlaceholder')} disabled={!!editingMemory} />
-          </Form.Item>
-          <Form.Item
-            name="topic"
-            label={t('employeeSettings.memoryTopic')}
-            rules={[{ required: true, message: t('employeeSettings.memoryTopicRequired') }]}
-          >
-            <Input placeholder={t('employeeSettings.memoryTopicPlaceholder')} />
-          </Form.Item>
-          <Form.Item
             name="content"
             label={t('employeeSettings.memoryContent')}
             rules={[{ required: true, message: t('employeeSettings.memoryContentRequired') }]}
           >
-            <Input.TextArea rows={4} placeholder={t('employeeSettings.memoryContentPlaceholder')} />
+            <Input.TextArea
+              rows={4}
+              maxLength={MEMORY_CONTENT_MAX_CHARS}
+              showCount
+              placeholder={t('employeeSettings.memoryContentPlaceholder')}
+            />
           </Form.Item>
           <Form.Item
             name="importance"
@@ -753,8 +747,12 @@ const MemoryManager: React.FC<MemoryManagerProps> = ({
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                      <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>{m.topic}</Tag>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{m.key}</Text>
+                      {m.source === 'auto' && (
+                        <>
+                          <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>{m.topic}</Tag>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{m.key}</Text>
+                        </>
+                      )}
                       {m.deleted_at && (
                         <Text type="secondary" style={{ fontSize: 11 }}>
                           {t('employeeSettings.memoryDeletedAt')}: {new Date(m.deleted_at * 1000).toLocaleString()}

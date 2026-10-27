@@ -207,8 +207,10 @@ export interface EmployeeMemoryListParams {
 export interface EmployeeMemoryCreateParams {
   employee_id?: string
   scope?: MemoryScope
-  key: string
-  topic: string
+  /** 缺省时服务端按内容生成同桶唯一的标识符 */
+  key?: string
+  /** 缺省时落到默认分类（事实知识） */
+  topic?: string
   content: string
   is_pinned?: boolean
   source?: 'auto' | 'manual'

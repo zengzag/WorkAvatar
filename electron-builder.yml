@@ -47,7 +47,9 @@ files:
   # （不要改用 mac.files/win.files：平台级 files 会整体替换本白名单，导致把 plugins/、release/ 全量打进 asar）
   - "!node_modules/onnxruntime-node/bin/napi-v6/!(${platform})/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/${platform}/!(${arch})/**"
-  - "!node_modules/sherpa-onnx-!(${platform})*/**"
+  # sherpa-onnx 平台包目录名为 win-x64 / darwin-<arch> / linux-<arch>（Windows 不是 win32），
+  # 必须带 `-*` 后缀匹配，否则会连带排除主包 sherpa-onnx-node（其 JS 包装层）
+  - "!node_modules/sherpa-onnx-!(win32|win|${platform})-*/**"
   - "!node_modules/better-sqlite3/prebuilds/!(${platform}-${arch}).node"
   # ── better-sqlite3：运行时使用预编译 .node，源码（sqlite3.c ~9MB）无需打包 ──
   - "!node_modules/better-sqlite3/deps/**"

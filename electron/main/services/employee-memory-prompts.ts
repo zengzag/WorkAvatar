@@ -120,7 +120,7 @@ Value order: hard constraints and pitfalls > preferences and role facts > tempor
 - Merge similar preferences of the same category into one item.
 - Write preferences declaratively ("The user prefers X"); write hard constraints and pitfalls imperatively ("Do not use X instead of Y").
 - importance: critical = hard constraints, key pitfalls, core role traits; normal = regular preferences, stable environment facts; low = minor details.
-- Keep the total within ${MEMORY_CONSOLIDATION_TARGET_COUNT} items / ${MEMORY_CONSOLIDATION_TARGET_CHARS} characters; delete low-value items to make room.
+- Keep the total within ${MEMORY_CONSOLIDATION_TARGET_COUNT} items / ${MEMORY_CONSOLIDATION_TARGET_CHARS} characters (count a CJK character as 1 and any other character as 0.5); delete low-value items to make room.
 
 ## Output language
 Write all content in the same language as the existing memories below. The prompt is in English, but the output language follows the user.
