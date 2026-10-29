@@ -273,6 +273,44 @@ html.dark .ant-tooltip .ant-tooltip-arrow::after {
   border-top: 1px solid var(--wa-line-2) !important;
 }
 
+/* 智能体权限审批弹窗：默认玻璃面板与深色页面过于接近，改为实色浮层 + 明确边界，弱化遮罩后仍可分辨层次 */
+.wa-approval-modal .ant-modal-content {
+  background: var(--wa-panel) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--wa-line) !important;
+  box-shadow: 0 30px 64px -30px rgba(16, 24, 40, 0.5), 0 2px 10px -6px rgba(16, 24, 40, 0.12) !important;
+}
+
+html.dark .wa-approval-modal .ant-modal-content {
+  background: var(--wa-panel-2) !important;
+  box-shadow: 0 32px 72px -28px rgba(0, 0, 0, 0.92), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+.wa-approval-modal .ant-modal-header {
+  background: var(--wa-panel-2) !important;
+  border-bottom: 1px solid var(--wa-line-2) !important;
+}
+
+html.dark .wa-approval-modal .ant-modal-header {
+  background: var(--wa-panel-3) !important;
+  border-bottom-color: var(--wa-line) !important;
+}
+
+.wa-approval-modal .ant-modal-footer {
+  border-top: 1px solid var(--wa-line-2) !important;
+}
+
+.wa-approval-modal .ant-modal-mask {
+  background: rgba(16, 24, 40, 0.32) !important;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+html.dark .wa-approval-modal .ant-modal-mask {
+  background: rgba(0, 0, 0, 0.62) !important;
+}
+
 /* ---------- 控件 ---------- */
 
 .ant-btn {
