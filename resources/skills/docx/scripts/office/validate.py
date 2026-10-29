@@ -1,27 +1,38 @@
 """
 Command line tool to validate Office document XML files against XSD schemas and tracked changes.
+
 Usage:
     python validate.py <path> [--original <original_file>] [--auto-repair] [--author NAME]
+
 The first argument can be either:
 - An unpacked directory containing the Office document XML files
 - A packed Office file (.docx/.pptx/.xlsx or .dotx/.potx/.xltx template) which will be unpacked to a temp directory
+
 Auto-repair fixes:
 - paraId/durableId values that exceed OOXML limits
 - Missing xml:space="preserve" on w:t elements with whitespace
 """
+
 import argparse
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
+
 import defusedxml.ElementTree as ET
 from defusedxml.common import DefusedXmlException
+
 from helpers import OOXML_FAMILY, rezip, safe_extract
 from validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
+
 WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
 def _fail(message: str):
     print(f"Error: {message}", file=sys.stderr)
     sys.exit(2)
+
+
 def _has_tracked_changes(unpacked_dir: Path) -> bool:
     document = unpacked_dir / "word" / "document.xml"
     if not document.is_file():
@@ -29,9 +40,11 @@ def _has_tracked_changes(unpacked_dir: Path) -> bool:
     try:
         root = ET.parse(document).getroot()
     except (ET.ParseError, DefusedXmlException):
-        return False
+        return False  
     tracked = {f"{{{WORD_NS}}}ins", f"{{{WORD_NS}}}del"}
     return any(elem.tag in tracked for elem in root.iter())
+
+
 def main():
     parser = argparse.ArgumentParser(description="Validate Office document XML files")
     parser.add_argument(
@@ -67,11 +80,14 @@ def main():
         "--original; docx only.",
     )
     args = parser.parse_args()
+
     if args.author is not None and not args.original:
         _fail("--author requires --original")
+
     path = Path(args.path)
     if not path.exists():
         _fail(f"{path} does not exist")
+
     original_file = None
     if args.original:
         original_file = Path(args.original)
@@ -79,13 +95,16 @@ def main():
             _fail(f"{original_file} is not a file")
         if original_file.suffix.lower() not in OOXML_FAMILY:
             _fail(f"{original_file} must be one of: {', '.join(sorted(OOXML_FAMILY))}")
+
     family = OOXML_FAMILY.get((original_file or path).suffix.lower())
     if family is None:
         _fail(
             f"Cannot determine file type from {path}. Use --original or provide one of: {', '.join(sorted(OOXML_FAMILY))}."
         )
+
     if args.author is not None and family != "docx":
         _fail(f"--author only applies to docx files, not {family}")
+
     packed_file = None
     temp_dir_ctx = None
     if path.is_file() and path.suffix.lower() in OOXML_FAMILY:
@@ -101,6 +120,7 @@ def main():
         if not path.is_dir():
             _fail(f"{path} is not a directory or Office file")
         unpacked_dir = path
+
     match family:
         case "docx":
             validators = [
@@ -108,7 +128,7 @@ def main():
             ]
             if args.author is not None:
                 validators.append(
-                    RedliningValidator(unpacked_dir, original_file, verbose=args.verbose)
+                    RedliningValidator(unpacked_dir, original_file, verbose=args.verbose)  
                 )
             elif original_file and _has_tracked_changes(unpacked_dir):
                 print(
@@ -129,6 +149,7 @@ def main():
         case _:
             print(f"Error: Validation not supported for file type {family}")
             sys.exit(1)
+
     if args.auto_repair:
         total_repairs = sum(v.repair() for v in validators)
         if total_repairs:
@@ -136,11 +157,17 @@ def main():
             if packed_file is not None:
                 rezip(unpacked_dir, packed_file)
                 print(f"Wrote repaired file to {packed_file}")
+
     success = all([v.validate() for v in validators])
+
     if temp_dir_ctx is not None:
         temp_dir_ctx.cleanup()
+
     if success:
         print("All validations PASSED!")
+
     sys.exit(0 if success else 1)
+
+
 if __name__ == "__main__":
     main()

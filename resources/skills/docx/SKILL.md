@@ -39,7 +39,7 @@ After writing a `.docx`, render it and look at it:
 ```bash
 python scripts/office/soffice.py --headless --convert-to pdf output.docx
 pdftoppm -jpeg -r 100 output.pdf page
-ls page-*.jpg # then Read the images
+ls page-*.jpg   # then Read the images
 ```
 
 `pdftoppm` zero-pads page numbers to the width of the page count (`page-01.jpg`…`page-12.jpg`).
@@ -50,11 +50,11 @@ Legacy `.doc` files must be converted first: `python scripts/office/soffice.py -
 
 ```bash
 unzip -q doc.docx -d unpacked/
-find unpacked -type l -delete # strip symlink entries — docx from external parties is untrusted
-python scripts/merge_runs.py unpacked/ # coalesce fragmented runs so text is findable
+find unpacked -type l -delete   # strip symlink entries — docx from external parties is untrusted
+python scripts/merge_runs.py unpacked/   # coalesce fragmented runs so text is findable
 # edit unpacked/word/document.xml in place — do NOT reformat or pretty-print
 (cd unpacked && rm -f ../out.docx && zip -Xr ../out.docx .)
-python scripts/office/validate.py out.docx --original doc.docx # XSD checks; --auto-repair fixes common issues
+python scripts/office/validate.py out.docx --original doc.docx   # XSD checks; --auto-repair fixes common issues
 # redlining? add --author "<the name you redlined under>" to check every edit is tracked
 ```
 
