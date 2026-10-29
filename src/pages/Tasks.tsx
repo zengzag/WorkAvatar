@@ -403,19 +403,27 @@ const Tasks: React.FC = () => {
       return
     }
     let cancelled = false
-    window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: currentEmployeeId })
-      .then((result: any) => {
-        if (cancelled) return
-        const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          description: s.description || '',
-          userInvocable: s.userInvocable !== false,
-        }))
-        setAvailableSkills(skills)
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
+    const load = () => {
+      window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: currentEmployeeId })
+        .then((result: any) => {
+          if (cancelled) return
+          const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            description: s.description || '',
+            userInvocable: s.userInvocable !== false,
+          }))
+          setAvailableSkills(skills)
+        })
+        .catch(() => {})
+    }
+    load()
+    // 技能安装/启停/分配变更后即时刷新技能下拉，无需重启
+    const unsubscribe = window.electronAPI.skillRegistry.onChanged?.(load)
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
   }, [currentEmployeeId])
 
   // 检测 employee 加载完成，执行待选择的对话

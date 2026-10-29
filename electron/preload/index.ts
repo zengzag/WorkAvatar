@@ -351,6 +351,12 @@ const electronAPI = {
     assignToEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, params),
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
     toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
+    // 技能安装/卸载/员工技能启停变更通知，返回取消订阅函数
+    onChanged: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.SKILL_REGISTRY_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SKILL_REGISTRY_CHANGED, handler)
+    },
   },
 
   runtimeEnv: {
