@@ -157,13 +157,13 @@ export const shellExecTool: ToolDefinition = {
 
 Rules:
 1. Never delete files or directories from a command or script (rm, del, Remove-Item, os.remove, shutil.rmtree, fs.unlink …) — such calls are rejected by policy. Use file_delete.
-2. File writes are sandboxed: only the task workspace and a private temp directory are writable. A write outside them is denied by the OS, so the command fails — do all work inside the workspace, then deliver finished files or folders with file_copy.
-3. Only when a command genuinely has to write outside the workspace (e.g. installing a shared library to a global location) set full_access=true; the user is asked to approve that single command and it then runs unrestricted. Never set it to work around a failure you can avoid.
-4. If the task as a whole cannot be done inside the workspace (several commands repeatedly writing outside it), set task_full_access=true once: the user is asked to approve full access for the rest of this task, and after approval neither the sandbox nor outside-workspace prompts apply any more. Never set it preemptively, and never after being denied at full_access level.
+2. File writes are restricted to the task workspace and a private temporary directory; a write outside them is denied by the operating system. Perform all work inside the workspace, then deliver files or folders with file_copy.
+3. The sandbox also restricts process-level operations, including named pipes, inter-process communication, process handles, and GPU or device access. Multi-process programs (Chrome, headless Chrome, Electron applications) consequently fail at startup with an access-denied error even when every path they access is inside the workspace; redirecting their cache or profile directories does not resolve this. When a command requires writes outside the workspace or such capabilities, set full_access=true. The user approves or denies that single command; requesting approval is the expected course of action, and substituting a weaker workaround is not acceptable.
+4. When several commands in the same task require this, set task_full_access=true once instead of requesting approval repeatedly. Submit the request as soon as the task's need is evident; do not submit it again immediately after the user has denied it.
 5. Do not append \`echo $LASTEXITCODE\` / \`echo EXIT=$?\`: the real exit code is already returned, and echoing it masks the original value.
 6. Put multi-line scripts in stdin_content and keep command as the interpreter only (e.g. \`python -\`), to avoid quoting problems.
-7. Commands that must not block the turn (dev server, watch, long build) set run_in_background=true; you get a task id immediately — read output with shell_output, stop with shell_kill.
-8. If a command depends on a file you just wrote, issue file_write and shell_exec as separate steps: sending both in one batch races.
+7. Commands that must not block the turn (dev server, watch, long build) set run_in_background=true; a task id is returned immediately, and output is read with shell_output and the task stopped with shell_kill.
+8. If a command depends on a file you have just written, issue file_write and shell_exec as separate steps: sending both in one batch causes a race.
 
 On failure you get stdout, the full stderr, the exit code, the working directory and diagnostic hints. For a long task whose complete log matters, redirect the output to a file instead of relying on captured output.`,
   parameters: {
@@ -195,11 +195,11 @@ On failure you get stdout, the full stderr, the exit code, the working directory
       },
       full_access: {
         type: 'boolean',
-        description: 'Request one-time full filesystem access for this command. Only use it when the command must write outside the workspace (e.g. installing a shared library globally). The user is asked to approve; the grant covers this command only'
+        description: 'Request full access for this command only: permits writes outside the workspace and the process-level operations the sandbox restricts (Chrome/Electron applications, installers, inter-process communication). The user approves or denies the request; the grant covers this command only'
       },
       task_full_access: {
         type: 'boolean',
-        description: 'Request full filesystem access for the rest of this task. Only use it when the task genuinely needs repeated writes outside the workspace. The user is asked once; after approval this task runs without the file sandbox and without outside-workspace prompts. Denied means the command does not run'
+        description: 'Request full access for the remainder of this task when several commands require it. The user is asked once; after approval this task runs without the sandbox and without outside-workspace prompts. Denial means the command does not run'
       }
     },
     required: ['command']
@@ -263,7 +263,7 @@ On failure you get stdout, the full stderr, the exit code, the working directory
         }
       }
 
-      // 沙箱拦截：直接拒绝（不提供一次性放行）。产物先落在工作区，再用 file_copy 交付到目标目录
+      // 沙箱拦截：直接拒绝，产物先落在工作区，再用 file_copy 交付到目标目录
       if (runResult.sandbox?.denied) {
         return {
           success: false,
@@ -583,6 +583,6 @@ function buildSandboxDeniedOutput(
     '- 需要交付到用户指定目录时，用 file_copy 复制文件或目录；目标在工作区外会弹一次授权',
     '- 若本任务确实无法在工作区内完成（需在工作区外反复读写），可用 shell_exec(task_full_access=true) 申请本轮任务的完整访问权限，由用户决定是否授予',
     '- 不要改用其它写法绕开沙箱：越界写入由操作系统拒绝，无法绕过',
-    '- 若 stderr 显示的是读取受保护文件等其它权限问题（不是写入工作区外），按 stderr 定位即可',
+    '- 若 stderr 显示的是进程、句柄或命名管道层面的拒绝访问（如 Chrome、Electron 等多进程程序），说明该程序与沙箱不兼容，请加 full_access=true 重新执行；其它权限问题按 stderr 定位',
   ].join('\n')
 }
