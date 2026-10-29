@@ -263,7 +263,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       return found ? updated : prev
     })
   }, [])
-  const { messagesEndRef, chatContainerRef, handleScroll, forceScrollToBottom } = useChatScroll(messages)
+  const { chatContainerRef, handleScroll, forceScrollToBottom } = useChatScroll(messages)
   const initializedRef = useRef(false)
 
   const streamStatesRef = useRef<Map<string, ConversationStreamState>>(_persistentStreamStates)
@@ -2568,7 +2568,6 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     editingTitle,
     setEditingTitle,
     displayedCount,
-    messagesEndRef,
     chatContainerRef,
     handleScroll,
     handleSend,

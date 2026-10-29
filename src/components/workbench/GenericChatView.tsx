@@ -44,7 +44,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
   )
 
   // 流式自动滚动：仅当用户位于底部时跟随，用户上滚浏览历史时不打扰
-  const { messagesEndRef, chatContainerRef, handleScroll, forceScrollToBottom } = useChatScroll(normalizedMessages)
+  const { chatContainerRef, handleScroll, forceScrollToBottom } = useChatScroll(normalizedMessages)
 
   // 切换会话（加载历史）时重置滚动到底部，避免沿用上一会话的上滚位置导致新历史不显示最新消息
   const forceScrollRef = useRef(forceScrollToBottom)
@@ -121,7 +121,6 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
               contextStats={contextStats}
               hideMessageActions={!onDeleteMessage}
             />
-            <div ref={messagesEndRef} />
           </>
         )}
       </div>

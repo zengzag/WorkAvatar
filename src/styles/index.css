@@ -61,12 +61,18 @@ body {
   background-color: var(--bg-primary);
 }
 
-/* 应用是固定视口壳层：只给 #root 设 overflow:hidden 是不够的 ——
-   antd 的 Tooltip / Dropdown 等浮层是 portal 到 body 上的，
-   一旦浮层探出视口，被撑大的就是文档本身，于是凭空冒出滚动条
-   （#root 用的是 100vw，还会连带把横向滚动条也带出来）。
-   在 body 这层同样收口即可（浮层本身由 rc-trigger 自动贴边，不会被裁）。 */
-html,
+/* 应用是固定视口壳层，根元素必须钉成"不可滚动的视口大小"：
+   antd 的 Tooltip / Dropdown 等浮层 portal 到 body 上并以绝对定位探出视口，
+   被撑大的是文档本身。此时只要有人调用 scrollIntoView / focus，
+   文档就会整体滚下去几十~几百像素，顶部标题栏（含窗口按钮）被顶出窗口上沿、只露半截；
+   而 overflow:hidden / clip 只是不显示滚动条，文档依旧是可滚动容器，拦不住程序化滚动。
+   把 html 固定到视口（固定定位的盒子不参与文档滚动溢出），文档才真正不可滚动。 */
+html {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
 body {
   overflow: hidden;
 }

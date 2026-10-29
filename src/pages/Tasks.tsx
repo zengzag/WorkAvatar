@@ -283,7 +283,6 @@ const Tasks: React.FC = () => {
     handleCloseComparison,
     handleDeleteComparisonMessage,
     handleOpenComparison,
-    messagesEndRef,
     chatContainerRef,
     handleScroll,
     handleSend,
@@ -1106,7 +1105,6 @@ const Tasks: React.FC = () => {
                     onCompact={handleCompact}
                     assistantEmployee={employee}
                   />
-                  <div ref={messagesEndRef} />
                 </div>
               )}
               {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}

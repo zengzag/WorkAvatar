@@ -17,7 +17,7 @@ const USER_SCROLL_UP_THRESHOLD = 10
  * 聊天滚动控制 hook
  *
  * 职责：
- * - 维护滚动相关 ref（messagesEndRef / chatContainerRef / isUserAtBottomRef）
+ * - 维护滚动相关 ref（chatContainerRef / isUserAtBottomRef）
  * - 监听 messages 变化，通过 requestAnimationFrame 节流滚动到底部，
  *   合并多个 token chunk 为单次滚动，避免流式输出触发大量同步 reflow
  * - handleScroll：用户滚动时根据阈值更新 isUserAtBottomRef（强制跟随窗口内忽略）
@@ -25,7 +25,6 @@ const USER_SCROLL_UP_THRESHOLD = 10
  *   并开启强制跟随窗口，保证随后渲染的新消息/回复也被展示
  */
 export function useChatScroll<T>(messages: T[]) {
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
   /** 强制跟随截止时间戳（0 表示未开启） */
@@ -33,7 +32,18 @@ export function useChatScroll<T>(messages: T[]) {
   /** 上一次 scrollTop：用于强制跟随窗口内识别用户上滚 */
   const lastScrollTopRef = useRef(0)
 
-  // scrollIntoView 节流：用 requestAnimationFrame 合并多个 token chunk 为单次滚动
+  /**
+   * 只滚动消息容器本身，不用 scrollIntoView：
+   * scrollIntoView 会连带滚动所有祖先滚动容器（含文档），而 antd 浮层 portal 到 body 后
+   * 可能让文档产生几像素滚动量，一旦被连带滚动，顶部标题栏（窗口按钮）就被顶出视口。
+   */
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const el = chatContainerRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior })
+  }, [])
+
+  // 滚动节流：用 requestAnimationFrame 合并多个 token chunk 为单次滚动
   // 避免 2000 token 流式输出触发 2000 次同步 reflow
   const scrollRafRef = useRef<number | null>(null)
   useEffect(() => {
@@ -45,7 +55,7 @@ export function useChatScroll<T>(messages: T[]) {
       // RAF 回调执行时再次复查：既避免用户在调度与执行之间上滚被强制拉回底部（M5 修复），
       // 也兼容发送后新消息刚渲染（强制跟随窗口内仍需滚到底）
       if (!isUserAtBottomRef.current && Date.now() >= forceFollowUntilRef.current) return
-      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      scrollToBottom('auto')
     })
     return () => {
       if (scrollRafRef.current !== null) {
@@ -53,7 +63,7 @@ export function useChatScroll<T>(messages: T[]) {
         scrollRafRef.current = null
       }
     }
-  }, [messages])
+  }, [messages, scrollToBottom])
 
   const handleScroll = useCallback(() => {
     const el = chatContainerRef.current
@@ -77,11 +87,10 @@ export function useChatScroll<T>(messages: T[]) {
   const forceScrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     isUserAtBottomRef.current = true
     forceFollowUntilRef.current = Date.now() + FORCE_FOLLOW_MS
-    messagesEndRef.current?.scrollIntoView({ behavior })
+    scrollToBottom(behavior)
   }
 
   return {
-    messagesEndRef,
     chatContainerRef,
     handleScroll,
     forceScrollToBottom,
