@@ -6,6 +6,7 @@ import { Readable } from 'stream'
 import DatabaseService from './services/database.service'
 import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
+import SecretaryWindowService from './services/secretary-window.service'
 import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
 import EmployeeRegistryService from './services/employee-registry.service'
@@ -621,6 +622,15 @@ function updateTrayMenu(): void {
         }
       },
     },
+    {
+      label: SecretaryWindowService.getInstance().getSettings().enabled
+        ? mainUiI18n.t('traySecretaryHide')
+        : mainUiI18n.t('traySecretaryShow'),
+      click: () => {
+        const secretary = SecretaryWindowService.getInstance()
+        secretary.setSettings({ enabled: !secretary.getSettings().enabled })
+      },
+    },
     { type: 'separator' },
     {
       label: mainUiI18n.t('trayQuit'),
@@ -708,6 +718,11 @@ app.whenReady().then(() => {
 
   createWindow()
   createTray()
+  if (mainWindow) {
+    SecretaryWindowService.getInstance().init(mainWindow)
+    // 小秘书显隐变化后刷新托盘菜单文案（显示/隐藏）
+    SecretaryWindowService.getInstance().setStateListener(() => updateTrayMenu())
+  }
 
   // Windows/Linux 首次启动时从 argv 提取 .md 文件（macOS 走 open-file 事件）
   if (process.platform !== 'darwin') {
@@ -732,6 +747,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   isQuitting = true
   logger.info('Application quitting, cleaning up resources')
+  SecretaryWindowService.getInstance().dispose()
   // 插件退出清理：deactivate + 注销插件注册的全局快捷键
   try {
     PluginHostService.getInstance().shutdown()

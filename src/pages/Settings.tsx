@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Tabs } from 'antd'
 import {
   ApiOutlined,
@@ -9,6 +10,7 @@ import {
   ToolOutlined,
   ControlOutlined,
   BulbOutlined,
+  SmileOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -29,6 +31,7 @@ import {
   GeneralSettings,
 } from '../components/settings'
 import { PluginViewSlot } from '../plugins/view-slot'
+import SecretarySettingsPanel from '../components/secretary/SecretarySettingsPanel'
 
 const Settings: React.FC = () => {
   const { t } = useTranslation()
@@ -51,6 +54,15 @@ const Settings: React.FC = () => {
         </span>
       ),
       children: contentWrap(<GeneralSettings />),
+    },
+    {
+      key: 'secretary',
+      label: (
+        <span>
+          <SmileOutlined /> {t('settings.tabSecretary')}
+        </span>
+      ),
+      children: contentWrap(<SecretarySettingsPanel />),
     },
     {
       key: 'llm',
@@ -169,11 +181,17 @@ const Settings: React.FC = () => {
     : tabItems
 
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
+  // 受控：小秘书右键菜单等外部入口会用 ?tab= 切到指定页，页面已挂载时也要生效
+  const [activeKey, setActiveKey] = useState(defaultActiveKey)
+  useEffect(() => {
+    if (tabParam && validTabs.includes(tabParam)) setActiveKey(tabParam)
+  }, [tabParam]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Tabs
-        defaultActiveKey={defaultActiveKey}
+        activeKey={activeKey}
+        onChange={setActiveKey}
         items={finalItems}
         tabPlacement="start"
         style={{ flex: 1, minHeight: 0, height: '100%' }}

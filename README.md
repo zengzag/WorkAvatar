@@ -47,6 +47,12 @@ Each employee has its own instructions, default model, tool set and memory. Desc
 - **Memory and skills** — cross-task memory keeps your preferences and past lessons; skills are Markdown-defined capabilities loaded on demand. A Knowledge Search Assistant and a Plugin Development Assistant are built in.
 - **File permissions** — file tools can freely read and write inside the current task's workspace; anything else requires your confirmation first. When a task genuinely needs broader access, the assistant asks for it and, once approved, the rest of the task runs without that restriction; deletions and other irreversible actions still ask every time, and you can switch back to manual approval from the execution mode whenever you like.
 
+### Desktop secretary
+
+A small pet sits on your desktop and takes a task in one sentence. Click it, pick an employee, type — the run starts in the background and lands in the normal task list, with tools, file permissions and results intact. The pet shows idle / working / waiting-for-you / done states, keeps a badge for results you have not opened, answers to `Ctrl+Alt+Space`, and can be resized, muted or hidden from Settings → Secretary.
+
+Avatars can also be an uploaded image now; the same picture identifies the employee everywhere, including as the secretary's badge.
+
 ### Local knowledge base
 
 <img src="images/kms-search.gif" alt="Hybrid search across local documents" width="92%" />

@@ -137,6 +137,17 @@ html.dark {
   z-index: 1;
 }
 
+/* 小秘书透明浮窗：根节点底板与环境光层必须去掉，否则整窗是一块不透明底 */
+html.wa-secretary-window,
+html.wa-secretary-window body,
+html.wa-secretary-window #root {
+  background: transparent !important;
+}
+html.wa-secretary-window #root::before,
+html.wa-secretary-window #root::after {
+  display: none !important;
+}
+
 /* ---------- 侧边导航 ---------- */
 
 .app-sider {

@@ -16,6 +16,11 @@ const SETTINGS_KEY_LOCALE = 'appearance_locale'
 const STRINGS = {
   trayTooltip: { 'zh-CN': 'WorkAvatar 数字员工', 'en-US': 'WorkAvatar Digital Employees' },
   trayShowWindow: { 'zh-CN': '显示窗口', 'en-US': 'Show Window' },
+  traySecretaryShow: { 'zh-CN': '显示小秘书', 'en-US': 'Show Secretary' },
+  traySecretaryHide: { 'zh-CN': '隐藏小秘书', 'en-US': 'Hide Secretary' },
+  secretaryMenuOpen: { 'zh-CN': '打开小秘书面板', 'en-US': 'Open secretary panel' },
+  secretaryMenuHide: { 'zh-CN': '隐藏小秘书', 'en-US': 'Hide secretary' },
+  secretaryMenuSettings: { 'zh-CN': '小秘书设置…', 'en-US': 'Secretary settings…' },
   trayQuit: { 'zh-CN': '退出程序', 'en-US': 'Quit' },
 
   pluginLoadTitle: { 'zh-CN': '加载插件', 'en-US': 'Load Plugin' },

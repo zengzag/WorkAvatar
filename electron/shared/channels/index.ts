@@ -12,6 +12,7 @@ import { ATTACHMENT_CHANNELS } from './attachment'
 import { SHELL_BG_CHANNELS } from './shell-bg'
 import { SUBAGENT_CHANNELS } from './subagent'
 import { TERMINAL_CHANNELS } from './terminal'
+import { SECRETARY_CHANNELS } from './secretary'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -28,6 +29,7 @@ export const IPC_CHANNELS = {
   ...SHELL_BG_CHANNELS,
   ...SUBAGENT_CHANNELS,
   ...TERMINAL_CHANNELS,
+  ...SECRETARY_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -44,3 +46,4 @@ export * from './attachment'
 export * from './shell-bg'
 export * from './subagent'
 export * from './terminal'
+export * from './secretary'

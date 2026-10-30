@@ -44,6 +44,23 @@ const App: React.FC = () => {
     return () => { dispose() }
   }, [])
 
+  // 小秘书点击任务行：主进程唤起主窗口后，切到任务页并定位对话
+  useEffect(() => {
+    const off = window.electronAPI.secretary.onOpenTask(({ employeeId, conversationId }) => {
+      navigate('/tasks')
+      requestPendingTaskJump(employeeId, conversationId)
+    })
+    return () => { off() }
+  }, [navigate])
+
+  // 小秘书右键菜单 →「小秘书设置」
+  useEffect(() => {
+    const off = window.electronAPI.secretary.onOpenSettings(() => {
+      navigate('/settings?tab=secretary')
+    })
+    return () => { off() }
+  }, [navigate])
+
   // 监听系统右键"打开方式"或启动参数传入的外部文件：按扩展名路由到声明了该文件关联的插件页
   // 文件消费由插件经 loader 的 subscribeExternalFiles 能力订阅，这里只负责路由/窗口
   useEffect(() => {

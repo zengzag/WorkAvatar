@@ -6,6 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WorkAvatar 数字员工</title>
     <style>
+      /* 小秘书浮窗：窗口是 transparent 的，页面任何不透明底板都会变成黑边 */
+      html.wa-secretary-window,
+      html.wa-secretary-window body { background: transparent !important; }
+      html.wa-secretary-window #boot-splash { display: none !important; }
+
       /* 启动骨架：React 首帧前先渲染，窗口可立即显示，避免首屏空白的长时间等待 */
       html, body { margin: 0; height: 100%; }
       #boot-splash {
@@ -66,6 +71,12 @@
     </style>
   </head>
   <body>
+    <script>
+      // 透明浮窗必须在首帧前就打上标记：等 React 挂载再改，骨架层会先闪一块不透明底色
+      if (location.hash.indexOf('#/secretary/') === 0) {
+        document.documentElement.classList.add('wa-secretary-window');
+      }
+    </script>
     <div id="boot-splash">
       <div class="boot-splash__logo">W</div>
       <div class="boot-splash__name">WorkAvatar</div>

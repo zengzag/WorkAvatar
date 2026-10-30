@@ -318,6 +318,56 @@ const electronAPI = {
     },
   },
 
+  // 小秘书浮窗：挂件窗与面板窗共用
+  secretary: {
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_GET_STATE),
+    showPanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SHOW_PANEL),
+    hidePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_HIDE_PANEL),
+    togglePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_TOGGLE_PANEL),
+    setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string }>) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SET_SETTINGS, patch),
+    /** 挂件拖动：发送光标屏幕坐标（主进程按起点位移移动窗口） */
+    movePetTo: (x: number, y: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET, { x, y }),
+    /** 拖动结束：主进程吸附到边缘并持久化位置 */
+    dragEnd: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_END),
+    /** 面板内容高度变化，主进程同步窗口高度 */
+    setPanelHeight: (height: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_HEIGHT, height),
+    /** 挂件窗口透明区域的鼠标穿透开关 */
+    setIgnoreMouse: (ignore: boolean) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_IGNORE_MOUSE, ignore),
+    quit: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_QUIT),
+    /** 挂件右键：主进程弹原生菜单 */
+    showContextMenu: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_CONTEXT_MENU),
+    /** 主进程请求主窗口打开「设置 → 小秘书」 */
+    onOpenSettings: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_OPEN_SETTINGS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_OPEN_SETTINGS, handler)
+    },
+    /** 打开主窗口并定位到任务详情 */
+    openTask: (payload: { employeeId: string; conversationId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_OPEN_TASK, payload),
+    onOpenTask: (callback: (payload: { employeeId: string; conversationId: string }) => void) => {
+      const handler = (_event: any, payload: { employeeId: string; conversationId: string }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_OPEN_TASK, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_OPEN_TASK, handler)
+    },
+    onPanelVisibility: (callback: (open: boolean) => void) => {
+      const handler = (_event: any, open: boolean) => callback(!!open)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
+    },
+    onSettingsChanged: (callback: (settings: { enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string }) => void) => {
+      const handler = (_event: any, settings: any) => callback(settings)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)
+    },
+    onSideChanged: (callback: (side: 'left' | 'right') => void) => {
+      const handler = (_event: any, side: 'left' | 'right') => callback(side)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
+    },
+  },
+
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getCategories: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_CATEGORIES),

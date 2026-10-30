@@ -225,7 +225,11 @@ async function bootstrap() {
   // 必须先读完持久化导航配置再加载插件：插件注入导航项时才能保留用户已保存的排序/显隐
   await useNavConfigStore.getState().initialize()
   startupMark('导航配置加载完成')
-  await loadPlugins()
+  // 小秘书浮窗不需要插件页面：跳过插件渲染端加载，避免两个常驻小窗各跑一份插件 bundle
+  const isLightWindow = window.location.hash.startsWith('#/secretary/')
+  if (!isLightWindow) {
+    await loadPlugins()
+  }
   startupMark('插件渲染端加载完成')
   const router = buildRouter()
   startupMark('路由构建完成')
