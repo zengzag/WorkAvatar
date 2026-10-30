@@ -17,6 +17,7 @@ import {
 } from './conversation-fts'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
+import { sanitizeAvatarImage } from '../../shared/avatar'
 
 const logger = createLogger('WorkspaceManager')
 
@@ -180,6 +181,7 @@ class WorkspaceManagerService {
     avatar_type?: string
     avatar_icon?: string
     avatar_color?: string
+    avatar_image?: string
     delegation_json?: string
   }): Employee | null {
     const employee = this.getEmployee(id)
@@ -193,6 +195,7 @@ class WorkspaceManagerService {
       'default_skill_id',
       'memory_enabled', 'workspace_path', 'avatar_type',
       'avatar_icon', 'avatar_color',
+      'avatar_image',
       'delegation_json'
     ]
 
@@ -211,6 +214,15 @@ class WorkspaceManagerService {
         if (key === 'memory_enabled') {
           updates.push(`${key} = ?`)
           values.push(value ? 1 : 0)
+        } else if (key === 'avatar_image') {
+          // 兜底：只接受 data:image/ 且体积受限的头像，防止绕过渲染端压缩写入超大图片
+          const normalized = value === '' ? '' : sanitizeAvatarImage(value)
+          if (normalized === '' && value !== '') {
+            logger.warn('Rejected invalid or oversized employee avatar_image')
+            return
+          }
+          updates.push(`${key} = ?`)
+          values.push(normalized)
         } else {
           updates.push(`${key} = ?`)
           values.push(value)

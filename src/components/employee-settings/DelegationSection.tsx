@@ -60,6 +60,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
       avatar_type: e.avatar_type,
       avatar_icon: e.avatar_icon,
       avatar_color: e.avatar_color,
+      avatar_image: e.avatar_image,
       source: e.source,
       accepting: parseEmployeeDelegation(e.delegation_json).acceptDelegation,
     })),
@@ -156,6 +157,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
                         avatarType={c.avatar_type}
                         avatarIcon={c.avatar_icon}
                         avatarColor={c.avatar_color}
+                        avatarImage={c.avatar_image}
                         source={c.source}
                         size={32}
                       />

@@ -982,6 +982,7 @@ const Tasks: React.FC = () => {
                     <EmployeeAvatar
                       avatarIcon={statusEmployee.avatar_icon}
                       avatarColor={statusEmployee.avatar_color}
+                      avatarImage={statusEmployee.avatar_image}
                       avatarType={statusEmployee.avatar_type}
                       employeeId={statusEmployee.id}
                       source={statusEmployee.source}

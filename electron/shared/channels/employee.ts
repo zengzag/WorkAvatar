@@ -68,6 +68,8 @@ export interface EmployeeUpdateParams {
   avatar_type?: string
   avatar_icon?: string
   avatar_color?: string
+  /** 上传的头像图片（data URL） */
+  avatar_image?: string
   memory_enabled?: boolean
   /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化） */
   delegation_json?: string

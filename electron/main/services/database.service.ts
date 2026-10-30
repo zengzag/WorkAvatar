@@ -158,6 +158,8 @@ class DatabaseService {
         -- 自定义头像：图标 key（robot/user/... 空=按 avatar_type 预设或默认）与颜色 hex（空=按 id 自动配色）
         avatar_icon TEXT DEFAULT '',
         avatar_color TEXT DEFAULT '',
+        -- 上传头像图片（data URL，空=用图标+颜色）
+        avatar_image TEXT DEFAULT '',
         default_skill_id TEXT,
         profile_json TEXT DEFAULT '',
         arch_version INTEGER NOT NULL DEFAULT 1,
@@ -470,6 +472,7 @@ class DatabaseService {
     for (const [name, ddl] of [
       ['avatar_icon', "TEXT DEFAULT ''"],
       ['avatar_color', "TEXT DEFAULT ''"],
+      ['avatar_image', "TEXT DEFAULT ''"],
     ] as const) {
       if (employeeColumns.length > 0 && !employeeColumns.some(c => c.name === name)) {
         this.db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${ddl}`)

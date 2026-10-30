@@ -94,6 +94,8 @@ export const renderEmployeeAvatarIcon = (icon: EmployeeAvatarIcon, size: number)
 export interface EmployeeAvatarProps {
   avatarIcon?: string | null
   avatarColor?: string | null
+  /** 上传的头像图片 data URL：优先于图标/颜色渲染 */
+  avatarImage?: string | null
   /** 旧样式字段（兼容历史数据；avatarIcon/avatarColor 优先） */
   avatarType?: string | null
   employeeId?: string
@@ -104,10 +106,11 @@ export interface EmployeeAvatarProps {
   active?: boolean
 }
 
-/** 数字员工头像：统一按自定义图标 + 颜色渲染，未设置时回退 id 哈希色 */
+/** 数字员工头像：上传图片 > 自定义图标+颜色 > id 哈希色 */
 const EmployeeAvatar: React.FC<EmployeeAvatarProps> = ({
   avatarIcon,
   avatarColor,
+  avatarImage,
   avatarType,
   employeeId,
   source,
@@ -139,6 +142,22 @@ const EmployeeAvatar: React.FC<EmployeeAvatarProps> = ({
 
   const icon = resolveEmployeeAvatarIcon(avatarIcon, avatarType, source)
   const color = resolveEmployeeAvatarColor(avatarColor, avatarType, employeeId)
+
+  if (avatarImage) {
+    return (
+      <img
+        src={avatarImage}
+        alt=""
+        draggable={false}
+        style={{
+          ...baseStyle,
+          objectFit: 'cover',
+          background: color,
+          border: `1px solid ${token.colorBorderSecondary}`,
+        }}
+      />
+    )
+  }
 
   return <div style={{ ...baseStyle, background: color, color: '#fff' }}>{renderEmployeeAvatarIcon(icon, iconSize)}</div>
 }

@@ -474,6 +474,7 @@ const MessageBubble: React.FC<{
                 avatarType={assistantEmployee.avatar_type}
                 avatarIcon={assistantEmployee.avatar_icon}
                 avatarColor={assistantEmployee.avatar_color}
+                avatarImage={assistantEmployee.avatar_image}
                 source={assistantEmployee.source}
                 size={30}
                 shape="square"

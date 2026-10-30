@@ -167,6 +167,7 @@ describe('employee-export-config / buildConfigData', () => {
       avatar_type: 'default',
       avatar_icon: '',
       avatar_color: '',
+      avatar_image: '',
       profile_json: '',
       memory_enabled: false,
       default_skill_id: null,

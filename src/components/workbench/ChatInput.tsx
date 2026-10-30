@@ -1506,6 +1506,7 @@ const ChatInput: React.FC<{
                       avatarType={emp.avatar_type}
                       avatarIcon={emp.avatar_icon}
                       avatarColor={emp.avatar_color}
+                      avatarImage={emp.avatar_image}
                       source={emp.source}
                       size={22}
                       active={active}
@@ -1570,6 +1571,7 @@ const ChatInput: React.FC<{
                             avatarType={emp.avatar_type}
                             avatarIcon={emp.avatar_icon}
                             avatarColor={emp.avatar_color}
+                            avatarImage={emp.avatar_image}
                             source={emp.source}
                             size={30}
                             active={empActive}

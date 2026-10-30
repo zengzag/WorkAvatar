@@ -408,6 +408,7 @@ const Employees: React.FC = () => {
                     avatarType={emp.avatar_type}
                     avatarIcon={emp.avatar_icon}
                     avatarColor={emp.avatar_color}
+                    avatarImage={emp.avatar_image}
                     source={emp.source}
                     size={44}
                     shape="square"
@@ -514,6 +515,7 @@ const Employees: React.FC = () => {
                   avatarType={emp.avatar_type}
                   avatarIcon={emp.avatar_icon}
                   avatarColor={emp.avatar_color}
+                  avatarImage={emp.avatar_image}
                   source={emp.source}
                   size={36}
                   shape="square"

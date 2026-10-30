@@ -70,6 +70,8 @@ export interface Employee {
   avatar_icon?: string
   /** 自定义头像颜色 hex（空=按 id 自动配色） */
   avatar_color?: string
+  /** 上传的头像图片（data URL；空=用图标+颜色渲染） */
+  avatar_image?: string
   default_skill_id?: string
   /** 员工来源，缺省视为 user（旧数据兼容） */
   source?: EmployeeSource

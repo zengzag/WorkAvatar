@@ -107,6 +107,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         // 头像：把历史 avatar_type 预设解析成具体图标/颜色，表单里直接编辑具体值
         avatar_icon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
         avatar_color: resolveEmployeeAvatarColor(employee.avatar_color, employee.avatar_type, employee.id),
+        avatar_image: employee.avatar_image || '',
       })
     }
   }, [employee, form])

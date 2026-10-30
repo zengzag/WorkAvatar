@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { generateId } from './common-utils'
 import fs from 'fs'
 import DatabaseService from './database.service'
+import { sanitizeAvatarImage } from '../../shared/avatar'
 
 export const EXPORT_CONFIG_VERSION = '1.1.0'
 
@@ -18,6 +19,7 @@ export interface EmployeeConfigExport {
     avatar_type: string
     avatar_icon?: string
     avatar_color?: string
+    avatar_image?: string
     profile_json: string
     memory_enabled: boolean
     default_skill_id: string | null
@@ -85,6 +87,7 @@ export class EmployeeExportConfigService {
         avatar_type: employee.avatar_type,
         avatar_icon: employee.avatar_icon || '',
         avatar_color: employee.avatar_color || '',
+        avatar_image: employee.avatar_image || '',
         profile_json: employee.profile_json || '',
         memory_enabled: !!employee.memory_enabled,
         default_skill_id: employee.default_skill_id || null,
@@ -200,11 +203,15 @@ export class EmployeeExportConfigService {
   ): string[] {
     const warnings: string[] = []
     const now = Math.floor(Date.now() / 1000)
+    const avatarImage = sanitizeAvatarImage(importData.employee.avatar_image)
+    if (importData.employee.avatar_image && !avatarImage) {
+      warnings.push('Avatar image skipped: invalid or too large')
+    }
 
     this.db.getDb().transaction(() => {
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, avatar_icon, avatar_color, memory_enabled, default_skill_id, delegation_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, avatar_icon, avatar_color, memory_enabled, default_skill_id, delegation_json, avatar_image, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,
@@ -217,6 +224,7 @@ export class EmployeeExportConfigService {
         importData.employee.memory_enabled ? 1 : 0,
         importData.employee.default_skill_id || null,
         importData.employee.delegation_json || '',
+        avatarImage,
         now, now
       )
 
