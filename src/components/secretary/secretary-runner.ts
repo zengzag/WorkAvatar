@@ -1,7 +1,8 @@
-import type { Employee } from '../../types'
+import type { Employee, ThinkingLevel } from '../../types'
 import { generateId } from '../../utils/format'
 import { getSceneDefaultModel } from '../../utils/default-model'
 import { getToolDisplayName } from '../../utils/tool-display'
+import { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
 import { useSecretaryStore, type SecretaryTask } from './secretary.store'
 import { postSecretaryMessage } from './secretary-bus'
 
@@ -44,6 +45,7 @@ function broadcast(): void {
       unreadCount: unread.length,
       petColor: (latest || unread[0])?.employee.avatarColor || undefined,
       petImage: (latest || unread[0])?.employee.avatarImage || null,
+      petIcon: (latest || unread[0])?.employee.avatarIcon || undefined,
     },
   })
 }
@@ -153,6 +155,11 @@ export async function startSecretaryTask(params: {
   prompt: string
   /** 附件真实路径（面板本地拖入或从挂件窗转交） */
   attachmentPaths?: string[]
+  /** 面板上选中的模型；未选时回落到场景默认模型 */
+  providerId?: string
+  modelId?: string
+  /** 思考强度；面板默认开启 */
+  enableThinking?: ThinkingLevel
 }): Promise<string> {
   installSecretaryRunner()
 
@@ -177,7 +184,7 @@ export async function startSecretaryTask(params: {
     employee: {
       id: employee.id,
       name: employee.name,
-      avatarIcon: employee.avatar_icon,
+      avatarIcon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
       avatarColor: employee.avatar_color,
       avatarImage: employee.avatar_image,
     },
@@ -193,14 +200,13 @@ export async function startSecretaryTask(params: {
     { id: generateId(), role: 'user', content, timestamp: task.startedAt },
   ])
 
-  // employees 表存了 provider_id / model_id，Employee 类型未暴露，这里按需读取
-  const empRow = employee as Employee & { provider_id?: string | null; model_id?: string | null }
-  let providerId = empRow.provider_id || ''
-  let modelId = empRow.model_id || ''
+  // 面板选中的模型优先；未选时用工作台场景默认模型（员工表不存模型绑定）
+  let providerId = params.providerId || ''
+  let modelId = params.modelId || ''
   if (!providerId) {
     const fallback = await getSceneDefaultModel('workbench')
     providerId = fallback?.provider_id || ''
-    modelId = fallback?.model_id || modelId
+    modelId = modelId || fallback?.model_id || ''
   }
   if (!providerId) {
     store().patchTask(taskId, {
@@ -227,6 +233,7 @@ export async function startSecretaryTask(params: {
       conversation_id: conversation.id,
       minimal_mode: false,
       high_permission: false,
+      enable_thinking: params.enableThinking ?? 'high',
     })
   } catch (err) {
     // IPC 抛错时任务不能停在“执行中”，否则面板会一直转圈

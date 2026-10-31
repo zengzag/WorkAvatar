@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { App, Button, Switch, Tooltip, theme } from 'antd'
+import { App, Button, Dropdown, Switch, Tooltip, theme } from 'antd'
 import {
   CloseOutlined,
   PaperClipOutlined,
@@ -12,10 +12,16 @@ import {
   BellOutlined,
   EyeInvisibleOutlined,
   StopOutlined,
+  BulbOutlined,
+  BulbFilled,
+  RobotOutlined,
+  CheckOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import EmployeeAvatar from '../common/EmployeeAvatar'
-import type { Employee } from '../../types'
+import EmployeeAvatar, { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
+import { getCachedSceneDefaultModel } from '../../utils/default-model'
+import { getProviderModels, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
+import type { Employee, LLMProvider, ThinkingLevel } from '../../types'
 import {
   useSecretaryStore,
   selectRunningTasks,
@@ -30,12 +36,26 @@ import SecretaryComposer, { type ComposerFile, type ComposerHandle } from './Sec
 import './secretary.css'
 
 const EMPLOYEE_KEY = 'wa.secretary.employeeId'
+/** 面板上选中的模型与思考开关（会话级偏好，落 localStorage 供两个窗口共享） */
+const MODEL_PROVIDER_KEY = 'wa.secretary.providerId'
+const MODEL_ID_KEY = 'wa.secretary.modelId'
+const THINKING_KEY = 'wa.secretary.thinking'
+/** 小秘书默认开启思考（支持时） */
+const DEFAULT_THINKING: ThinkingLevel = 'high'
 /** 面板最大高度：超出后卡片内部滚动（上报给主进程的高度也用这个上限） */
 const PANEL_MAX_HEIGHT = 620
 
 /** 从路径里取文件名 */
 function baseName(p: string): string {
   return p.split(/[\\/]/).pop() || p
+}
+
+/** 读取本地保存的思考强度；未保存过用默认（开启） */
+function readStoredThinking(): ThinkingLevel {
+  const stored = localStorage.getItem(THINKING_KEY)
+  if (stored === 'false') return false
+  if (stored === 'low' || stored === 'medium' || stored === 'high') return stored
+  return DEFAULT_THINKING
 }
 
 /** 面板窗：员工切换 + 发任务 + 任务区（正在执行 / 待查看）*/
@@ -49,6 +69,14 @@ const SecretaryPanel: React.FC = () => {
   const [sending, setSending] = useState(false)
   const [dnd, setDnd] = useState(false)
   const [dropping, setDropping] = useState(false)
+  const [providers, setProviders] = useState<LLMProvider[]>([])
+  const [modelProviderId, setModelProviderId] = useState(
+    () => localStorage.getItem(MODEL_PROVIDER_KEY) || getCachedSceneDefaultModel('workbench')?.provider_id || '',
+  )
+  const [modelId, setModelId] = useState(
+    () => localStorage.getItem(MODEL_ID_KEY) || getCachedSceneDefaultModel('workbench')?.model_id || '',
+  )
+  const [thinking, setThinking] = useState<ThinkingLevel>(readStoredThinking)
   const fileRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ComposerHandle>(null)
@@ -90,6 +118,109 @@ const SecretaryPanel: React.FC = () => {
   useEffect(() => {
     if (employeeId) localStorage.setItem(EMPLOYEE_KEY, employeeId)
   }, [employeeId])
+
+  // 选中员工变化时同步挂件身份（robot 屏幕脸默认显示员工头像，屏幕配色跟随头像色）
+  useEffect(() => {
+    postSecretaryMessage({
+      type: 'face',
+      payload: employee
+        ? {
+          avatarImage: employee.avatar_image,
+          avatarIcon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
+          avatarColor: employee.avatar_color,
+        }
+        : {},
+    })
+  }, [employee])
+
+  useEffect(() => {
+    window.electronAPI.llm.getProviders()
+      .then((list) => setProviders(Array.isArray(list) ? (list as LLMProvider[]) : []))
+      .catch(() => {})
+  }, [])
+
+  // 思考能力：与主窗口一致，支持 reasoning_effort 的提供商给出 4 档，只支持开关的给出开/关
+  const thinkingCapability = useMemo(() => {
+    const provider = providers.find((p) => p.id === modelProviderId)
+    if (supportsReasoningEffort(provider?.provider_type)) {
+      return { visible: true, levels: [false, 'low', 'medium', 'high'] as ThinkingLevel[], effortSupported: true }
+    }
+    if (supportsThinking(provider?.provider_type)) {
+      return { visible: true, levels: [false, 'high'] as ThinkingLevel[], effortSupported: false }
+    }
+    return { visible: false, levels: [] as ThinkingLevel[], effortSupported: false }
+  }, [providers, modelProviderId])
+
+  const thinkingLevelLabel = useCallback((level?: ThinkingLevel) => t(
+    !level
+      ? 'workbench.thinkingLevelOff'
+      : level === 'low' ? 'workbench.thinkingLevelLow'
+        : level === 'medium' ? 'workbench.thinkingLevelMedium'
+          : 'workbench.thinkingLevelHigh'
+  ), [t])
+
+  const handleModelChange = useCallback((providerId: string, nextModelId: string) => {
+    setModelProviderId(providerId)
+    setModelId(nextModelId)
+    localStorage.setItem(MODEL_PROVIDER_KEY, providerId)
+    localStorage.setItem(MODEL_ID_KEY, nextModelId)
+  }, [])
+
+  const handleThinkingChange = useCallback((level: ThinkingLevel) => {
+    setThinking(level)
+    localStorage.setItem(THINKING_KEY, String(level))
+  }, [])
+
+  // 模型菜单：按提供商分组，菜单项只显示模型名（与主窗口输入框的模型选择一致）
+  const modelGroups = useMemo(
+    () => providers
+      .map((provider) => ({
+        provider,
+        models: getProviderModels(provider).filter((m) => (m.category || 'chat') === 'chat'),
+      }))
+      .filter((g) => g.models.length > 0),
+    [providers],
+  )
+
+  const currentModelLabel = useMemo(() => {
+    const group = modelGroups.find((g) => g.provider.id === modelProviderId)
+    return group?.models.find((m) => m.model === modelId)?.name || modelId
+  }, [modelGroups, modelProviderId, modelId])
+
+  const modelMenu = useMemo(() => ({
+    selectable: true,
+    selectedKeys: [`${modelProviderId}::${modelId}`],
+    onClick: ({ key }: { key: string }) => {
+      const i = key.indexOf('::')
+      if (i < 0) return
+      handleModelChange(key.slice(0, i), key.slice(i + 2))
+    },
+    items: modelGroups.length > 0
+      ? modelGroups.map((g) => ({
+        type: 'group' as const,
+        label: g.provider.name,
+        children: g.models.map((m) => ({ key: `${g.provider.id}::${m.model}`, label: m.name })),
+      }))
+      : [{ key: '__none', label: t('secretary.noProvider'), disabled: true }],
+  }), [modelGroups, modelProviderId, modelId, handleModelChange, t])
+
+  // 与主窗口一致的思考灯泡：4 档提供商点开选强度，其余点一下开关
+  const thinkingTrigger = (
+    <Tooltip title={thinkingCapability.effortSupported
+      ? `${t('workbench.thinkingLevel')}: ${thinkingLevelLabel(thinking)}`
+      : thinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+      <Button
+        type="text"
+        size="small"
+        onClick={thinkingCapability.effortSupported
+          ? undefined
+          : () => handleThinkingChange(thinking ? false : DEFAULT_THINKING)}
+        style={{ color: token.colorTextSecondary, padding: '0 4px 0 0', height: 18, minWidth: 18, borderRadius: 4 }}
+      >
+        {thinking ? <BulbFilled style={{ fontSize: 12 }} /> : <BulbOutlined style={{ fontSize: 12 }} />}
+      </Button>
+    </Tooltip>
+  )
 
   // 面板内容高度 → 主进程同步窗口高度
   useEffect(() => {
@@ -167,6 +298,9 @@ const SecretaryPanel: React.FC = () => {
         employee,
         prompt: prompt || files[0]?.name || '',
         attachmentPaths: files.map((f) => f.path),
+        providerId: modelProviderId,
+        modelId,
+        enableThinking: thinking,
       })
       composerRef.current?.clear()
       window.electronAPI.secretary.hidePanel()
@@ -176,7 +310,7 @@ const SecretaryPanel: React.FC = () => {
     } finally {
       setSending(false)
     }
-  }, [employee, sending, message, t])
+  }, [employee, sending, message, t, modelProviderId, modelId, thinking])
 
   const openTask = useCallback((task: SecretaryTask) => {
     setMenu(null)
@@ -211,13 +345,23 @@ const SecretaryPanel: React.FC = () => {
     insertPaths(paths)
   }
 
-  // 挂件窗拖入的文件（只带路径）：直接补进编辑区
+  // 挂件窗拖入的文件（只带路径）：直接补进编辑区；挂件请求状态时补发一次当前员工身份
   useEffect(() => subscribeSecretaryBus((msg) => {
+    if (msg.type === 'request-state' && employee) {
+      postSecretaryMessage({
+        type: 'face',
+        payload: {
+          avatarImage: employee.avatar_image,
+          avatarIcon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
+          avatarColor: employee.avatar_color,
+        },
+      })
+    }
     if (msg.type !== 'files') return
     try { localStorage.removeItem(SECRETARY_PENDING_FILES_KEY) } catch { /* ignore */ }
     insertPaths(msg.paths)
     window.setTimeout(() => composerRef.current?.focus(), 60)
-  }), [insertPaths])
+  }), [insertPaths, employee])
 
   // 首次打开面板：消费挂件窗在面板创建前暂存的拖入文件
   useEffect(() => {
@@ -456,9 +600,57 @@ const SecretaryPanel: React.FC = () => {
                 onClick={() => fileRef.current?.click()}
               />
             </Tooltip>
-            <span style={{ flex: 1, fontSize: 11, color: token.colorTextQuaternary }}>
-              {t('secretary.inputHint')}
-            </span>
+            <Tooltip title={t('secretary.inputHint')}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: token.colorTextQuaternary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {t('secretary.inputHint')}
+              </span>
+            </Tooltip>
+            {/* 模型名与思考灯泡：与主窗口输入框一致的紧凑排布，中间不留额外间距 */}
+            <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              <Dropdown trigger={['click']} placement="topRight" menu={modelMenu}>
+                <Button
+                  type="text"
+                  size="small"
+                  title={currentModelLabel || undefined}
+                  style={{
+                    color: token.colorTextSecondary,
+                    padding: '0 5px',
+                    height: 18,
+                    maxWidth: 110,
+                    minWidth: 18,
+                    borderRadius: 4,
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0, fontSize: 11 }}>
+                    {currentModelLabel
+                      ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentModelLabel}</span>
+                      : <RobotOutlined style={{ fontSize: 11 }} />}
+                  </span>
+                </Button>
+              </Dropdown>
+              {thinkingCapability.visible && (
+                thinkingCapability.effortSupported ? (
+                  <Dropdown
+                    trigger={['click']}
+                    placement="topRight"
+                    menu={{
+                      items: thinkingCapability.levels.map((level) => ({
+                        key: String(level),
+                        label: <span style={{ fontSize: 12 }}>{thinkingLevelLabel(level)}</span>,
+                        icon: thinking === level
+                          ? <CheckOutlined style={{ fontSize: 11 }} />
+                          : <span style={{ display: 'inline-block', width: 11 }} />,
+                      })),
+                      onClick: ({ key }) => handleThinkingChange(key === 'false' ? false : key as ThinkingLevel),
+                      selectable: true,
+                      selectedKeys: [String(thinking)],
+                    }}
+                  >
+                    {thinkingTrigger}
+                  </Dropdown>
+                ) : thinkingTrigger
+              )}
+            </div>
             <Button
               type="primary"
               size="small"
