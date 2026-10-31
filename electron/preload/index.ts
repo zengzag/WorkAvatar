@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
+import type { SecretaryCharacterId } from '../shared/channels/secretary'
 import type {
   WorkspaceOpenInExplorerParams,
   WorkspaceListFilesParams,
@@ -324,7 +325,7 @@ const electronAPI = {
     showPanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SHOW_PANEL),
     hidePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_HIDE_PANEL),
     togglePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_TOGGLE_PANEL),
-    setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string }>) =>
+    setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string; character: SecretaryCharacterId }>) =>
       ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SET_SETTINGS, patch),
     /** 挂件拖动：发送光标屏幕坐标（主进程按起点位移移动窗口） */
     movePetTo: (x: number, y: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET, { x, y }),
@@ -356,7 +357,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
     },
-    onSettingsChanged: (callback: (settings: { enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string }) => void) => {
+    onSettingsChanged: (callback: (settings: { enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string; character: SecretaryCharacterId }) => void) => {
       const handler = (_event: any, settings: any) => callback(settings)
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)

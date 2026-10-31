@@ -32,6 +32,15 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_OPEN_SETTINGS: 'secretary:open-settings',
 } as const
 
+/** 可选的挂件形象，数组顺序即设置面板展示顺序；robot（波波）屏幕脸默认显示应用图标、可被员工头像图替换，blob 为最初的圆团子 */
+export const SECRETARY_CHARACTER_IDS = ['robot', 'blob', 'momo', 'pip'] as const
+
+export type SecretaryCharacterId = (typeof SECRETARY_CHARACTER_IDS)[number]
+
+export function isSecretaryCharacterId(value: unknown): value is SecretaryCharacterId {
+  return typeof value === 'string' && (SECRETARY_CHARACTER_IDS as readonly string[]).includes(value)
+}
+
 export interface SecretarySettings {
   /** 是否启用小秘书（关闭时销毁窗口并注销快捷键） */
   enabled: boolean
@@ -45,6 +54,8 @@ export interface SecretarySettings {
   hotkey: string
   /** 默认绑定的员工 id（空 = 上次使用的员工） */
   employeeId: string
+  /** 挂件形象 */
+  character: SecretaryCharacterId
 }
 
 export interface SecretaryRuntimeState {
@@ -65,4 +76,5 @@ export const DEFAULT_SECRETARY_SETTINGS: SecretarySettings = {
   dnd: false,
   hotkey: 'Control+Alt+Space',
   employeeId: '',
+  character: 'blob',
 }

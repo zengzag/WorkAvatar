@@ -6,6 +6,7 @@ import mainUiI18n from './ui-i18n.service'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import {
   DEFAULT_SECRETARY_SETTINGS,
+  isSecretaryCharacterId,
   type SecretaryRuntimeState,
   type SecretarySettings,
   type SecretarySide,
@@ -124,9 +125,12 @@ class SecretaryWindowService {
   setSettings(patch: Partial<SecretarySettings>): SecretarySettings {
     const prev = this.settings
     this.settings = { ...this.settings, ...patch }
-    // size / opacity / dnd / employeeId 属于渲染端偏好；enabled 与 hotkey 需要主进程生效
+    // size / opacity / dnd / employeeId / character 属于渲染端偏好；enabled 与 hotkey 需要主进程生效
     this.settings.size = clamp(Math.round(this.settings.size || DEFAULT_SECRETARY_SETTINGS.size), 64, 192)
     this.settings.opacity = clamp(this.settings.opacity || 1, 0.4, 1)
+    if (!isSecretaryCharacterId(this.settings.character)) {
+      this.settings.character = DEFAULT_SECRETARY_SETTINGS.character
+    }
     this.persistSettings()
 
     if (prev.enabled !== this.settings.enabled) {
@@ -466,6 +470,9 @@ class SecretaryWindowService {
       const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(SETTINGS_KEY) as { value?: string } | undefined
       if (row?.value) {
         this.settings = { ...DEFAULT_SECRETARY_SETTINGS, ...JSON.parse(row.value) }
+        if (!isSecretaryCharacterId(this.settings.character)) {
+          this.settings.character = DEFAULT_SECRETARY_SETTINGS.character
+        }
       }
       const posRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(POSITION_KEY) as { value?: string } | undefined
       if (posRow?.value) {

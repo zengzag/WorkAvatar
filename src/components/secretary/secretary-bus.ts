@@ -11,11 +11,15 @@ export interface SecretaryBusState {
   petColor?: string
   /** 员工上传的头像图片：挂在挂件胸前作为身份标识 */
   petImage?: string | null
+  /** 员工头像图标 key：无上传头像时作为 robot 屏幕脸 */
+  petIcon?: string | null
 }
 
 export type SecretaryBusMessage =
   | { type: 'state'; payload: SecretaryBusState }
   | { type: 'request-state' }
+  /** 面板选中的员工变化：驱动挂件身份（robot 屏幕脸与屏幕配色） */
+  | { type: 'face'; payload: { avatarImage?: string | null; avatarIcon?: string | null; avatarColor?: string | null } }
   | { type: 'toggle-panel' }
   /** 挂件窗拖入文件：受跨窗口限制只传路径，面板窗按路径生成附件 */
   | { type: 'files'; paths: string[] }

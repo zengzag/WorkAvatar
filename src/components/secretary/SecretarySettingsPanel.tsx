@@ -1,11 +1,27 @@
 import { useEffect, useState } from 'react'
 import { App, Card, Input, Slider, Space, Switch, Typography, theme } from 'antd'
 import { useTranslation } from 'react-i18next'
-import type { SecretaryRuntimeState, SecretarySettings } from '../../../electron/shared/channels/secretary'
+import {
+  SECRETARY_CHARACTER_IDS,
+  isSecretaryCharacterId,
+  type SecretaryCharacterId,
+  type SecretaryRuntimeState,
+  type SecretarySettings,
+} from '../../../electron/shared/channels/secretary'
+import { SecretaryAvatar } from './SecretaryAvatar'
+import './secretary.css'
 
 const { Text } = Typography
 
-/** 设置 → 小秘书：启用、挂件尺寸/不透明度、免打扰与快捷键 */
+/** 预览用配色：各角色默认配饰色（挂件本体跟随员工头像色） */
+const CHARACTER_ACCENTS: Record<SecretaryCharacterId, string> = {
+  blob: '#4C8DFF',
+  momo: '#F49AB4',
+  pip: '#45C2B0',
+  robot: '#1E6FE0',
+}
+
+/** 设置 → 小秘书：启用、角色形象、挂件尺寸/不透明度、免打扰与快捷键 */
 const SecretarySettingsPanel: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -35,6 +51,7 @@ const SecretarySettingsPanel: React.FC = () => {
 
   if (!state) return null
   const settings = state.settings
+  const character = isSecretaryCharacterId(settings.character) ? settings.character : 'blob'
   const sizeValue = sizeDraft ?? settings.size
   const opacityValue = opacityDraft ?? Math.round(settings.opacity * 100)
 
@@ -55,6 +72,38 @@ const SecretarySettingsPanel: React.FC = () => {
         <span style={labelStyle}>{t('secretary.enabled')}</span>
         <Switch checked={settings.enabled} onChange={(checked) => void update({ enabled: checked })} />
         <Text style={hintStyle}>{t('secretary.enabledHint')}</Text>
+      </div>
+
+      <div style={{ ...rowStyle, flexDirection: 'column', alignItems: 'stretch' }}>
+        <span style={labelStyle}>{t('secretary.character')}</span>
+        <div className="secretary-char-list">
+          {SECRETARY_CHARACTER_IDS.map((id) => {
+            const active = character === id
+            return (
+              <button
+                key={id}
+                type="button"
+                className="secretary-char"
+                onClick={() => { if (!active) void update({ character: id }) }}
+                style={{
+                  borderColor: active ? token.colorPrimary : token.colorBorderSecondary,
+                  background: active ? token.colorPrimaryBg : 'transparent',
+                }}
+              >
+                <span
+                  className="secretary-char-art pc-scope"
+                  data-character={id}
+                  data-state="idle"
+                  style={{ ['--pet-color' as any]: CHARACTER_ACCENTS[id] }}
+                >
+                  <SecretaryAvatar id={id} accent={CHARACTER_ACCENTS[id]} still />
+                </span>
+                <span className="secretary-char-name">{t(`secretary.characters.${id}`)}</span>
+              </button>
+            )
+          })}
+        </div>
+        <Text style={hintStyle}>{t(`secretary.characterDesc.${character}`)}</Text>
       </div>
 
       <div style={rowStyle}>

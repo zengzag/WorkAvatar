@@ -5,6 +5,19 @@ import {
   CodeOutlined, SettingOutlined, DatabaseOutlined, StarOutlined, BulbOutlined,
   ThunderboltOutlined, RocketOutlined, CheckOutlined,
 } from '@ant-design/icons'
+import RobotIconDef from '@ant-design/icons-svg/es/asn/RobotOutlined'
+import UserIconDef from '@ant-design/icons-svg/es/asn/UserOutlined'
+import TeamIconDef from '@ant-design/icons-svg/es/asn/TeamOutlined'
+import FileIconDef from '@ant-design/icons-svg/es/asn/FileTextOutlined'
+import BookIconDef from '@ant-design/icons-svg/es/asn/BookOutlined'
+import CodeIconDef from '@ant-design/icons-svg/es/asn/CodeOutlined'
+import SettingIconDef from '@ant-design/icons-svg/es/asn/SettingOutlined'
+import DatabaseIconDef from '@ant-design/icons-svg/es/asn/DatabaseOutlined'
+import StarIconDef from '@ant-design/icons-svg/es/asn/StarOutlined'
+import BulbIconDef from '@ant-design/icons-svg/es/asn/BulbOutlined'
+import ThunderIconDef from '@ant-design/icons-svg/es/asn/ThunderboltOutlined'
+import RocketIconDef from '@ant-design/icons-svg/es/asn/RocketOutlined'
+import type { IconDefinition } from '@ant-design/icons-svg/lib/types'
 import type { EmployeeSource } from '../../types'
 
 /** 可选头像图标（key 对应 i18n employeeSettings.avatarIcon_<key>） */
@@ -29,6 +42,41 @@ const ICON_COMPONENTS: Record<EmployeeAvatarIcon, React.ComponentType<{ style?: 
   thunder: ThunderboltOutlined,
   rocket: RocketOutlined,
 }
+
+/** 图标字形：取 antd 图标的基础 SVG 路径，供画布与内联 SVG 直接绘制 */
+export interface AvatarIconGlyph {
+  /** viewBox（与 antd 图标一致：64 64 896 896） */
+  viewBox: string
+  /** 合并后的路径数据 */
+  path: string
+}
+
+const toGlyph = (def: IconDefinition): AvatarIconGlyph => {
+  const node = typeof def.icon === 'function' ? def.icon('#fff', '#fff') : def.icon
+  return {
+    viewBox: node.attrs.viewBox,
+    path: (node.children || []).map((child) => child.attrs.d || '').filter(Boolean).join(' '),
+  }
+}
+
+const ICON_GLYPHS: Record<EmployeeAvatarIcon, AvatarIconGlyph> = {
+  robot: toGlyph(RobotIconDef),
+  user: toGlyph(UserIconDef),
+  team: toGlyph(TeamIconDef),
+  file: toGlyph(FileIconDef),
+  book: toGlyph(BookIconDef),
+  code: toGlyph(CodeIconDef),
+  setting: toGlyph(SettingIconDef),
+  database: toGlyph(DatabaseIconDef),
+  star: toGlyph(StarIconDef),
+  bulb: toGlyph(BulbIconDef),
+  thunder: toGlyph(ThunderIconDef),
+  rocket: toGlyph(RocketIconDef),
+}
+
+/** 头像图标字形：未设置或未知 key 回落到默认机器人图标 */
+export const getEmployeeAvatarIconGlyph = (icon?: string | null): AvatarIconGlyph =>
+  ICON_GLYPHS[icon as EmployeeAvatarIcon] || ICON_GLYPHS.robot
 
 /** 头像配色预设（也可通过取色器自定义任意颜色） */
 export const AVATAR_COLOR_PRESETS = [
