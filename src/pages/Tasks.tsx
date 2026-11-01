@@ -61,6 +61,8 @@ const Tasks: React.FC = () => {
   // 右侧工作区面板（文件 / 终端 / 产物预览）
   const panelOpen = useTaskPanelStore((s) => s.open)
   const panelExpanded = useTaskPanelStore((s) => s.expanded)
+  // 仅在面板打开时进入全屏布局：关闭面板后全屏状态仍保留，但需正常显示任务列表与对话栏
+  const panelFullscreen = panelOpen && panelExpanded
   const openPanel = useTaskPanelStore((s) => s.openPanel)
   const closePanel = useTaskPanelStore((s) => s.closePanel)
   const resetPanel = useTaskPanelStore((s) => s.reset)
@@ -919,7 +921,7 @@ const Tasks: React.FC = () => {
       {/* 主体 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* 全屏预览模式下隐藏任务列表与对话栏，侧边栏占满 */}
-        {!panelExpanded && showSidePanel && (
+        {!panelFullscreen && showSidePanel && (
           <TaskSidebar
             tasks={filteredTasks}
             activeTaskId={taskMode === 'new' ? null : activeConversationId}
@@ -944,7 +946,7 @@ const Tasks: React.FC = () => {
           />
         )}
 
-        {!panelExpanded && (
+        {!panelFullscreen && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* 顶部状态栏：侧边栏展开/新建任务 + 任务标题/员工/时间 + 右侧操作区 */}
           <div className="wa-workbench-topbar" style={{
