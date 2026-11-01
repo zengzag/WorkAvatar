@@ -526,12 +526,15 @@ export async function createRobotStage(
   const screenTex = new THREE.CanvasTexture(screenCanvas)
   screenTex.colorSpace = THREE.SRGBColorSpace
   screenTex.anisotropy = 4
+  // 部分显卡/驱动上传 canvas 素材时会偶发忽略 UNPACK_FLIP_Y_WEBGL，导致屏幕脸上下翻转；
+  // 这里关掉该标志，固定用 UV 的负向缩放做垂直翻转，结果与硬件路径无关
+  screenTex.flipY = false
   // ExtrudeGeometry 的正面 UV 直接用形状坐标（单位级），这里换算成 0..1 并把贴图对齐到玻璃正面
   const capW = SCREEN.w
   const capH = SCREEN.h
   screenTex.wrapS = THREE.ClampToEdgeWrapping
   screenTex.wrapT = THREE.ClampToEdgeWrapping
-  screenTex.repeat.set(1 / capW, 1 / capH)
+  screenTex.repeat.set(1 / capW, -1 / capH)
   screenTex.offset.set(0.5, 0.5)
 
   // 玻璃正面是外轮廓内缩 bevel 后的形状；外圈由斜切边框形成白色屏框
