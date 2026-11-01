@@ -177,6 +177,12 @@ const electronAPI = {
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
     searchGlobal: (params: ConversationSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, params),
+    /** 其他窗口创建的会话或列表相关字段变更（任务列表实时同步） */
+    onChanged: (callback: (data: { id: string; action: 'create' | 'update' | 'delete' | 'delete-all' }) => void) => {
+      const handler = (_event: any, data: { id: string; action: 'create' | 'update' | 'delete' | 'delete-all' }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.CONVERSATION_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CONVERSATION_CHANGED, handler)
+    },
   },
 
   attachment: {
@@ -199,18 +205,22 @@ const electronAPI = {
     getContextStats: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
     listActiveSessions: (employeeId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_LIST_ACTIVE_SESSIONS, employeeId),
+    /** 接入其他窗口发起的运行中会话（打开小秘书任务时同步接收流式事件） */
+    attachSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ATTACH_SESSION, sessionId),
+    /** 运行中会话是否已有其他窗口接入（发起方据此让出收尾落库） */
+    isSessionAttached: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_SESSION_ATTACHED, sessionId) as Promise<boolean>,
     onChunk: (callback: (data: { sessionId: string; chunk?: string; chunks?: string[] }) => void) => {
       const handler = (_event: any, data: { sessionId: string; chunk?: string; chunks?: string[] }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
-    onDone: (callback: (data: { sessionId: string; metadata?: any }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; metadata?: any }) => callback(data)
+    onDone: (callback: (data: { sessionId: string; metadata?: any; attachedElsewhere?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; metadata?: any; attachedElsewhere?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_DONE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_DONE, handler)
     },
-    onError: (callback: (data: { sessionId: string; error: string }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; error: string }) => callback(data)
+    onError: (callback: (data: { sessionId: string; error: string; attachedElsewhere?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; error: string; attachedElsewhere?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
     },
@@ -326,7 +336,7 @@ const electronAPI = {
     showPanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SHOW_PANEL),
     hidePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_HIDE_PANEL),
     togglePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_TOGGLE_PANEL),
-    setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string; character: SecretaryCharacterId }>) =>
+    setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; hotkey: string; employeeId: string; character: SecretaryCharacterId }>) =>
       ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SET_SETTINGS, patch),
     /** 挂件拖动：发送光标屏幕坐标（主进程按起点位移移动窗口） */
     movePetTo: (x: number, y: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET, { x, y }),
@@ -358,7 +368,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
     },
-    onSettingsChanged: (callback: (settings: { enabled: boolean; size: number; opacity: number; dnd: boolean; hotkey: string; employeeId: string; character: SecretaryCharacterId }) => void) => {
+    onSettingsChanged: (callback: (settings: { enabled: boolean; size: number; opacity: number; hotkey: string; employeeId: string; character: SecretaryCharacterId }) => void) => {
       const handler = (_event: any, settings: any) => callback(settings)
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)

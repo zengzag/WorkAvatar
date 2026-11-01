@@ -12,6 +12,10 @@ export const LLM_CHANNELS = {
   EMPLOYEE_CHAT_RESUME: 'employee:chat-resume',
   LLM_ABORT_CHAT: 'llm:abort-chat',
   LLM_LIST_ACTIVE_SESSIONS: 'llm:list-active-sessions',
+  /** 其他窗口接入正在运行的会话（如任务页打开小秘书发起的任务，需要同步接收流式事件） */
+  LLM_ATTACH_SESSION: 'llm:attach-session',
+  /** 查询运行中会话是否被其他窗口接入（小秘书据此决定收尾落库是否让位给任务页） */
+  LLM_SESSION_ATTACHED: 'llm:session-attached',
   LLM_CHAT_CHUNK: 'llm:chat-chunk',
   LLM_CHAT_DONE: 'llm:chat-done',
   LLM_CHAT_ERROR: 'llm:chat-error',

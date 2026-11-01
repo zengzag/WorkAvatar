@@ -375,13 +375,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }))
   }
 
+  // 正在重建的会话：initEmployee 与 selectConversation 可能并发触发恢复，
+  // 不做互斥会为同一个 session 建出两个占位消息
+  const reconcilingSessionsRef = useRef<Set<string>>(new Set())
+
   /**
    * 后端运行中会话重建：renderer 重载/异常导致前端丢失运行跟踪后，
    * 查询后端仍未结束的流式会话，为其重建 streamState 与会话内占位 assistant 消息，
    * 恢复 isStreaming，避免"前端显示完成但后端仍运行 → 重发 already running"的陈旧状态。
    * 不传 employeeId 时恢复所有员工的活跃会话（后台任务的输出同样不能丢）。
+   * 传 conversationId 时只恢复指定会话（任务页打开其他窗口发起的运行中任务）。
    */
-  async function reconcileRunningStreams(employeeId?: string) {
+  async function reconcileRunningStreams(employeeId?: string, conversationId?: string) {
     let sessions: Array<{ sessionId: string; employeeId?: string; conversationId?: string }> = []
     try {
       sessions = await window.electronAPI.llm.listActiveSessions(employeeId)
@@ -391,23 +396,19 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     if (!Array.isArray(sessions) || sessions.length === 0) return
     for (const s of sessions) {
       if (!s.conversationId) continue
+      if (conversationId && s.conversationId !== conversationId) continue
+      // 会话可能由其他窗口（小秘书 / 独立窗口）发起：接入后本窗口才能收到后续流式事件
+      void window.electronAPI.llm.attachSession(s.sessionId).catch(() => {})
       // 已跟踪的活跃流跳过（正常运行时由 sendMessage 建立，无需重建）
       const already = Array.from(streamStatesRef.current.values())
         .some(ss => ss.conversationId === s.conversationId && ss.isStreaming)
       if (already) continue
+      if (reconcilingSessionsRef.current.has(s.sessionId)) continue
+      reconcilingSessionsRef.current.add(s.sessionId)
 
       const ownerId = s.employeeId || employeeId
       rememberConversationOwner(s.conversationId, ownerId)
 
-      const assistantMessageId = `msg_${generateId()}`
-      const placeholder: MessageWithThought = {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        isStreaming: true,
-        segments: [],
-      }
       // 幂等：从缓存取历史（未加载时从 DB 获取，避免空缓存覆盖既有消息），
       // 占位消息只写缓存不落库：流式过程中的内容不持久化，若把 isStreaming 占位写进 DB，
       // 事件再丢失（见下方监听注册）就会留下一条永远"生成中"的空消息
@@ -416,22 +417,52 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       if (base === undefined) {
         try {
           const fullConv = await window.electronAPI.conversation.get(s.conversationId)
-          base = (JSON.parse(fullConv?.messages_json || '[]') as MessageWithThought[]) || []
+          base = ((JSON.parse(fullConv?.messages_json || '[]') as MessageWithThought[]) || []).map(m => ensureSegments(m))
+          // 顺带恢复模型绑定：其他窗口（小秘书）发起的任务不在本窗口对话列表里，
+          // 打开任务时据此还原它实际使用的模型
+          if (!_persistentDefaultModels.has(s.conversationId)) {
+            const dbModel = parseConvDefaultModel(fullConv)
+            if (dbModel) _persistentDefaultModels.set(s.conversationId, dbModel)
+          }
         } catch {
           base = []
         }
       }
-      if (!base.some(m => m.id === assistantMessageId)) {
+      // 已有流式占位时复用；否则若最后一条就是助手消息，也沿用它（小秘书后台运行会持续把过程
+      // 落库，打开任务时要接着这条消息继续写，而不是新建一条空占位）。
+      // 最后一条是用户消息时不复用，避免把输出写到上一轮已完成的回复上。
+      const lastMsg = base[base.length - 1]
+      const existingPlaceholder = base.find(m => m.role === 'assistant' && m.isStreaming)
+        || (lastMsg?.role === 'assistant' && !lastMsg.isError ? lastMsg : undefined)
+      const assistantMessageId = existingPlaceholder?.id || `msg_${generateId()}`
+      // 新建占位时带上会话绑定的模型，任务结束后消息底部的模型标签才有值
+      const boundModel = _persistentDefaultModels.get(s.conversationId)
+      const placeholder: MessageWithThought = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+        segments: [],
+        ...(boundModel ? { comparisonProviderId: boundModel.providerId, comparisonModelId: boundModel.modelId } : {}),
+      }
+      if (!existingPlaceholder) {
         setConvMessages(s.conversationId, [...base, placeholder])
+      } else {
+        // 复用后台已落库的助手消息：标记为流式，后续增量继续写进同一条消息
+        setConvMessages(s.conversationId, base.map(m => (
+          m.id === assistantMessageId ? { ...m, isStreaming: true } : m
+        )))
       }
 
       streamStatesRef.current.set(s.sessionId, {
         isStreaming: true,
         conversationId: s.conversationId,
         assistantMessageId,
-        segCounter: 0,
-        toolCallCounter: 0,
-        runCounter: 0,
+        // 复用的消息可能已有段，计数器从已有数量起算，避免新段 id 与历史段冲突
+        segCounter: existingPlaceholder?.segments?.length || 0,
+        toolCallCounter: existingPlaceholder?.segments?.filter(x => x.type === 'tool_call').length || 0,
+        runCounter: existingPlaceholder?.segments?.filter(x => x.type === 'delegation').length || 0,
         groupSeq: 0,
       })
       if (s.conversationId === activeConversationIdRef.current) {
@@ -478,6 +509,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           }
         }
       } catch { /* 子会话恢复失败不阻断主管会话恢复 */ }
+      reconcilingSessionsRef.current.delete(s.sessionId)
     }
   }
 
@@ -946,6 +978,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       setLoadingConversationId(null)
       // 切换任务直接定位到底部，不做平滑滚动
       forceScrollToBottom('auto')
+      // 该任务可能仍在其他窗口（小秘书 / 独立窗口）运行：接入会话后继续接收流式输出
+      reconcileRunningStreams(undefined, convId).catch(() => {})
       return
     }
 
@@ -977,6 +1011,15 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
     if (fullConv) {
       setMinimalMode(!!fullConv.minimal_mode)
+      // 其他窗口（小秘书）创建的任务本窗口对话列表未必已刷新：模型绑定直接从会话记录恢复
+      if (!cachedDefaultModel) {
+        const dbModel = parseConvDefaultModel(fullConv)
+        if (dbModel) {
+          inputDefaultModelRef.current = dbModel
+          setInputDefaultModelState(dbModel)
+          _persistentDefaultModels.set(convId, dbModel)
+        }
+      }
       // 恢复 contextStats，优先使用持久化内存缓存（真空期数据不丢失）
       const persistentStats = _persistentContextStats.get(convId)
       if (persistentStats && typeof persistentStats === 'object') {
@@ -1047,6 +1090,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     if (convData) {
       setMinimalMode(!!(convData as any).minimal_mode)
     }
+    // 该任务可能仍在其他窗口（小秘书 / 独立窗口）运行：接入会话后继续接收流式输出
+    reconcileRunningStreams(undefined, convId).catch(() => {})
   }
 
   /** 中止指定对话的所有活跃流式会话，确保后端 agent signal 被置为 aborted */

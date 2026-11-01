@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { App, Button, Dropdown, Switch, Tooltip, theme } from 'antd'
+import { App, Button, Dropdown, Tooltip, theme } from 'antd'
 import {
   CloseOutlined,
   PaperClipOutlined,
@@ -9,7 +9,6 @@ import {
   CloseCircleOutlined,
   ExclamationCircleOutlined,
   SettingOutlined,
-  BellOutlined,
   EyeInvisibleOutlined,
   StopOutlined,
   BulbOutlined,
@@ -44,8 +43,6 @@ const THINKING_KEY = 'wa.secretary.thinking'
 const DEFAULT_THINKING: ThinkingLevel = 'high'
 /** 面板最大高度：超出后卡片内部滚动（上报给主进程的高度也用这个上限） */
 const PANEL_MAX_HEIGHT = 620
-/** 权限 / ask_user 弹窗是浮层，不参与面板内容高度：窗口需要临时撑到该高度才能完整显示 */
-const MODAL_MIN_HEIGHT = 480
 
 /** 从路径里取文件名 */
 function baseName(p: string): string {
@@ -69,8 +66,9 @@ const SecretaryPanel: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [employeeId, setEmployeeId] = useState<string>(() => localStorage.getItem(EMPLOYEE_KEY) || '')
   const [sending, setSending] = useState(false)
-  const [dnd, setDnd] = useState(false)
   const [dropping, setDropping] = useState(false)
+  /** 内联展开的员工切换 / 设置菜单：展开会撑高面板，收起时必须重新上报高度 */
+  const [menu, setMenu] = useState<'employee' | 'settings' | null>(null)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modelProviderId, setModelProviderId] = useState(
     () => localStorage.getItem(MODEL_PROVIDER_KEY) || getCachedSceneDefaultModel('workbench')?.provider_id || '',
@@ -124,9 +122,6 @@ const SecretaryPanel: React.FC = () => {
   useEffect(() => {
     loadEmployees()
     loadProviders()
-    window.electronAPI.secretary.getState()
-      .then((s) => setDnd(s.settings.dnd))
-      .catch(() => {})
     // 面板窗常驻不销毁：每次重新打开都刷新员工与模型列表，新建员工/模型后无需重启
     const off = window.electronAPI.secretary.onPanelVisibility((open) => {
       if (open) {
@@ -246,8 +241,42 @@ const SecretaryPanel: React.FC = () => {
   const interactionRequest = useInteractionStore((s) => s.currentRequest)
   const modalOpen = !!interactionRequest
 
-  // 面板内容高度 → 主进程同步窗口高度（弹窗打开时额外撑高）
+  // 面板内容高度 → 主进程同步窗口高度。
+  // 弹窗打开时面板整体让位，窗口收紧到弹窗本身的高度，避免弹窗落在一块多余的面板底色上。
   useEffect(() => {
+    if (modalOpen) {
+      let ro: ResizeObserver | null = null
+      let raf = 0
+      let alive = true
+      const report = (el: HTMLElement) => {
+        // 用 offsetHeight 而不是 getBoundingClientRect：弹窗开场缩放动画会让 rect 偏小，且动画结束不会触发 ResizeObserver
+        const height = el.offsetHeight
+        if (height > 0) window.electronAPI.secretary.setPanelHeight(Math.ceil(height) + 16)
+      }
+      const attach = () => {
+        if (!alive) return
+        const dialog = document.querySelector<HTMLElement>('.wa-approval-modal-compact .ant-modal')
+        if (!dialog) {
+          raf = window.requestAnimationFrame(attach)
+          return
+        }
+        report(dialog)
+        ro = new ResizeObserver(() => report(dialog))
+        ro.observe(dialog)
+      }
+      attach()
+      // 文案/选项异步渲染会让高度再变一次，补一次上报
+      const timer = window.setTimeout(() => {
+        const dialog = document.querySelector<HTMLElement>('.wa-approval-modal-compact .ant-modal')
+        if (dialog) report(dialog)
+      }, 300)
+      return () => {
+        alive = false
+        window.cancelAnimationFrame(raf)
+        window.clearTimeout(timer)
+        ro?.disconnect()
+      }
+    }
     const el = rootRef.current
     if (!el) return
     const report = () => {
@@ -262,7 +291,7 @@ const SecretaryPanel: React.FC = () => {
           + inner.scrollTop
           + padBottom
       }
-      const target = Math.min(Math.max(natural, modalOpen ? MODAL_MIN_HEIGHT : 0), PANEL_MAX_HEIGHT)
+      const target = Math.min(natural, PANEL_MAX_HEIGHT)
       window.electronAPI.secretary.setPanelHeight(Math.ceil(target) + 2)
     }
     report()
@@ -278,7 +307,8 @@ const SecretaryPanel: React.FC = () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
     }
-  }, [modalOpen])
+    // 菜单展开/收起时卡片被 max-height 夹住，ResizeObserver 收不到盒子变化，必须重跑上报
+  }, [modalOpen, menu])
 
   // 请求到达后把对应任务标记为“等待确认”（挂件据此进入等待态），结束后恢复执行中
   const waitingTaskRef = useRef<string | null>(null)
@@ -305,8 +335,6 @@ const SecretaryPanel: React.FC = () => {
     if (target.status === 'running') state.patchTask(target.id, { status: 'waiting' })
     window.electronAPI.secretary.showPanel()
   }, [interactionRequest])
-
-  const [menu, setMenu] = useState<'employee' | 'settings' | null>(null)
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -343,6 +371,7 @@ const SecretaryPanel: React.FC = () => {
         enableThinking: thinking,
       })
       composerRef.current?.clear()
+      // 派出去即可：任务在后台静默执行，任务列表会实时出现，点任务行才跳转主窗口查看
       window.electronAPI.secretary.hidePanel()
     } catch (err: any) {
       if (err?.message === 'NO_PROVIDER') message.warning(t('secretary.noProvider'))
@@ -473,7 +502,7 @@ const SecretaryPanel: React.FC = () => {
   return (
     <>
       <div
-        className="secretary-panel"
+        className={`secretary-panel${modalOpen ? ' is-modal-open' : ''}`}
         ref={rootRef}
         style={{ background: token.colorBgElevated, borderColor: token.colorBorder, maxHeight: PANEL_MAX_HEIGHT }}
       onDragOver={(e) => { e.preventDefault(); setDropping(true) }}
@@ -577,18 +606,6 @@ const SecretaryPanel: React.FC = () => {
 
             {menu === 'settings' && (
               <>
-                <div className="secretary-menu-item" style={{ color: token.colorText, cursor: 'default' }}>
-                  <BellOutlined style={{ color: token.colorTextTertiary }} />
-                  <span style={{ flex: 1 }}>{t('secretary.dnd')}</span>
-                  <Switch
-                    size="small"
-                    checked={dnd}
-                    onChange={async (checked) => {
-                      setDnd(checked)
-                      await window.electronAPI.secretary.setSettings({ dnd: checked }).catch(() => {})
-                    }}
-                  />
-                </div>
                 <button
                   className="secretary-menu-item"
                   style={{ color: token.colorText }}

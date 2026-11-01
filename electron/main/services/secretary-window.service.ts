@@ -21,8 +21,9 @@ const POSITION_KEY = 'secretary_pet_position'
 /** 面板固定宽度；高度由面板内容上报（clamp 后生效） */
 const PANEL_WIDTH = 372
 /** 首帧高度取小一点，等渲染端上报真实内容高度再调整，避免开面板瞬间留一大片透明空区 */
-const DEFAULT_PANEL_HEIGHT = 300
-const MIN_PANEL_HEIGHT = 240
+const DEFAULT_PANEL_HEIGHT = 200
+/** 高度完全由内容决定，这里只兜底首帧/异常上报，不能设太大会在面板底部留出空白 */
+const MIN_PANEL_HEIGHT = 120
 const MAX_PANEL_HEIGHT = 720
 
 /** 挂件窗口在挂件四周预留的透明区域：气泡与通知需要空间 */
@@ -83,6 +84,11 @@ class SecretaryWindowService {
     return !!this.panelWin && !this.panelWin.isDestroyed() && this.panelWin.isVisible()
   }
 
+  /** 是否来自小秘书面板窗：面板会自己弹出并让挂件进入等待态，不需要再发系统通知 */
+  isPanelWebContents(wc: Electron.WebContents | null | undefined): boolean {
+    return !!wc && !!this.panelWin && !this.panelWin.isDestroyed() && this.panelWin.webContents === wc
+  }
+
   init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
     this.loadPersisted()
@@ -127,7 +133,7 @@ class SecretaryWindowService {
   setSettings(patch: Partial<SecretarySettings>): SecretarySettings {
     const prev = this.settings
     this.settings = { ...this.settings, ...patch }
-    // size / opacity / dnd / employeeId / character 属于渲染端偏好；enabled 与 hotkey 需要主进程生效
+    // size / opacity / employeeId / character 属于渲染端偏好；enabled 与 hotkey 需要主进程生效
     this.settings.size = clamp(Math.round(this.settings.size || DEFAULT_SECRETARY_SETTINGS.size), 64, 192)
     this.settings.opacity = clamp(this.settings.opacity || 1, 0.4, 1)
     if (!isSecretaryCharacterId(this.settings.character)) {

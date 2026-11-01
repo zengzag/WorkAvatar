@@ -140,12 +140,6 @@ const SecretarySettingsPanel: React.FC = () => {
         <Text style={{ fontSize: 12, color: token.colorTextTertiary }}>{opacityValue}%</Text>
       </div>
 
-      <div style={rowStyle}>
-        <span style={labelStyle}>{t('secretary.dnd')}</span>
-        <Switch checked={settings.dnd} onChange={(checked) => void update({ dnd: checked })} />
-        <Text style={hintStyle}>{t('secretary.dndHint')}</Text>
-      </div>
-
       <div style={{ ...rowStyle, borderBottom: 'none' }}>
         <span style={labelStyle}>{t('secretary.hotkey')}</span>
         <Space.Compact style={{ width: 220 }}>

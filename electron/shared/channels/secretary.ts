@@ -48,8 +48,6 @@ export interface SecretarySettings {
   size: number
   /** 挂件不透明度 0.4–1 */
   opacity: number
-  /** 免打扰：只记录角标，不弹通知卡 */
-  dnd: boolean
   /** 全局快捷键（Electron accelerator） */
   hotkey: string
   /** 默认绑定的员工 id（空 = 上次使用的员工） */
@@ -73,7 +71,6 @@ export const DEFAULT_SECRETARY_SETTINGS: SecretarySettings = {
   enabled: true,
   size: 128,
   opacity: 1,
-  dnd: false,
   hotkey: 'Control+Alt+Space',
   employeeId: '',
   character: 'blob',

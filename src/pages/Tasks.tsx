@@ -896,6 +896,22 @@ const Tasks: React.FC = () => {
     return () => window.removeEventListener('conversation-title-updated', handler)
   }, [loadGlobalTasks])
 
+  // 其他窗口（小秘书 / 自动化）创建、改名或删除任务：实时刷新列表，避免要等任务完成才能看到
+  useEffect(() => {
+    let timer: number | null = null
+    const off = window.electronAPI.conversation.onChanged(() => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        loadGlobalTasksRef.current()
+      }, 200)
+    })
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      off?.()
+    }
+  }, [])
+
   if (!employeesLoaded) {
     return (
       <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

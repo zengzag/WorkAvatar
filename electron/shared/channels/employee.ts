@@ -17,6 +17,8 @@ export const EMPLOYEE_CHANNELS = {
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_DELETE_ALL: 'conversation:delete-all',
   CONVERSATION_SEARCH_GLOBAL: 'conversation:search-global',
+  /** 主进程 → 所有窗口：会话创建 / 列表相关字段变更 / 删除（任务列表实时同步） */
+  CONVERSATION_CHANGED: 'conversation:changed',
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',

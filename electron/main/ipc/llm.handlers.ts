@@ -14,7 +14,7 @@ import { createPiProvider } from '../services/agent/llm/pi-provider-factory'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
 import { safeHandle } from './_shared'
-import { flushRunStream, registerSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
+import { flushRunStream, hasOtherSessionViewer, registerSessionWebContents, sendToSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
 import SubAgentRuntime from '../services/agent-runtime/runtime'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import { clearResumableRun, getResumableRun, takeResumableRun } from '../services/agent/core/resumable-runs'
@@ -27,7 +27,16 @@ export function registerLLMHandlers(
   const activeSessions: Map<string, AbortController> = new Map()
   // 会话附带的员工/对话信息，供前端查询"仍在运行"的会话以恢复 UI（renderer 重载后状态丢失）
   const activeSessionsMeta: Map<string, { employeeId?: string; conversationId?: string }> = new Map()
+  // 会话发起窗口：用于判断是否有其他窗口接入（接入方会自行落库，发起方不再覆盖）
+  const sessionOwner: Map<string, Electron.WebContents> = new Map()
   const interactionService = UnifiedInteractionService.getInstance()
+
+  const cleanupSession = (sessionId: string) => {
+    activeSessions.delete(sessionId)
+    activeSessionsMeta.delete(sessionId)
+    unregisterSessionWebContents(sessionId)
+    sessionOwner.delete(sessionId)
+  }
 
   /**
    * 把"可原地续跑"状态与发起它的 IPC 会话/窗口绑定：错误推给前端后，
@@ -69,6 +78,20 @@ export function registerLLMHandlers(
       sessions.push({ sessionId, employeeId: meta?.employeeId, conversationId: meta?.conversationId })
     }
     return sessions
+  })
+
+  // 其他窗口接入仍在运行的会话：任务页打开小秘书等后台窗口发起的任务时，
+  // 把后续流式事件同时推给当前窗口（不影响原发起窗口）
+  ipcMain.handle(IPC_CHANNELS.LLM_ATTACH_SESSION, (event, sessionId?: string) => {
+    if (!sessionId || !activeSessions.has(sessionId)) return { success: false }
+    registerSessionWebContents(sessionId, event.sender)
+    return { success: true }
+  })
+
+  // 运行中会话是否已有其他窗口接入（发起方据此让出收尾落库）
+  safeHandle(IPC_CHANNELS.LLM_SESSION_ATTACHED, (sessionId?: string) => {
+    if (!sessionId) return false
+    return hasOtherSessionViewer(sessionId, sessionOwner.get(sessionId))
   })
 
   // 活跃子会话运行列表（renderer 重载后恢复运行面板/消息流用）
@@ -139,6 +162,7 @@ export function registerLLMHandlers(
     clearResumableRun(params.conversation_id)
     activeSessions.set(sessionId, abortController)
     activeSessionsMeta.set(sessionId, { employeeId: params.employee_id, conversationId: params.conversation_id })
+    sessionOwner.set(sessionId, event.sender)
     registerSessionWebContents(sessionId, event.sender)
 
     interactionService.registerSession(sessionId, event.sender)
@@ -157,12 +181,10 @@ export function registerLLMHandlers(
       if (abortController.signal.aborted) { chunkBuffer = ''; return }
       const chunks = [chunkBuffer]
       chunkBuffer = ''
-      if (!event.sender.isDestroyed()) {
-        try {
-          event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
-        } catch {
-          // 定时器触发前窗口被销毁，WebFrameMain 已 dispose，忽略该竞态错误
-        }
+      try {
+        sendToSessionWebContents(sessionId, IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+      } catch {
+        // 定时器触发前窗口被销毁，WebFrameMain 已 dispose，忽略该竞态错误
       }
     }
     const scheduleChunkFlush = () => {
@@ -178,12 +200,10 @@ export function registerLLMHandlers(
       if (abortController.signal.aborted) { thoughtBuffer = ''; return }
       const thought = thoughtBuffer
       thoughtBuffer = ''
-      if (!event.sender.isDestroyed()) {
-        try {
-          event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought })
-        } catch {
-          // 同上：窗口销毁竞态
-        }
+      try {
+        sendToSessionWebContents(sessionId, IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought })
+      } catch {
+        // 同上：窗口销毁竞态
       }
     }
     const scheduleThoughtFlush = () => {
@@ -199,12 +219,10 @@ export function registerLLMHandlers(
       if (abortController.signal.aborted) { toolCallDeltaBuffer.clear(); return }
       const deltas = Array.from(toolCallDeltaBuffer.values())
       toolCallDeltaBuffer.clear()
-      if (!event.sender.isDestroyed()) {
-        try {
-          event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, { sessionId, deltas })
-        } catch {
-          // 同上：窗口销毁竞态
-        }
+      try {
+        sendToSessionWebContents(sessionId, IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, { sessionId, deltas })
+      } catch {
+        // 同上：窗口销毁竞态
       }
     }
     const scheduleToolCallDeltaFlush = () => {
@@ -273,69 +291,59 @@ export function registerLLMHandlers(
                 scheduleToolCallDeltaFlush()
               },
               onToolCall: (toolCall: { id: string; name: string; args: any; iteration?: number }) => {
-                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                if (!abortController.signal.aborted) {
                   flushAllStreams()
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args, iteration: toolCall.iteration })
+                  sendToSessionWebContents(sessionId, IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args, iteration: toolCall.iteration })
                 }
               },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any; resultRaw?: string; generatedFiles?: any; images?: string[]; success?: boolean; isError?: boolean }) => {
                 if (abortController.signal.aborted) return
-                if (!event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, resultRaw: toolResult.resultRaw, generatedFiles: toolResult.generatedFiles, images: toolResult.images, success: toolResult.success, isError: toolResult.isError })
-                }
+                sendToSessionWebContents(sessionId, IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, resultRaw: toolResult.resultRaw, generatedFiles: toolResult.generatedFiles, images: toolResult.images, success: toolResult.success, isError: toolResult.isError })
               },
               onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {
                 if (abortController.signal.aborted) return
-                if (!event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
-                }
+                sendToSessionWebContents(sessionId, IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
               },
               onIterationStart: (iteration: number) => {
                 if (abortController.signal.aborted) return
-                if (!event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.AGENT_ITERATION_START, { sessionId, iteration })
-                }
+                sendToSessionWebContents(sessionId, IPC_CHANNELS.AGENT_ITERATION_START, { sessionId, iteration })
               },
               onDone: (metadata?: any) => {
                 flushAllStreams() // 确保缓冲区中的增量不丢失
                 // 子任务流式增量先于主管 done 下发，避免收尾后仍有零星 chunk 落到已结束的消息上
                 flushRunStream(sessionId)
                 // abort 时也发送 metadata（含 tokenUsage/contextStats），让前端能显示用量
-                if (!event.sender.isDestroyed()) {
-                  // 合并子会话 token 用量到主管会话 metadata（经 run 运行时聚合）
-                  const childUsage = SubAgentRuntime.getInstance().getAggregatedUsage(sessionId)
-                  const mergedMetadata = { ...(metadata || {}) }
-                  if (childUsage && (childUsage.totalTokens || childUsage.completionTokens || childUsage.promptTokens)) {
-                    const base = metadata?.tokenUsage || {}
-                    const cachedTokens = (base.cachedTokens || 0) + (childUsage.cachedTokens || 0)
-                    const generationMs = (base.generationMs || 0) + (childUsage.generationMs || 0)
-                    mergedMetadata.tokenUsage = {
-                      promptTokens: (base.promptTokens || 0) + (childUsage.promptTokens || 0),
-                      completionTokens: (base.completionTokens || 0) + (childUsage.completionTokens || 0),
-                      totalTokens: (base.totalTokens || 0) + (childUsage.totalTokens || 0),
-                      // 缓存命中必须与 prompt/completion 一样求和：混入子会话 prompt 却不计入其 cached，
-                      // 会让 UI 的 cached/prompt 命中率被严重低估。
-                      ...(cachedTokens > 0 ? { cachedTokens } : {}),
-                      // 输出速度口径：子会话的生成耗时随 completionTokens 一并合并，避免平均速度被高估
-                      ...(generationMs > 0 ? { generationMs } : {}),
-                    }
+                // 合并子会话 token 用量到主管会话 metadata（经 run 运行时聚合）
+                const childUsage = SubAgentRuntime.getInstance().getAggregatedUsage(sessionId)
+                const mergedMetadata = { ...(metadata || {}) }
+                if (childUsage && (childUsage.totalTokens || childUsage.completionTokens || childUsage.promptTokens)) {
+                  const base = metadata?.tokenUsage || {}
+                  const cachedTokens = (base.cachedTokens || 0) + (childUsage.cachedTokens || 0)
+                  const generationMs = (base.generationMs || 0) + (childUsage.generationMs || 0)
+                  mergedMetadata.tokenUsage = {
+                    promptTokens: (base.promptTokens || 0) + (childUsage.promptTokens || 0),
+                    completionTokens: (base.completionTokens || 0) + (childUsage.completionTokens || 0),
+                    totalTokens: (base.totalTokens || 0) + (childUsage.totalTokens || 0),
+                    // 缓存命中必须与 prompt/completion 一样求和：混入子会话 prompt 却不计入其 cached，
+                    // 会让 UI 的 cached/prompt 命中率被严重低估。
+                    ...(cachedTokens > 0 ? { cachedTokens } : {}),
+                    // 输出速度口径：子会话的生成耗时随 completionTokens 一并合并，避免平均速度被高估
+                    ...(generationMs > 0 ? { generationMs } : {}),
                   }
-                  event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: mergedMetadata })
                 }
-                activeSessions.delete(sessionId)
-                activeSessionsMeta.delete(sessionId)
-                unregisterSessionWebContents(sessionId)
+                const attachedElsewhere = hasOtherSessionViewer(sessionId, sessionOwner.get(sessionId))
+                sendToSessionWebContents(sessionId, IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: mergedMetadata, attachedElsewhere })
+                cleanupSession(sessionId)
               },
               onError: (error: string) => {
                 flushAllStreams()
-                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                if (!abortController.signal.aborted) {
                   attachResumableContext(params.conversation_id, sessionId, event.sender)
-                  event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
+                  const attachedElsewhere = hasOtherSessionViewer(sessionId, sessionOwner.get(sessionId))
+                  sendToSessionWebContents(sessionId, IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error, attachedElsewhere })
                   sentError = true
                 }
-                activeSessions.delete(sessionId)
-                activeSessionsMeta.delete(sessionId)
-                unregisterSessionWebContents(sessionId)
+                cleanupSession(sessionId)
               },
             },
             abortController.signal
@@ -343,21 +351,17 @@ export function registerLLMHandlers(
         } catch (error: any) {
           flushAllStreams()
           if (abortController.signal.aborted) {
-            if (!event.sender.isDestroyed()) {
-              event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
-            }
-            activeSessions.delete(sessionId)
-            activeSessionsMeta.delete(sessionId)
-            unregisterSessionWebContents(sessionId)
+            const attachedElsewhere = hasOtherSessionViewer(sessionId, sessionOwner.get(sessionId))
+            sendToSessionWebContents(sessionId, IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, attachedElsewhere })
+            cleanupSession(sessionId)
             return
           }
           // 避免与 onError 回调重复发送错误，仅当 onError 未处理时发送
-          if (!sentError && !event.sender.isDestroyed()) {
-            event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error?.message || String(error) })
+          if (!sentError) {
+            const attachedElsewhere = hasOtherSessionViewer(sessionId, sessionOwner.get(sessionId))
+            sendToSessionWebContents(sessionId, IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error?.message || String(error), attachedElsewhere })
           }
-          activeSessions.delete(sessionId)
-          activeSessionsMeta.delete(sessionId)
-          unregisterSessionWebContents(sessionId)
+          cleanupSession(sessionId)
         } finally {
           interactionService.unregisterSession(sessionId)
         }
@@ -387,6 +391,7 @@ export function registerLLMHandlers(
       const abortController = new AbortController()
       activeSessions.set(sessionId, abortController)
       activeSessionsMeta.set(sessionId, { employeeId: run.interactionStore?.employeeId, conversationId })
+      sessionOwner.set(sessionId, event.sender)
       registerSessionWebContents(sessionId, event.sender)
       interactionService.registerSession(sessionId, event.sender)
 
@@ -406,9 +411,7 @@ export function registerLLMHandlers(
       ))
         .catch(() => {})
         .finally(() => {
-          activeSessions.delete(sessionId)
-          activeSessionsMeta.delete(sessionId)
-          unregisterSessionWebContents(sessionId)
+          cleanupSession(sessionId)
           interactionService.unregisterSession(sessionId)
         })
 

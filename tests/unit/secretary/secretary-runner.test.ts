@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
  * 小秘书任务执行器：
  * - 任务结束（完成/失败/中止）都要把「用户任务 + 助手输出」写回会话，不能留空会话
  * - 中止要停主进程运行、任务状态落 failed/aborted
- * - 完成通知的 clickId 必须是 JSON { employeeId, conversationId }（主窗口据此定位会话）
+ * - 完成/等待确认只走挂件提醒，不再发系统通知
  * - 停用小秘书时要中止所有在跑任务
  */
 
@@ -35,31 +35,29 @@ vi.stubGlobal('localStorage', {
 
 const handlers: Record<string, any> = {}
 const conversationUpdates: any[] = []
-const notifications: any[] = []
 const abortChat = vi.fn(async () => ({ success: true }))
 let sessionSeq = 0
-let runtimeState = { settings: { dnd: true, enabled: true }, panelOpen: false }
 
 vi.stubGlobal('window', {
   electronAPI: {
     llm: {
       onChunk: (fn: any) => { handlers.chunk = fn; return () => {} },
+      onThought: (fn: any) => { handlers.thought = fn; return () => {} },
       onToolCall: (fn: any) => { handlers.tool = fn; return () => {} },
+      onToolResult: (fn: any) => { handlers.toolResult = fn; return () => {} },
       onDone: (fn: any) => { handlers.done = fn; return () => {} },
       onError: (fn: any) => { handlers.error = fn; return () => {} },
       employeeChatStream: async () => ({ success: true, sessionId: `s${++sessionSeq}` }),
+      isSessionAttached: async () => false,
       abortChat,
     },
     conversation: {
       create: async () => ({ id: 'conv-1' }),
+      get: async () => ({ id: 'conv-1', messages_json: '[]' }),
       update: async (payload: any) => { conversationUpdates.push(payload) },
     },
     secretary: {
       onSettingsChanged: (fn: any) => { handlers.settings = fn; return () => {} },
-      getState: async () => runtimeState,
-    },
-    notification: {
-      sendNotification: async (payload: any) => { notifications.push(payload) },
     },
   },
 })
@@ -84,9 +82,7 @@ describe('secretary-runner', () => {
   beforeEach(() => {
     useSecretaryStore.setState({ tasks: [] })
     conversationUpdates.length = 0
-    notifications.length = 0
     abortChat.mockClear()
-    runtimeState = { settings: { dnd: true, enabled: true }, panelOpen: false }
   })
 
   it('发起任务：写入初始用户消息，任务进入执行中', async () => {
@@ -128,6 +124,31 @@ describe('secretary-runner', () => {
     expect(lastMessages()[1]).toMatchObject({ role: 'assistant', content: 'secretary.noTextResult' })
   })
 
+  it('完成：思考、工具调用与用量一并落库（主窗口未打开时不丢过程）', async () => {
+    await startSecretaryTask({ employee, prompt: '写个报告', providerId: 'p1', modelId: 'm1' })
+    const sessionId = currentSession()
+    handlers.thought({ sessionId, thought: '先想一下' })
+    handlers.tool({ sessionId, id: 't1', name: 'file_read', args: { path: 'a.md' } })
+    handlers.toolResult({ sessionId, name: 'file_read', result: '内容' })
+    handlers.chunk({ sessionId, chunks: ['好了'] })
+    handlers.done({
+      sessionId,
+      metadata: { tokenUsage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } },
+    })
+    await flush()
+
+    const assistant = lastMessages()[1]
+    expect(assistant).toMatchObject({
+      role: 'assistant',
+      content: '好了',
+      thought: '先想一下',
+      tokenUsage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+    })
+    // 段按真实发生顺序落库：思考 → 工具调用 → 正文
+    expect(assistant.segments.map((s: any) => s.type)).toEqual(['thinking', 'tool_call', 'answer'])
+    expect(assistant.segments[1]).toMatchObject({ toolName: 'file_read', toolResult: '内容', isToolComplete: true })
+  })
+
   it('失败：保留已有输出并标记失败', async () => {
     const taskId = await startSecretaryTask({ employee, prompt: '写个报告', providerId: 'p1', modelId: 'm1' })
     const sessionId = currentSession()
@@ -138,30 +159,6 @@ describe('secretary-runner', () => {
     expect(task?.status).toBe('failed')
     expect(task?.error).toBe('network')
     expect(lastMessages()[1]).toMatchObject({ role: 'assistant', content: '半截' })
-  })
-
-  it('完成通知：clickId 携带 employeeId + conversationId，点击可定位会话', async () => {
-    runtimeState = { settings: { dnd: false, enabled: true }, panelOpen: false }
-    await startSecretaryTask({ employee, prompt: '写个报告', providerId: 'p1', modelId: 'm1' })
-    handlers.done({ sessionId: currentSession() })
-    await flush()
-    expect(notifications).toHaveLength(1)
-    expect(notifications[0]).toMatchObject({ clickTarget: 'tasks', source: 'secretary' })
-    expect(JSON.parse(notifications[0].clickId)).toEqual({ employeeId: 'e1', conversationId: 'conv-1' })
-  })
-
-  it('免打扰或面板打开时不发通知', async () => {
-    runtimeState = { settings: { dnd: true, enabled: true }, panelOpen: false }
-    await startSecretaryTask({ employee, prompt: '写个报告', providerId: 'p1', modelId: 'm1' })
-    handlers.done({ sessionId: currentSession() })
-    await flush()
-    expect(notifications).toHaveLength(0)
-
-    runtimeState = { settings: { dnd: false, enabled: true }, panelOpen: true }
-    await startSecretaryTask({ employee, prompt: '再来一个', providerId: 'p1', modelId: 'm1' })
-    handlers.done({ sessionId: currentSession() })
-    await flush()
-    expect(notifications).toHaveLength(0)
   })
 
   it('中止：停主进程运行，任务标记为已停止，已有输出落库', async () => {

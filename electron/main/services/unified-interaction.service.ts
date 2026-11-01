@@ -181,7 +181,7 @@ class UnifiedInteractionService {
 
     // 主窗口未激活时，通过系统通知告知用户有数字员工询问
     // 避免用户错过权限请求；点击通知会聚焦主窗口显示交互弹窗
-    this.maybeNotifyInactiveWindow(request)
+    this.maybeNotifyInactiveWindow(request, session.webContents)
 
     return new Promise<InteractionResponse>((resolve) => {
       const timer = setTimeout(() => {
@@ -205,9 +205,12 @@ class UnifiedInteractionService {
    * 主窗口未激活时，发送系统通知告知用户有数字员工询问。
    * 复用 NotificationService 的主窗口失焦检测与通知点击聚焦逻辑。
    * 通知 body 截断到 200 字符，避免过长。
+   * 小秘书面板窗发起的请求不发通知：面板会自动弹出并把挂件切到等待态，本身已经是提醒。
    */
-  private maybeNotifyInactiveWindow(request: Omit<InteractionRequest, 'id'>): void {
+  private maybeNotifyInactiveWindow(request: Omit<InteractionRequest, 'id'>, sender: Electron.WebContents): void {
     try {
+      const secretaryWindow = require('./secretary-window.service').default
+      if (secretaryWindow.getInstance().isPanelWebContents(sender)) return
       const notificationService = require('./notification.service').default.getInstance()
       if (!notificationService.isMainWindowInactive()) return
       const title = request.title || mainUiI18n.t('askUserNotifyTitle')

@@ -327,7 +327,7 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
   return (
     <Modal
       open={!!currentRequest}
-      rootClassName="wa-approval-modal"
+      rootClassName={compact ? 'wa-approval-modal wa-approval-modal-compact' : 'wa-approval-modal'}
       title={
         <Space size={10}>
           {getIcon()}
@@ -335,7 +335,8 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
         </Space>
       }
       closable={false}
-      mask={{ closable: false }}
+      // 小秘书面板窗打开弹窗时面板整体让位，窗口就是弹窗本身，不需要遮罩
+      mask={compact ? false : { closable: false }}
       // 紧凑模式：小秘书面板窗只有 372px 宽，弹窗必须按窗口宽度自适应并垂直居中
       centered={compact || undefined}
       width={
@@ -351,8 +352,9 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
           overflow: 'hidden',
         },
         header: { margin: 0, padding: '14px 20px' },
-        // 正文超高时整体滚动：长路径列表与 diff 都可能超出视口
-        body: { padding: '16px 20px', maxHeight: compact ? 'calc(100vh - 168px)' : '60vh', overflowY: 'auto' },
+        // 正文超高时整体滚动：长路径列表与 diff 都可能超出视口。
+        // 小秘书窗口高度由弹窗自身高度决定，这里必须用固定上限，否则会和窗口高度互相追赶
+        body: { padding: '16px 20px', maxHeight: compact ? 320 : '60vh', overflowY: 'auto' },
         footer: { margin: 0, padding: '12px 20px' },
       }}
       footer={

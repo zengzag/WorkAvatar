@@ -1,7 +1,7 @@
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
-/** 会话 → webContents 映射，供子会话事件转发到主管前端 */
-const sessionWebContents: Map<string, Electron.WebContents> = new Map()
+/** 会话 → webContents 集合：发起窗口 + 后续接入窗口（如在任务页打开小秘书发起的运行中任务） */
+const sessionWebContents: Map<string, Set<Electron.WebContents>> = new Map()
 
 export interface AgentRunEventPayload {
   parentSessionId: string
@@ -12,13 +12,14 @@ export interface AgentRunEventPayload {
   parentConversationId?: string
 }
 
-/** 注册会话对应的窗口（chatStream 启动时调用）；同一 sessionId 重复注册时覆盖为新窗口 */
+/** 注册会话对应的窗口（chatStream 启动 / 其他窗口接入时调用） */
 export function registerSessionWebContents(sessionId: string, wc: Electron.WebContents): void {
-  const existing = sessionWebContents.get(sessionId)
-  if (existing && existing !== wc && !existing.isDestroyed()) {
-    // 同 sessionId 重复注册（如 renderer 重载后重建）：保留旧映射会导致事件丢失，仅记录日志
+  let targets = sessionWebContents.get(sessionId)
+  if (!targets) {
+    targets = new Set()
+    sessionWebContents.set(sessionId, targets)
   }
-  sessionWebContents.set(sessionId, wc)
+  targets.add(wc)
 }
 
 export function unregisterSessionWebContents(sessionId: string): void {
@@ -26,11 +27,32 @@ export function unregisterSessionWebContents(sessionId: string): void {
   sessionWebContents.delete(sessionId)
 }
 
+/** 向会话所有接入窗口推送事件 */
+export function sendToSessionWebContents(sessionId: string, channel: string, payload: unknown): void {
+  const targets = sessionWebContents.get(sessionId)
+  if (!targets) return
+  for (const wc of targets) {
+    if (wc.isDestroyed()) {
+      targets.delete(wc)
+      continue
+    }
+    wc.send(channel, payload)
+  }
+}
+
+/** 会话是否有「除发起窗口之外」的存活接入方（任务页打开运行中任务时将有窗口自行落库） */
+export function hasOtherSessionViewer(sessionId: string, owner?: Electron.WebContents): boolean {
+  const targets = sessionWebContents.get(sessionId)
+  if (!targets) return false
+  for (const wc of targets) {
+    if (!wc.isDestroyed() && wc !== owner) return true
+  }
+  return false
+}
+
 /** 新通道：AGENT_RUN_EVENT（按 runId 路由的子会话事件） */
 export function forwardAgentRunEvent(payload: AgentRunEventPayload): void {
-  const wc = sessionWebContents.get(payload.parentSessionId)
-  if (!wc || wc.isDestroyed()) return
-  wc.send(IPC_CHANNELS.AGENT_RUN_EVENT, payload)
+  sendToSessionWebContents(payload.parentSessionId, IPC_CHANNELS.AGENT_RUN_EVENT, payload)
 }
 
 // ---- 子会话流式增量合并 ----

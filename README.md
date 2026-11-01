@@ -2,159 +2,153 @@
 
 # WorkAvatar
 
-### AI employees that do the work themselves, on your own machine.
+### 一个能在你自己电脑上干活的 AI 数字员工
 
-WorkAvatar is an open-source desktop app for AI agents. You create a digital employee with its own role, model and tool set; it plans the steps, calls tools, reads and writes files on your computer, and returns the result. Notes, calendar, voice recognition, automation, task templates and an AI web aggregator all ship as plugins, so you can turn them off or replace them with your own.
+创建一个数字员工：给它角色、模型和工具。它自己拆解任务、调用工具、读写本地文件、跑命令，最后把结果交给你。笔记、日历、语音识别、自动化、模板任务、生图等能力以插件形式提供，可以按需安装。
 
 [![Stars](https://img.shields.io/github/stars/zengzag/WorkAvatar?style=flat-square&color=yellow)](https://github.com/zengzag/WorkAvatar/stargazers)
 [![Release](https://img.shields.io/github/v/release/zengzag/WorkAvatar?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
 [![Downloads](https://img.shields.io/github/downloads/zengzag/WorkAvatar/total?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0aa?style=flat-square)](#quick-start)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](#contributing)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0aa?style=flat-square)](#安装)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](#参与贡献)
 
-[**Download for Windows**](https://github.com/zengzag/WorkAvatar/releases/latest) · [Highlights](#highlights) · [Features](#features) · [Plugin SDK](plugin-sdk/PROTOCOL.md) · [Build from source](#build-from-source)
+[**下载**](https://github.com/zengzag/WorkAvatar/releases/latest) · [主要特点](#主要特点) · [功能](#功能) · [插件](#插件) · [从源码构建](#从源码构建)
 
-**English** | [简体中文](README.zh-CN.md)
+**简体中文** | [English](README.en.md)
 
-<img src="images/agent-chat.gif" alt="An employee planning a task, reading files and writing output" width="92%" />
+<img src="images/agent-chat.gif" alt="数字员工拆解任务、检索本地资料、读取文件并写出结果" width="86%" />
 
 </div>
 
 ---
 
-## Highlights
+## 主要特点
 
-WorkAvatar is less about chatting and more about letting an agent act on your computer: read files, write files, run commands, search your documents. A few concrete choices make that practical:
-
-- **Your documents stay local.** Parsing, tokenizing, indexing and search all run on your machine. Only the content a task actually needs is sent to the model provider you configured.
-- **Commands run in an OS sandbox.** A restricted token plus directory ACLs on Windows, Seatbelt on macOS. Reads are unrestricted; writes are limited to the task workspace and a private temp directory. A write outside those paths is denied by the kernel, so the command fails.
-- **Features ship as plugins.** Notes, calendar, voice recognition, automation, task templates and the AI web aggregator are separate plugins. Enable, disable, remove or replace them individually; changes apply without a restart.
-- **The knowledge base is searchable right away.** Keyword search works as soon as a folder is added. Vectors, summaries and knowledge cards are built in the background for the files you actually use.
+- **资料留在本地。** 文档解析、分词、索引和检索都在本机完成，关键词检索在模型服务不可用时照常工作。只有任务实际需要的文件内容，才会发给你配置的模型服务。
+- **命令跑在系统沙箱里。** 可读全盘，写入只能落在任务工作区和私有临时目录；越界写入由内核拒绝，命令直接失败，而不是靠对命令文本做静态分析去猜。
+- **资料库加进来就能搜。** 不用等向量化：加完文件夹，关键词检索立刻可用；向量、段落摘要和知识卡片在后台只为你真正用到的文件生成。
+- **数字员工是长期的。** 角色、工具、记忆固定下来，任务产物留在各自的工作区；员工可以导出、在另一台机器上导入后接着用。
+- **轻量可扩展。** 支持安装插件，桌面端已内置笔记、日历、语音、自动化、模板任务、生图等十来个可选插件（见[插件](#插件)）；也能用画布把多步流程搭成模板任务。
 
 ---
 
-## Features
+## 功能
 
-### Digital employees
+### 数字员工
 
-Each employee has its own instructions, default model, tool set and memory. Describe a task and it plans the steps and calls tools, with the whole run visible in the conversation: what it is doing, which file it opened, what it wrote, where it failed.
+每个员工有独立的角色指令、默认模型、工具集和记忆。你描述任务，它自己规划步骤、调用工具，整个过程显示在对话里：在做什么、打开了哪个文件、写了什么、在哪里出错。
 
-<img src="images/employees.png" alt="Digital employee management" width="92%" />
+<img src="images/employees.png" alt="数字员工管理" width="86%" />
 
-- **Tools** — read, write, edit, copy and delete files, run shell commands, search the web (local browser or DeepSeek / Tavily / Brave API), recognize images, and generate Word / Excel / PowerPoint documents. Tools can be configured per employee, and external MCP servers can be attached.
-- **Delegation** — split work into sub-tasks and hand them to other employees, in parallel or in sequence, up to two levels. Each sub-task runs in its own workspace and returns only a result summary, so the supervisor's context stays focused. Built-in `explore` (read-only research) and `general` (full capability) roles are included.
-- **Memory and skills** — cross-task memory keeps your preferences and past lessons; skills are Markdown-defined capabilities loaded on demand. A Knowledge Search Assistant and a Plugin Development Assistant are built in.
-- **File permissions** — file tools can freely read and write inside the current task's workspace; anything else requires your confirmation first. When a task genuinely needs broader access, the assistant asks for it and, once approved, the rest of the task runs without that restriction; deletions and other irreversible actions still ask every time, and you can switch back to manual approval from the execution mode whenever you like.
+- **工具** — 文件读写 / 编辑 / 复制 / 删除、Shell 命令（含后台长时任务）、网页搜索与抓取、图片识别、本地 OCR、生成 Word / Excel / PowerPoint、检索资料库与历史会话。工具可以按员工单独配置，也能接入外部 MCP 服务。
+- **子任务委托** — 把工作拆给其他员工或临时角色，最多 5 个并行、两层深度。每个子任务在独立工作区运行，只回传结果摘要，主员工的上下文不会被过程细节占满。内置 `explore`（只读检索）和 `general`（全能力执行）两个子智能体角色。
+- **记忆与技能** — 跨任务记忆保留你的偏好和此前踩过的坑；Skills 用 Markdown 定义专项能力，按需加载，不占用常驻上下文。内置知识搜索助手。
+- **文件权限** — 文件工具默认只能自由读写当前任务的工作区，其余位置的读写会先征求你的确认。任务确实需要更大范围时，助手会主动提出申请，你可以在弹窗里选择一次性允许、当前任务允许或切换执行模式；删除等不可逆操作仍会逐次确认。
+- **可导出的员工** — 员工的人设、工具、技能和相关配置可以打包导出，在另一台机器上导入后接着用。
 
-### Desktop secretary
+### 桌面小秘书
 
-A small pet sits on your desktop and takes a task in one sentence. Click it, pick an employee, type — the run starts in the background and lands in the normal task list, with tools, file permissions and results intact. The pet shows idle / working / waiting-for-you / done states, keeps a badge for results you have not opened, answers to `Ctrl+Alt+Space`, and can be resized, muted or hidden from Settings → Secretary.
+桌面上常驻一只小挂件，一句话就能派活：选员工、写一句话，任务在后台静默跑起来，并立即出现在任务列表里，点开就能看。`Ctrl+Alt+Space` 随时唤出，尺寸、免打扰和隐藏都在「设置 → 小秘书」里。
 
-Avatars can also be an uploaded image now; the same picture identifies the employee everywhere, including as the secretary's badge.
+### 本地资料库
 
-### Local knowledge base
+<img src="images/kms-search.gif" alt="跨本地文档的混合检索" width="86%" />
 
-<img src="images/kms-search.gif" alt="Hybrid search across local documents" width="92%" />
+把文件夹加入资料库，员工就能直接搜到里面的项目资料、合同、报告和会议纪要。
 
-Add folders to the knowledge base and employees can search the project files, contracts, reports and meeting notes inside them.
+- **混合检索** — 全文关键词、语义向量、文件名匹配三条路径并行，再合并成统一排序；可在混合 / 关键词 / 语义 / 文件名之间切换，并按文件类型、时间范围、目录或合集过滤。
+- **Everything 加速（可选）** — Windows 上可将「文件名」搜索切到 Everything，启用其 HTTP 服务器后结果实时、无需维护目录元数据；服务不可用时自动回退内置搜索。
+- **渐进式增强** — 经常打开或被命中的文件，会在后台补上段落摘要、向量和知识卡片，并支持知识卡片页；冷门文件保持轻量索引。
+- **合集** — 把主题相关的文件归为一组，自动生成摘要和目录，既能按主题浏览，也能作为上下文交给员工。
+- **支持的格式** — PDF、Word、Excel、CSV、PPT、Markdown、纯文本、HTML，以及经本地 OCR 处理的图片。
+- **内置 MCP 服务** — 在 `127.0.0.1` 上把检索能力开放给本机其他 MCP 客户端，访问需要令牌。
 
-- **Hybrid search** — full-text keyword, semantic vector and filename matching run in parallel, then merge into one ranking. Switch between Hybrid / Keyword / Semantic / Filename, and filter by file type, time range, directory or collection.
-- **Everything integration (optional)** — on Windows, Filename search can use Everything. Enable Everything's HTTP server for real-time results without maintaining directory metadata; it falls back to built-in search automatically when unavailable.
-- **Progressive enhancement** — files that are opened or matched often gain paragraph summaries, vectors and knowledge cards in the background. Cold files stay as lightweight index entries, so cost grows with actual use.
-- **Collections** — group related files and get an auto-generated summary and table of contents, ready to browse or to hand to an employee as context.
-- **Works offline** — parsing, tokenizing, indexing and search are local. Keyword search keeps working when the model service is unreachable. Supported formats: PDF, Word, Excel, PowerPoint, Markdown, plain text, HTML, and images through local OCR.
-- **Built-in MCP service** — exposes search to other MCP clients on the same machine at `127.0.0.1`, with a generated access token.
+### 插件
 
-### Plugin ecosystem
+应用内置了一批可选插件，可在「设置 → 插件」里导入、启用、禁用或删除，改动即时生效、不用重启：
 
-<img src="images/plugins.gif" alt="Enabling and managing plugins" width="92%" />
-
-Plugins can add navigation pages, settings tabs, chat toolbars, agent tools, MCP tools and keyboard shortcuts, and can provide their own digital employees. They follow the app's theme and language, keep data in a separate SQLite database, and are enabled, disabled, imported, removed or upgraded from Settings without a restart.
-
-A bundled **Plugin Development Assistant** lets an employee write a plugin inside the app and install it. Plugins are shared as `.wap` packages.
-
-| Plugin | What it does |
+| 插件 | 它能做什么 |
 |------|------|
-| **Notes** | Markdown notes stored as plain `.md` files, so sync services and other editors work with them directly. File tree, editor and outline in three panes, with split preview and full-text search. |
-| **Calendar & To-dos** | Month / week / day views, recurring events, reminders and optional one-way Outlook sync. Employees can create and edit events on request. |
-| **Voice Recognition** | Offline recognition via sherpa-onnx, with live subtitles and a floating subtitle window during recording, and meeting minutes generated when it stops. |
-| **Automation** | Runs an employee task daily, weekly or monthly, retries on failure, and notifies you when done. Every run links back to its conversation. |
-| **Task Templates** | Build multi-step workflows on a canvas with agent, review, condition, loop, parallel and human nodes, plus pass / fail gating and round limits. A built-in Template Designer turns a written requirement into a runnable template. |
-| **AI Aggregator** | Opens third-party AI sites such as Doubao and DeepSeek inside the app in single, dual or tabbed layouts, with isolated login state per site. Any HTTPS page can be added. Subject to each site's own terms. |
-| **Image Studio** | Built for slide visuals, research figures, architecture and flow diagrams: purpose presets for PPT slides and covers, scientific schematics, paper figures, charts, infographics, architecture diagrams, flowcharts and academic posters that set aspect ratio, text space, palette and no-text constraints automatically, plus AI prompt optimization. Works with Volcengine Seedream, Qwen Image and OpenAI GPT Image, with transparent backgrounds and reference images. Results are saved locally and employees can generate images through an agent tool. |
+| **笔记** | Markdown 笔记直接存成 `.md`，文件树、编辑器、大纲三栏，支持多标签与全文检索。 |
+| **日历 & 待办** | 月 / 周 / 日视图，重复事件、提醒和可选单向同步 Outlook；员工可以按你的要求创建和修改日程。 |
+| **语音识别** | 基于 sherpa-onnx 的离线识别，边录边转写，录音结束后生成会议纪要。 |
+| **自动化** | 按日 / 工作日 / 周 / 月 / 年定时运行员工任务，失败自动重试并通知。 |
+| **模板任务** | 在画布上搭建多步工作流，含评审、条件、循环、并行和人工节点；评审不通过可回退重跑。 |
+| **生图工作室** | 为 PPT 配图、科研配图与架构 / 流程图设计，内置场景预设与提示词优化，接入火山 Seedream、千问 Image 与 OpenAI GPT Image。 |
+| **数据模型** | 表 / 字段 / 关系的可视化建模，支持 DBML 导入导出。 |
+| **Word 编辑器** | docx 导入、富文本编辑、AI 对话改稿与版本快照，导出 docx / PDF。 |
+| **技能合集** | 深度研究、draw.io 架构图、科研绘图提示词、答辩 PPT 等技能，按需分配给员工。 |
+| **AI 助手集** | 把豆包、DeepSeek 等第三方 AI 网站内嵌进应用，各站点登录态隔离。使用受对应网站的服务条款约束。 |
+
+插件还能贡献导航页、设置项、Agent 工具、MCP 工具和快捷键，也可以提供自己的数字员工。想自己写一个？见[插件开发](#插件开发)，或让内置的插件开发助手在应用内帮你搭。
+
+<img src="images/plugins.gif" alt="启用与管理插件" width="86%" />
 
 <div align="center">
   <table><tr>
-    <td><img src="images/notes.png" alt="Notes" width="100%" /></td>
-    <td><img src="images/calendar.png" alt="Calendar & To-dos" width="100%" /></td>
+    <td><img src="images/notes.png" alt="笔记" width="100%" /></td>
+    <td><img src="images/calendar.png" alt="日历 & 待办" width="100%" /></td>
   </tr><tr>
-    <td><img src="images/voice.png" alt="Voice Recognition" width="100%" /></td>
-    <td><img src="images/automation.png" alt="Automation" width="100%" /></td>
+    <td><img src="images/voice.png" alt="语音识别与会议纪要" width="100%" /></td>
+    <td><img src="images/automation.png" alt="自动化任务" width="100%" /></td>
   </tr><tr>
-    <td colspan="2"><img src="images/workflow.png" alt="Task Templates canvas" width="100%" /></td>
+    <td colspan="2"><img src="images/workflow.png" alt="模板任务画布" width="100%" /></td>
   </tr></table>
 </div>
 
 ---
 
-## Quick start
+## 快速上手
 
-### Install the app
+### 安装
 
-Download the latest build from [Releases](https://github.com/zengzag/WorkAvatar/releases/latest) (Windows 10/11 installer). On macOS, [build from source](#build-from-source).
+从 [Releases](https://github.com/zengzag/WorkAvatar/releases/latest) 下载对应平台的安装包：Windows、macOS（Intel / Apple 芯片按需选择）。Linux 可[从源码构建](#从源码构建)。
 
-The first launch opens a short setup that walks you through connecting a model service and creating your first employee. You can skip it and run it again from Settings → General.
+首次启动会有一个引导向导，带你配置模型服务并创建第一个员工；也可以跳过，之后在「设置 → 通用」里重新运行。
 
-### First run
+### 三步开始干活
 
-1. **Add a knowledge base** — in Knowledge Base → Document Management, add a folder. The index builds and stays in sync automatically.
-2. **Search it** — type a keyword in the top search box and switch between Hybrid / Keyword / Semantic / Filename as needed.
-3. **Hand over a task** — go to Digital Employees, pick or create an employee, and describe the task. It searches the knowledge base as needed and writes output into the task's own workspace. The sidebar button at the top right of a task opens workspace files, a terminal and in-place previews.
+1. **添加资料库** — 在「资料库 → 文档管理」里添加文件夹，索引会自动建立并持续同步。
+2. **搜一下** — 在顶部搜索框输入关键词，按需切换混合 / 关键词 / 语义 / 文件名模式。
+3. **交一个任务** — 进入「数字员工」，选一个员工（或新建），描述任务。它会按需检索资料库，把产出写进任务的独立工作区；点任务右上角的侧边栏按钮，可以查看工作区文件、打开终端、就地预览产物。
 
-### Build from source
+> 想一直挂在桌面上，就从任务列表的头部唤出**桌面小秘书**，一句话派活。
 
-**Requirements:** Windows 10/11 or macOS, Node.js 24+, npm 11+.
+### 从源码构建
+
+**要求：** Windows、macOS 或 Linux，Node.js 24+、npm 11+。
 
 ```bash
 git clone --recurse-submodules https://github.com/zengzag/WorkAvatar.git
 cd WorkAvatar
 npm install
-npm run dev        # development
-npm run build      # production build
+npm run dev        # 开发模式
+npm run build      # 生产构建
 ```
 
-Already cloned? Fetch the plugin sources with `git submodule update --init --recursive`.
+已经克隆过的话，用 `git submodule update --init --recursive` 拉取插件源码。
 
-> Since Electron 42 the binary is no longer downloaded by `npm install`; it is fetched on demand the first time you run `npm run dev` (or `npx install-electron`). On restricted networks keep the repo `.npmrc` `electron_mirror`, or set `ELECTRON_MIRROR` yourself.
+> Electron 42 起不再在 `npm install` 时下载二进制，首次运行 `npm run dev`（或 `npx install-electron`）时才按需下载。网络受限时可以保留仓库 `.npmrc` 里的 `electron_mirror`，或自行设置环境变量 `ELECTRON_MIRROR`。
 
 ---
 
-## Use cases
+## 适合哪些场景
 
-| Scenario | What WorkAvatar does |
+| 场景 | WorkAvatar 怎么做 |
 |------|------|
-| **Local document work** | Contract comparison, report drafting, project research — on your own folders, without uploading a library to a cloud drive first. |
-| **A long-lived team employee** | A fixed role, tool set and memory that a team can hand the same kind of work to again and again. |
-| **Scheduled background work** | A daily briefing or weekly digest generated by an automation and delivered to a conversation. |
-| **Exposing your search** | Let other local AI clients search your documents through the built-in MCP service. |
-| **Internal tool plugins** | Package an internal workflow as a plugin, with its own navigation page, settings and agent tools. |
+| **本地文档工作** | 合同比对、报告起草、项目调研，直接在你自己的文件夹上做，不用先把资料传到网盘。 |
+| **长期使用的团队员工** | 角色、工具和记忆都固定下来，团队可以反复把同类工作交给它；换台电脑导出导入即可延续。 |
+| **定时后台任务** | 每天自动生成晨报、每周汇总，结果写回对应会话并通知你。 |
+| **多步且要过审的流程** | 用模板任务搭成「撰写 → 评审 → 不通过就打回重写」的流水线，多轮迭代直到通过。 |
+| **把检索开放出去** | 通过内置 MCP 服务，让本机其他 AI 客户端也能搜你的文档。 |
+| **内部工具插件** | 把内部流程做成插件，挂到应用里带自己的导航页和工具。 |
 
 ---
 
-## Interface design
+## 插件开发
 
-The 2026 visual direction is "precision grayscale with a light liquid-glass touch": density first, with glass reserved for the shell — title bar, navigation rail, task list, composer and workspace panel — while content surfaces stay solid for long-form reading and tables.
-
-- Semantic tokens live in `src/styles/theme.css` (`--wa-*`) with matching light and dark sets; antd theme tokens are injected in `src/main.tsx`
-- Light / dark / follow-system, four font-size levels, zh/en locales and `prefers-reduced-motion` are preserved
-- New pages should reuse semantic variables or antd tokens instead of hard-coded colors
-
----
-
-## Plugin development
-
-A plugin is a folder with a `manifest.json`, a CommonJS main entry, an optional ESM renderer entry and locale files. Capabilities must be declared; the host checks them on each call, and services you did not declare are not available.
+一个插件就是一个文件夹：`manifest.json`、CommonJS 主进程入口、可选的 ESM 渲染端入口和语言文件。能力需要显式声明，宿主会在调用时检查，未声明的服务拿不到。
 
 ```json
 {
@@ -182,83 +176,82 @@ export async function activate(ctx: PluginContext): Promise<void> {
   ctx.contributions.registerAgentTools([{
     id: 'my_thing_lookup',
     name: 'my_thing_lookup',
-    title: 'Look up my data',
-    description: 'Query plugin data by keyword',
+    title: '查询插件数据',
+    description: '按关键字查询插件数据',
     parameters: { type: 'object', properties: { keyword: { type: 'string' } } },
-    handler: (args) => `results for ${args.keyword}`,
+    handler: (args) => `查询 ${args.keyword} 的结果`,
     onDemand: true,
   }])
 }
 ```
 
-- Protocol: [plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
-- API reference: [plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
-- Capability matrix: [plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
-- Tutorial: [plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
-- Minimal example: [plugins/examples/hello-world/](plugins/examples/hello-world/)
+- 协议规范：[plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
+- API 参考：[plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
+- 能力矩阵：[plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
+- 开发打包教程：[plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md](plugins/examples/hello-world/PLUGIN_DEVELOPMENT.md)
+- 最小示例：[plugins/examples/hello-world/](plugins/examples/hello-world/)
 
-React, ReactDOM, antd and i18next are injected by the host through `__WA_HOST__`, so you do not install them yourself and there is only one React instance.
+插件里的 React、ReactDOM、antd、i18next 由宿主通过 `__WA_HOST__` 注入，不需要自己安装，也不会出现多个 React 实例的问题。懒得自己敲？让内置的插件开发助手在应用里帮你搭。
 
 ---
 
-## Architecture
+## 架构
 
-WorkAvatar runs on Electron, with the agent runtime, the UI and the plugin host kept in separate layers.
+WorkAvatar 基于 Electron，智能体运行时、界面和插件宿主分处不同层。
 
-- **Main process** — agent runtime (planning, tool execution, delegation), model providers, the knowledge base (SQLite FTS5 + sqlite-vec), the file permission service and the shell sandbox.
-- **Renderer** — React 19 and Ant Design UI, streaming conversation state, and plugin pages loaded over the `plugin://` scheme.
-- **Plugins** — a separate SQLite database per plugin, declared capabilities, a `plugin:<id>:` IPC namespace, and enable / disable without a restart.
-- **Models** — OpenAI, Azure, DeepSeek, Qwen, Zhipu, Volcengine, Xiaomi, LM Studio and any OpenAI-compatible endpoint, over Chat Completions, Responses or Anthropic Messages.
+- **主进程** — 智能体运行时（规划、工具执行、委托）、模型供应商、资料库（SQLite + 向量检索）、文件权限服务与 Shell 沙箱。
+- **渲染端** — React 界面与流式对话；插件页面通过 `plugin://` 协议加载。
+- **插件** — 每个插件独立的 SQLite 库和显式能力声明，启停不需要重启。
+- **模型** — 支持国内外主流厂商、LM Studio 及任意 OpenAI 兼容端点。
 
-| Category | Technology |
+| 分类 | 技术 |
 |------|------|
-| Runtime | Electron 44 |
-| Frontend | React 19 + TypeScript 7 + Ant Design 6, Vite 8 |
-| Local database | SQLite (FTS5 full-text + sqlite-vec vector) |
-| Document parsing | PDF, Word, Excel, PowerPoint, HTML, OCR (PaddleOCR) |
-| Speech recognition | sherpa-onnx (offline) |
-| Internationalization | i18next (Chinese and English) |
+| 运行时 | Electron 44 |
+| 前端 | React 19 + TypeScript + Ant Design 6，Vite 8 |
+| 本地数据库 | SQLite（FTS5 全文 + sqlite-vec 向量） |
+| 文档解析 | PDF、Word、Excel、PPT、HTML、OCR（PaddleOCR） |
+| 语音识别 | sherpa-onnx（离线） |
 
-> First-party plugin sources live in a separate repository, `WorkAvatar-Plugins`, included here as the `plugins/` git submodule; `plugin-sdk/` is maintained in this repository.
-
----
-
-## FAQ
-
-**Does my data leave my machine?**
-Indexing and search do not. A task sends only the context the model needs to the provider you configured, and workspaces stay local.
-
-**Can I use a local model?**
-Yes. Point the provider at LM Studio or any OpenAI-compatible local server. Keyword search works even with no model at all.
-
-**Is there a macOS or Linux build?**
-macOS currently requires building from source. Linux is not packaged yet.
-
-**Can it damage my files?**
-Shell commands are constrained by the OS sandbox, and writes outside the workspace are rejected. File tools show a diff and ask for confirmation when the target is outside the workspace or sensitive.
-
-**How do I publish a plugin?**
-Read the [protocol](plugin-sdk/PROTOCOL.md), start from [hello-world](plugins/examples/hello-world/), or let the built-in Plugin Development Assistant scaffold it. Package it as a `.wap` file to share.
+> 内置插件源码位于独立仓库 `WorkAvatar-Plugins`，以 `plugins/` git 子模块引入；`plugin-sdk/` 维护在本仓库。
 
 ---
 
-## Contributing
+## 常见问题
 
-Issues and pull requests are welcome. Bug reports with reproduction steps and screenshots are usually fixed fastest.
+**数据会不会离开我的电脑？**
+索引和检索不会。任务只会把模型需要的上下文发给你配置的供应商，工作区始终在本地。
+
+**能用本地模型吗？**
+可以。把供应商指向 LM Studio 或任意 OpenAI 兼容的本地服务即可。即使完全不接模型，关键词检索也能用。
+
+**会不会改坏我的文件？**
+Shell 命令受操作系统沙箱约束，工作区外的写入会被拒绝。文件工具在目标位于工作区外或属于敏感文件时，会给出 diff 并要求确认；删除等不可逆操作逐次确认。
+
+**支持哪些模型？**
+主流国内外厂商和本地模型都能接。
+
+**怎么发布自己的插件？**
+先看[协议规范](plugin-sdk/PROTOCOL.md)，从 [hello-world](plugins/examples/hello-world/) 起步，或者让内置插件开发助手帮你搭脚手架。打成 `.wap` 包就可以分发。
+
+---
+
+## 参与贡献
+
+欢迎提 Issue 和 PR。带复现步骤和截图的 bug 报告通常修得最快。
 
 ```bash
-npm run test      # core tests
-npm run test:all  # core + plugin tests
+npm run test      # 核心测试
+npm run test:all  # 核心 + 插件测试
 ```
 
-Plugins, translations, documentation and example templates are welcome too.
+插件、翻译、文档和示例模板同样欢迎：写好的插件或模板任务，可以作为 PR 或 Issue 分享出来。
 
-If WorkAvatar is useful to you, a star is appreciated.
+**如果 WorkAvatar 帮你省下了时间，一个 Star 能让更多人看到它。**
 
 ---
 
-## License
+## 许可证
 
 [MIT License](LICENSE)
 
-Third-party product names and trademarks mentioned here belong to their respective owners and are used for identification only.
+文中提及的第三方产品名称与商标归各自所有者所有，仅作标识用途。

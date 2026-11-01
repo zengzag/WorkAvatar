@@ -42,7 +42,7 @@ import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import AttachmentService from '../services/attachment.service'
 import BackgroundShellService from '../services/background-shell.service'
-import { safeHandle } from './_shared'
+import { broadcastToRenderers, safeHandle } from './_shared'
 
 /** 删除某员工所有顶层会话及其子会话，并清理授权缓存和插件关联记录（与 CONVERSATION_DELETE 一致） */
 function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerService, employeeId: string): void {
@@ -164,12 +164,20 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_CREATE, (params: ConversationCreateParams) => {
-    return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode, undefined, params.workspace_path)
+    const conv = workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode, undefined, params.workspace_path)
+    broadcastToRenderers(IPC_CHANNELS.CONVERSATION_CHANGED, { id: conv.id, action: 'create' })
+    return conv
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }) => {
     const { id, ...data } = params
-    return workspaceManager.updateConversation(id, data)
+    const ok = workspaceManager.updateConversation(id, data)
+    // 只有影响任务列表展示的字段变更才广播：流式过程中每个 chunk 也会 update（写入 messages_json），
+    // 若全部广播会让各窗口持续重拉列表
+    if (ok && (data.title !== undefined || data.last_message_at !== undefined || data.employee_id !== undefined)) {
+      broadcastToRenderers(IPC_CHANNELS.CONVERSATION_CHANGED, { id, action: 'update' })
+    }
+    return ok
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE, (id: string) => {
@@ -189,6 +197,7 @@ export function registerEmployeeHandlers(
       try { AttachmentService.getInstance().pruneRefs(attachmentCandidates) } catch { /* ignore */ }
       // 同步通知插件清理关联数据（如自动化执行历史：conversation 删除 → run 记录删除）
       try { PluginHostService.getInstance().notifyConversationDeleted(id) } catch { /* ignore */ }
+      broadcastToRenderers(IPC_CHANNELS.CONVERSATION_CHANGED, { id, action: 'delete' })
     }
     return result
   })
@@ -198,6 +207,7 @@ export function registerEmployeeHandlers(
     deleteAllConversationsOfEmployee(workspaceManager, employeeId)
     const result = workspaceManager.deleteAllConversations(employeeId)
     try { AttachmentService.getInstance().scheduleOrphanPrune() } catch { /* ignore */ }
+    broadcastToRenderers(IPC_CHANNELS.CONVERSATION_CHANGED, { id: employeeId, action: 'delete-all' })
     return result
   })
 
