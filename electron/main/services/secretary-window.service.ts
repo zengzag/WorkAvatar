@@ -36,6 +36,8 @@ const PET_ANCHOR_GAP = 12
 const EDGE_MARGIN = 12
 /** 挂件边到屏幕边小于该距离才吸附，避免“一拖就贴边” */
 const SNAP_DISTANCE = 48
+/** 停用后延迟销毁窗口的时间：留给面板窗中止在跑的任务并落状态 */
+const DISABLE_GRACE_MS = 400
 
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max)
 
@@ -139,7 +141,7 @@ class SecretaryWindowService {
         this.registerHotkey()
       } else {
         this.unregisterHotkey()
-        this.destroyWindows()
+        this.disableWindows()
       }
     } else if (this.settings.enabled) {
       if (prev.size !== this.settings.size) this.applyPetSize()
@@ -396,6 +398,16 @@ class SecretaryWindowService {
     if (this.petWin && !this.petWin.isDestroyed()) this.petWin.destroy()
     this.panelWin = null
     this.petWin = null
+  }
+
+  /**
+   * 停用：先广播设置（面板窗据此中止在跑的任务并落状态），再延迟销毁窗口。
+   * 渲染端处理广播是异步的，立即销毁会让任务永远停在“执行中”，主进程里的 agent 也会继续跑工具。
+   */
+  private disableWindows(): void {
+    setTimeout(() => {
+      if (!this.settings.enabled) this.destroyWindows()
+    }, DISABLE_GRACE_MS)
   }
 
   /**

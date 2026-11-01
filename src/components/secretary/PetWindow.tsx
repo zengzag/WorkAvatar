@@ -38,8 +38,12 @@ const PetWindow: React.FC = () => {
     playTimerRef.current = window.setTimeout(() => setPlay(''), 1800)
   }, [character])
 
-  // 透明区域鼠标穿透：指针进入挂件本体时关闭穿透，离开窗口时恢复
+  // 透明区域鼠标穿透：指针进入挂件本体时关闭穿透，离开窗口时恢复。
+  // mousemove 频率很高，状态没变时不要发 IPC（主进程同时有轮询兜底）
+  const ignoreRef = useRef(true)
   const setIgnore = useCallback((ignore: boolean) => {
+    if (ignoreRef.current === ignore) return
+    ignoreRef.current = ignore
     window.electronAPI.secretary.setIgnoreMouse(ignore)
   }, [])
 

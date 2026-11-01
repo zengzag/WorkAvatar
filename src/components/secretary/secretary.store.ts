@@ -36,9 +36,9 @@ function load(): SecretaryTask[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    // 渲染进程重建后原流已断，运行中的任务标记为中断
+    // 渲染进程重建后原流已断，执行中/等待确认的任务都标记为中断
     return parsed.slice(0, 30).map((t: any) => (
-      t?.status === 'running'
+      t?.status === 'running' || t?.status === 'waiting'
         ? { ...t, status: 'failed', error: 'interrupted', endedAt: Date.now(), step: '' }
         : t
     ))
@@ -84,4 +84,29 @@ export function selectRunningTasks(tasks: SecretaryTask[]): SecretaryTask[] {
 
 export function selectUnreadTasks(tasks: SecretaryTask[]): SecretaryTask[] {
   return tasks.filter((t) => (t.status === 'done' || t.status === 'failed') && !t.viewed)
+}
+
+export interface SecretaryBusSummary {
+  status: SecretaryTaskStatus | 'idle'
+  /** 最近一条执行中任务（气泡文案取自它的当前动作） */
+  latest?: SecretaryTask
+  /** 正在等待用户确认的任务（优先展示，任意一条都会让挂件进入等待态） */
+  waiting?: SecretaryTask
+  /** 未查看结果的第一条（空闲时用于展示结果身份与配色） */
+  unreadFirst?: SecretaryTask
+  runningCount: number
+  unreadCount: number
+}
+
+/** 挂件状态汇总：等待确认 > 执行中 > 未查看结果 > 空闲 */
+export function selectBusSummary(tasks: SecretaryTask[]): SecretaryBusSummary {
+  const running = selectRunningTasks(tasks)
+  const unread = selectUnreadTasks(tasks)
+  const waiting = running.find((t) => t.status === 'waiting')
+  const latest = running[0]
+  let status: SecretaryTaskStatus | 'idle' = 'idle'
+  if (waiting) status = 'waiting'
+  else if (latest) status = 'running'
+  else if (unread.length > 0) status = unread[0].status === 'failed' ? 'failed' : 'done'
+  return { status, latest, waiting, unreadFirst: unread[0], runningCount: running.length, unreadCount: unread.length }
 }

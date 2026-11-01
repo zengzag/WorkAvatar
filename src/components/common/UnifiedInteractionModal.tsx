@@ -73,7 +73,7 @@ const DiffPreview: React.FC<{ diff: DiffDisclosure }> = ({ diff }) => {
   )
 }
 
-const UnifiedInteractionModal: React.FC = () => {
+const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
   const { token } = useToken()
@@ -336,9 +336,13 @@ const UnifiedInteractionModal: React.FC = () => {
       }
       closable={false}
       mask={{ closable: false }}
+      // 紧凑模式：小秘书面板窗只有 372px 宽，弹窗必须按窗口宽度自适应并垂直居中
+      centered={compact || undefined}
       width={
-        currentRequest.diff ? 560
-          : currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480
+        compact
+          ? 'calc(100vw - 16px)'
+          : currentRequest.diff ? 560
+            : currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480
       }
       styles={{
         container: {
@@ -348,7 +352,7 @@ const UnifiedInteractionModal: React.FC = () => {
         },
         header: { margin: 0, padding: '14px 20px' },
         // 正文超高时整体滚动：长路径列表与 diff 都可能超出视口
-        body: { padding: '16px 20px', maxHeight: '60vh', overflowY: 'auto' },
+        body: { padding: '16px 20px', maxHeight: compact ? 'calc(100vh - 168px)' : '60vh', overflowY: 'auto' },
         footer: { margin: 0, padding: '12px 20px' },
       }}
       footer={

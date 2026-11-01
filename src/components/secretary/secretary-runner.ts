@@ -1,9 +1,10 @@
 import type { Employee, ThinkingLevel } from '../../types'
+import i18n from '../../i18n'
 import { generateId } from '../../utils/format'
 import { getSceneDefaultModel } from '../../utils/default-model'
 import { getToolDisplayName } from '../../utils/tool-display'
 import { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
-import { useSecretaryStore, type SecretaryTask } from './secretary.store'
+import { useSecretaryStore, selectBusSummary, type SecretaryTask } from './secretary.store'
 import { postSecretaryMessage } from './secretary-bus'
 
 /**
@@ -20,35 +21,37 @@ interface SessionEntry {
 }
 
 const sessions = new Map<string, SessionEntry>()
-const taskBySession = new Map<string, string>()
 const sessionByTask = new Map<string, string>()
 
 let installed = false
 
 const store = () => useSecretaryStore.getState()
 
-function broadcast(): void {
-  const tasks = store().tasks
-  const running = tasks.filter((t) => t.status === 'running' || t.status === 'waiting')
-  const unread = tasks.filter((t) => (t.status === 'done' || t.status === 'failed') && !t.viewed)
-  const latest = running[0]
-  let status: 'idle' | 'running' | 'waiting' | 'done' | 'failed' = 'idle'
-  if (latest?.status === 'waiting') status = 'waiting'
-  else if (latest) status = 'running'
-  else if (unread.length > 0) status = unread[0].status === 'failed' ? 'failed' : 'done'
+/** 把任务汇总成挂件状态（面板窗是唯一数据源，挂件窗只消费） */
+export function broadcastSecretaryState(): void {
+  const summary = selectBusSummary(store().tasks)
+  const focus = summary.waiting || summary.latest || summary.unreadFirst
   postSecretaryMessage({
     type: 'state',
     payload: {
-      status,
-      bubble: latest ? (latest.step || '正在处理…') : '',
-      runningCount: running.length,
-      unreadCount: unread.length,
-      petColor: (latest || unread[0])?.employee.avatarColor || undefined,
-      petImage: (latest || unread[0])?.employee.avatarImage || null,
-      petIcon: (latest || unread[0])?.employee.avatarIcon || undefined,
+      status: summary.status,
+      bubble: summary.waiting
+        ? String(i18n.t('secretary.waiting'))
+        : summary.latest
+          ? (summary.latest.step || String(i18n.t('secretary.working')))
+          : '',
+      runningCount: summary.runningCount,
+      unreadCount: summary.unreadCount,
+      petColor: focus?.employee.avatarColor || undefined,
+      petImage: focus?.employee.avatarImage || null,
+      petIcon: focus?.employee.avatarIcon || undefined,
     },
   })
 }
+
+// 任务增删改都要同步给挂件窗；模块加载即广播一次，挂件窗晚于面板创建时也能拿到状态
+useSecretaryStore.subscribe(() => broadcastSecretaryState())
+broadcastSecretaryState()
 
 export function installSecretaryRunner(): void {
   if (installed) return
@@ -82,8 +85,10 @@ export function installSecretaryRunner(): void {
     void finishTask(entry, 'failed')
   })
 
-  useSecretaryStore.subscribe(() => broadcast())
-  broadcast()
+  // 停用小秘书会销毁面板窗：先把在跑的任务中止并落状态，避免任务留在“执行中”且继续在后台跑工具
+  window.electronAPI.secretary.onSettingsChanged((settings) => {
+    if (!settings.enabled) abortAllSecretaryTasks()
+  })
 }
 
 function findTask(taskId: string): SecretaryTask | undefined {
@@ -101,16 +106,25 @@ async function persistMessages(conversationId: string, messages: unknown[]): Pro
   } catch { /* 落库失败不影响任务本身 */ }
 }
 
+/** 会话消息：用户原始任务 + 助手输出（主窗口打开任务时按普通消息渲染） */
+function buildMessages(task: SecretaryTask, content: string, endedAt: number): unknown[] {
+  return [
+    { id: generateId(), role: 'user', content: task.prompt || task.title, timestamp: task.startedAt },
+    { id: generateId(), role: 'assistant', content, timestamp: endedAt },
+  ]
+}
+
 async function notifyDone(task: SecretaryTask, ok: boolean): Promise<void> {
   try {
     const state = await window.electronAPI.secretary.getState()
     if (state.settings.dnd) return
     if (state.panelOpen) return
     await window.electronAPI.notification.sendNotification({
-      title: ok ? `${task.employee.name} 完成了任务` : `${task.employee.name} 任务失败`,
+      title: String(i18n.t(ok ? 'secretary.notifyDoneTitle' : 'secretary.notifyFailedTitle', { name: task.employee.name })),
       body: task.title,
+      // 与自动化任务同一跳转约定：clickId 携带 { employeeId, conversationId }
       clickTarget: 'tasks',
-      clickId: task.conversationId,
+      clickId: JSON.stringify({ employeeId: task.employee.id, conversationId: task.conversationId }),
       source: 'secretary',
     })
   } catch { /* 通知失败静默 */ }
@@ -120,23 +134,12 @@ async function finishTask(entry: SessionEntry, status: 'done' | 'failed'): Promi
   const task = findTask(entry.taskId)
   if (!task) return
   const endedAt = Date.now()
-  const content = entry.text || (status === 'done' ? '' : (task.error || '任务失败'))
+  const text = entry.text.trim()
+  const content = text || (status === 'done'
+    ? String(i18n.t('secretary.noTextResult'))
+    : (task.error || String(i18n.t('secretary.failed'))))
   if (task.conversationId) {
-    const messages = [
-      {
-        id: generateId(),
-        role: 'user',
-        content: task.prompt || task.title,
-        timestamp: task.startedAt,
-      },
-      {
-        id: generateId(),
-        role: 'assistant',
-        content,
-        timestamp: endedAt,
-      },
-    ]
-    await persistMessages(task.conversationId, messages)
+    await persistMessages(task.conversationId, buildMessages(task, content, endedAt))
   }
   store().patchTask(entry.taskId, {
     status,
@@ -145,7 +148,6 @@ async function finishTask(entry: SessionEntry, status: 'done' | 'failed'): Promi
     viewed: false,
   })
   sessionByTask.delete(entry.taskId)
-  taskBySession.delete(task.id)
   void notifyDone(task, status === 'done')
 }
 
@@ -169,7 +171,7 @@ export async function startSecretaryTask(params: {
     ? `${prompt}\n\n参考附件：\n${paths.map((p) => `- ${p}`).join('\n')}`
     : prompt
   const firstFileName = paths[0]?.split(/[\\/]/).pop() || ''
-  const title = prompt.trim().slice(0, 30) || firstFileName || '新任务'
+  const title = prompt.trim().slice(0, 30) || firstFileName || String(i18n.t('secretary.newTask'))
 
   const conversation = await window.electronAPI.conversation.create({
     employee_id: employee.id,
@@ -189,7 +191,7 @@ export async function startSecretaryTask(params: {
       avatarImage: employee.avatar_image,
     },
     status: 'running',
-    step: '正在理解任务…',
+    step: String(i18n.t('secretary.thinking')),
     startedAt: Date.now(),
     viewed: true,
     conversationId: conversation.id,
@@ -250,23 +252,36 @@ export async function startSecretaryTask(params: {
   }
 
   sessions.set(result.sessionId, { taskId, text: '' })
-  taskBySession.set(result.sessionId, taskId)
   sessionByTask.set(taskId, result.sessionId)
   return taskId
 }
 
-/** 中止任务（面板上的“停止”） */
+/** 中止任务（面板上的“停止”）：先落状态，再停主进程运行，最后把已有输出落库 */
 export async function abortSecretaryTask(taskId: string): Promise<void> {
   const sessionId = sessionByTask.get(taskId)
   if (!sessionId) return
-  await window.electronAPI.llm.abortChat(sessionId).catch(() => {})
+  const entry = sessions.get(sessionId)
   sessions.delete(sessionId)
   sessionByTask.delete(taskId)
+
+  const task = findTask(taskId)
+  const endedAt = Date.now()
   store().patchTask(taskId, {
     status: 'failed',
     error: 'aborted',
     step: '',
-    endedAt: Date.now(),
+    endedAt,
     viewed: false,
   })
+  void window.electronAPI.llm.abortChat(sessionId).catch(() => {})
+
+  if (task?.conversationId) {
+    const content = (entry?.text || '').trim() || String(i18n.t('secretary.stopped'))
+    await persistMessages(task.conversationId, buildMessages(task, content, endedAt))
+  }
+}
+
+/** 中止所有在跑任务（停用小秘书前调用） */
+export function abortAllSecretaryTasks(): void {
+  for (const taskId of Array.from(sessionByTask.keys())) void abortSecretaryTask(taskId)
 }

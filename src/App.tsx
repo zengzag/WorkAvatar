@@ -112,12 +112,12 @@ const App: React.FC = () => {
 
   /**
    * 通知点击跳转：按来源功能进入对应页面。
-   * - automation：携带 conversationId+employeeId 时跳到 /tasks 并定位会话
+   * - automation / tasks：clickId 为 {conversationId, employeeId} 时跳到 /tasks 并定位会话
    * - ask_user：不跳转，主窗口聚焦后 UnifiedInteractionModal 会自动弹出
    * - 命中已加载插件 id：跳对应插件页（通用插件能力，不再写死 calendar）
    */
   const handleNotifyClick = useCallback((target?: string, id?: string) => {
-    if (target === 'automation' && id) {
+    if ((target === 'automation' || target === 'tasks') && id) {
       try {
         const { conversationId, employeeId } = JSON.parse(id)
         if (employeeId && conversationId) {

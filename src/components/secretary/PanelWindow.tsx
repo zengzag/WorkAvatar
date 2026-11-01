@@ -28,7 +28,7 @@ import {
   selectUnreadTasks,
   type SecretaryTask,
 } from './secretary.store'
-import { startSecretaryTask, abortSecretaryTask } from './secretary-runner'
+import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState } from './secretary-runner'
 import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KEY } from './secretary-bus'
 import { useInteractionStore } from '../../stores/interaction.store'
 import UnifiedInteractionModal from '../common/UnifiedInteractionModal'
@@ -44,6 +44,8 @@ const THINKING_KEY = 'wa.secretary.thinking'
 const DEFAULT_THINKING: ThinkingLevel = 'high'
 /** 面板最大高度：超出后卡片内部滚动（上报给主进程的高度也用这个上限） */
 const PANEL_MAX_HEIGHT = 620
+/** 权限 / ask_user 弹窗是浮层，不参与面板内容高度：窗口需要临时撑到该高度才能完整显示 */
+const MODAL_MIN_HEIGHT = 480
 
 /** 从路径里取文件名 */
 function baseName(p: string): string {
@@ -80,6 +82,8 @@ const SecretaryPanel: React.FC = () => {
   const fileRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ComposerHandle>(null)
+  /** 是否有待处理的权限 / ask_user 弹窗（弹窗挂在本窗口，收起面板会让它看不见） */
+  const pendingRef = useRef(false)
 
   const tasks = useSecretaryStore((s) => s.tasks)
   const markViewed = useSecretaryStore((s) => s.markViewed)
@@ -97,23 +101,44 @@ const SecretaryPanel: React.FC = () => {
     document.body.style.overflow = 'hidden'
   }, [])
 
-  useEffect(() => {
-    let alive = true
+  const loadEmployees = useCallback(() => {
     window.electronAPI.employee.list()
       .then((list) => {
-        if (!alive) return
         const enabled = (Array.isArray(list) ? list : []).filter((e) => e.is_enabled !== false)
         setEmployees(enabled)
-        const stored = localStorage.getItem(EMPLOYEE_KEY)
-        const next = enabled.find((e) => e.id === stored) || enabled.find((e) => e.id === employeeId) || enabled[0]
-        if (next) setEmployeeId(next.id)
+        setEmployeeId((prev) => {
+          const stored = localStorage.getItem(EMPLOYEE_KEY)
+          const next = enabled.find((e) => e.id === stored) || enabled.find((e) => e.id === prev) || enabled[0]
+          return next ? next.id : prev
+        })
       })
       .catch(() => {})
-    window.electronAPI.secretary.getState()
-      .then((s) => { if (alive) setDnd(s.settings.dnd) })
+  }, [])
+
+  const loadProviders = useCallback(() => {
+    window.electronAPI.llm.getProviders()
+      .then((list) => setProviders(Array.isArray(list) ? (list as LLMProvider[]) : []))
       .catch(() => {})
-    return () => { alive = false }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    loadEmployees()
+    loadProviders()
+    window.electronAPI.secretary.getState()
+      .then((s) => setDnd(s.settings.dnd))
+      .catch(() => {})
+    // 面板窗常驻不销毁：每次重新打开都刷新员工与模型列表，新建员工/模型后无需重启
+    const off = window.electronAPI.secretary.onPanelVisibility((open) => {
+      if (open) {
+        loadEmployees()
+        loadProviders()
+        return
+      }
+      // 确认框还挂着时拒绝收起（挂件点击/快捷键/托盘都可能触发），否则弹窗跟着被藏起来，任务只能等超时
+      if (pendingRef.current) window.electronAPI.secretary.showPanel()
+    })
+    return () => { off() }
+  }, [loadEmployees, loadProviders])
 
   useEffect(() => {
     if (employeeId) localStorage.setItem(EMPLOYEE_KEY, employeeId)
@@ -132,12 +157,6 @@ const SecretaryPanel: React.FC = () => {
         : {},
     })
   }, [employee])
-
-  useEffect(() => {
-    window.electronAPI.llm.getProviders()
-      .then((list) => setProviders(Array.isArray(list) ? (list as LLMProvider[]) : []))
-      .catch(() => {})
-  }, [])
 
   // 思考能力：与主窗口一致，支持 reasoning_effort 的提供商给出 4 档，只支持开关的给出开/关
   const thinkingCapability = useMemo(() => {
@@ -222,7 +241,12 @@ const SecretaryPanel: React.FC = () => {
     </Tooltip>
   )
 
-  // 面板内容高度 → 主进程同步窗口高度
+  // 权限 / ask_user：面板窗是发起窗口，弹窗挂在这里。
+  // 面板平时是隐藏的，请求到达时必须把面板拉出来，否则用户看不到确认框（任务会一直等到超时被拒）。
+  const interactionRequest = useInteractionStore((s) => s.currentRequest)
+  const modalOpen = !!interactionRequest
+
+  // 面板内容高度 → 主进程同步窗口高度（弹窗打开时额外撑高）
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
@@ -238,11 +262,14 @@ const SecretaryPanel: React.FC = () => {
           + inner.scrollTop
           + padBottom
       }
-      window.electronAPI.secretary.setPanelHeight(Math.ceil(Math.min(natural, PANEL_MAX_HEIGHT)) + 2)
+      const target = Math.min(Math.max(natural, modalOpen ? MODAL_MIN_HEIGHT : 0), PANEL_MAX_HEIGHT)
+      window.electronAPI.secretary.setPanelHeight(Math.ceil(target) + 2)
     }
     report()
     const ro = new ResizeObserver(report)
     ro.observe(el)
+    // 内容被 max-height 夹住后 el 的盒子不再变化，必须同时观察内容层，否则收起菜单时窗口不会回落
+    if (el.firstElementChild) ro.observe(el.firstElementChild)
     // 字体/头像异步加载会让高度在首帧后再变一次，补两次上报避免窗口停在初始高度
     const t1 = window.setTimeout(report, 300)
     const t2 = window.setTimeout(report, 1200)
@@ -251,28 +278,41 @@ const SecretaryPanel: React.FC = () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
     }
-  }, [])
+  }, [modalOpen])
 
-  // 权限 / ask_user 弹窗出现时，让挂件进入“等待确认”，用户在小窗里就能看到需要处理
-  const interactionRequest = useInteractionStore((s) => s.currentRequest)
+  // 请求到达后把对应任务标记为“等待确认”（挂件据此进入等待态），结束后恢复执行中
+  const waitingTaskRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!interactionRequest) return
-    postSecretaryMessage({
-      type: 'state',
-      payload: {
-        status: 'waiting',
-        bubble: t('secretary.waiting'),
-        runningCount: 1,
-        unreadCount: 0,
-      },
-    })
-  }, [interactionRequest, t])
+    pendingRef.current = !!interactionRequest
+    const state = useSecretaryStore.getState()
+    const conversationId = interactionRequest?.conversationId || null
+
+    // 上一个等待中的任务若已不是当前请求的会话，先恢复为执行中
+    const prevId = waitingTaskRef.current
+    if (prevId) {
+      const prev = state.tasks.find((t) => t.id === prevId)
+      if (prev?.status === 'waiting' && (!conversationId || prev.conversationId !== conversationId)) {
+        state.patchTask(prevId, { status: 'running' })
+        waitingTaskRef.current = null
+      }
+    }
+    if (!interactionRequest || !conversationId) return
+
+    const target = state.tasks.find((t) => t.conversationId === conversationId
+      && (t.status === 'running' || t.status === 'waiting'))
+    if (!target) return
+    waitingTaskRef.current = target.id
+    if (target.status === 'running') state.patchTask(target.id, { status: 'waiting' })
+    window.electronAPI.secretary.showPanel()
+  }, [interactionRequest])
 
   const [menu, setMenu] = useState<'employee' | 'settings' | null>(null)
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      // 弹窗打开时 Esc 不能收起面板，否则确认框会被一起藏起来
+      if (interactionRequest) return
       // Esc 先收浮层，再收面板
       if (menu) {
         setMenu(null)
@@ -282,7 +322,7 @@ const SecretaryPanel: React.FC = () => {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [menu])
+  }, [menu, interactionRequest])
 
   const handleSend = useCallback(async (text: string, files: ComposerFile[]) => {
     if (!employee || sending) return
@@ -345,17 +385,21 @@ const SecretaryPanel: React.FC = () => {
     insertPaths(paths)
   }
 
-  // 挂件窗拖入的文件（只带路径）：直接补进编辑区；挂件请求状态时补发一次当前员工身份
+  // 挂件窗拖入的文件（只带路径）：直接补进编辑区；挂件请求状态时补发当前身份与任务状态
   useEffect(() => subscribeSecretaryBus((msg) => {
-    if (msg.type === 'request-state' && employee) {
-      postSecretaryMessage({
-        type: 'face',
-        payload: {
-          avatarImage: employee.avatar_image,
-          avatarIcon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
-          avatarColor: employee.avatar_color,
-        },
-      })
+    if (msg.type === 'request-state') {
+      broadcastSecretaryState()
+      if (employee) {
+        postSecretaryMessage({
+          type: 'face',
+          payload: {
+            avatarImage: employee.avatar_image,
+            avatarIcon: resolveEmployeeAvatarIcon(employee.avatar_icon, employee.avatar_type, employee.source),
+            avatarColor: employee.avatar_color,
+          },
+        })
+      }
+      return
     }
     if (msg.type !== 'files') return
     try { localStorage.removeItem(SECRETARY_PENDING_FILES_KEY) } catch { /* ignore */ }
@@ -376,8 +420,9 @@ const SecretaryPanel: React.FC = () => {
     } catch { /* ignore */ }
   }, [insertPaths])
 
-  const runningShown = running.slice(0, 2)
-  const unreadShown = unread.slice(0, 3)
+  // 任务区全部展示（面板内部可滚动），避免超出前几条的任务无法停止或查看
+  const runningShown = running
+  const unreadShown = unread
 
   const taskRow = (task: SecretaryTask) => (
     <div
@@ -675,8 +720,8 @@ const SecretaryPanel: React.FC = () => {
         </div>
       </div>
       </div>
-      {/* 权限 / ask_user：交互会话绑定本窗口，弹窗必须挂在这里 */}
-      <UnifiedInteractionModal />
+      {/* 权限 / ask_user：交互会话绑定本窗口，弹窗必须挂在这里；小窗宽度有限，用紧凑版弹窗 */}
+      <UnifiedInteractionModal compact />
     </>
   )
 }
