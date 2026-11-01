@@ -31,6 +31,7 @@ class LoggerBackend {
   private stream: fs.WriteStream | null = null
   private logFilePath: string | null = null
   private initialized = false
+  private suspended = false
   private dataDir: string | null = null
   private readonly MAX_LOG_AGE_DAYS = 14
   private readonly APP_LOG_SUBDIR = path.join('.log', 'app')
@@ -95,6 +96,7 @@ class LoggerBackend {
    * 渲染进程自身的 console 已在 devtools 显示，主进程无需再次打印。
    */
   writeToFile(level: LogLevel, module: string, message: string): void {
+    if (this.suspended) return
     if (!this.initialized) {
       this.initLazy()
     }
@@ -108,11 +110,6 @@ class LoggerBackend {
   }
 
   write(level: LogLevel, module: string, message: string, args: any[]): void {
-    if (!this.initialized) {
-      // 延迟初始化：未显式 init 时尝试用 PathService 的 dataDir
-      this.initLazy()
-    }
-
     const prefix = LOG_PREFIXES[module] || `[${module}]`
     const time = formatTime(new Date())
     const argStr = args.length > 0 ? ' ' + args.map(safeStringify).join(' ') : ''
@@ -127,7 +124,11 @@ class LoggerBackend {
       console.log(`${prefix} [${level.toUpperCase()}] ${message}`, ...args)
     }
 
-    // 文件写入
+    // 文件写入（清空日志期间暂停；未初始化时延迟初始化）
+    if (this.suspended) return
+    if (!this.initialized) {
+      this.initLazy()
+    }
     if (this.stream && !this.stream.destroyed) {
       try {
         this.stream.write(line)
@@ -147,21 +148,37 @@ class LoggerBackend {
     }
   }
 
-  /** 关闭当前日志流以释放文件句柄（清空日志前调用），下次写入会用 init 重新打开 */
-  closeStream(): void {
-    if (this.stream) {
-      try {
-        this.stream.end()
-      } catch {}
-      this.stream = null
-    }
+  /**
+   * 暂停写入并关闭当前日志流，等待文件句柄真正释放（清空日志前调用）。
+   * 释放期间若有日志写入会被直接丢弃，避免重新打开文件导致清理失败。
+   */
+  closeStream(): Promise<void> {
+    this.suspended = true
+    const stream = this.stream
+    this.stream = null
     this.logFilePath = null
     this.initialized = false
+    if (!stream || stream.destroyed) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      stream.once('close', () => resolve())
+      stream.once('error', () => resolve())
+      try {
+        stream.end()
+      } catch {
+        resolve()
+      }
+    })
   }
 
-  /** 重新打开日志文件（清空日志后调用），未持有 dataDir 时按需懒初始化 */
-  reopen(): void {
-    if (this.dataDir) {
+  /**
+   * 恢复日志写入（清空日志后调用）。
+   * reusePath 存在时续写同一文件（其它进程仍持有该文件句柄），否则新建日志文件。
+   */
+  reopen(reusePath?: string | null): void {
+    this.suspended = false
+    if (reusePath) {
+      this.init(this.dataDir ?? undefined, reusePath)
+    } else if (this.dataDir) {
       this.init(this.dataDir)
     } else {
       this.initLazy()

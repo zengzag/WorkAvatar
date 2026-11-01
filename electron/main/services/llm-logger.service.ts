@@ -50,6 +50,7 @@ class LLMLoggerService {
   private static instance: LLMLoggerService
   private openFiles: Map<string, { stream: fs.WriteStream; lastWriteAt: number }> = new Map()
   private flushTimer: NodeJS.Timeout | null = null
+  private suspended = false
   private static readonly IDLE_THRESHOLD_MS = 60_000
 
   private constructor() {
@@ -72,6 +73,7 @@ class LLMLoggerService {
   }
 
   logCall(partial: Omit<LLMLogEntry, 'id' | 'timestamp' | 'context'>, explicitContext?: LLMLogContext): void {
+    if (this.suspended) return
     try {
       const ctx = explicitContext || this.getCurrentContext()
       const entry: LLMLogEntry = {
@@ -153,14 +155,26 @@ class LLMLoggerService {
     this.openFiles.clear()
   }
 
-  /** 关闭全部打开的文件流以释放文件句柄（清空日志前调用），后续写入会自动重建 */
-  closeStreams(): void {
-    for (const [, { stream }] of this.openFiles.entries()) {
+  /** 暂停写入并关闭全部文件流，等待句柄释放（清空日志前调用），清理完成后调用 resume */
+  async closeStreams(): Promise<void> {
+    this.suspended = true
+    const streams = Array.from(this.openFiles.values(), (v) => v.stream)
+    this.openFiles.clear()
+    await Promise.all(streams.map((stream) => new Promise<void>((resolve) => {
+      if (stream.destroyed) return resolve()
+      stream.once('close', () => resolve())
+      stream.once('error', () => resolve())
       try {
         stream.end()
-      } catch {}
-    }
-    this.openFiles.clear()
+      } catch {
+        resolve()
+      }
+    })))
+  }
+
+  /** 恢复写入（清空日志后调用），后续写入会自动重建文件流 */
+  resume(): void {
+    this.suspended = false
   }
 }
 
