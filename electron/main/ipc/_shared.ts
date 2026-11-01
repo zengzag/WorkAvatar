@@ -13,6 +13,17 @@ export function broadcastToRenderers(channel: string, payload?: unknown): void {
   }
 }
 
+/** 广播到除发送方以外的渲染窗口（发起方已自行维护状态，避免自触发同步） */
+export function broadcastToOtherRenderers(sender: Electron.WebContents, channel: string, payload?: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+    if (win.webContents === sender) continue
+    try {
+      win.webContents.send(channel, payload)
+    } catch { /* 窗口正在销毁，忽略 */ }
+  }
+}
+
 /**
  * 安全执行 IPC handler，捕获错误并返回可序列化的结果。
  * 成功时返回原始结果；失败时返回 { error: string }。

@@ -11,13 +11,15 @@ import { getToolDisplayName } from '../utils/tool-display'
 import { useChatScroll } from './useChatScroll'
 import { useLlmSettings } from './useLlmSettings'
 import { useTaskPermissionStore } from '../stores/task-permission.store'
-import { getSceneDefaultModel } from '../utils/default-model'
+import {
+  defaultConversationTitle,
+  generateConversationTitle as requestConversationTitle,
+} from '../utils/conversation-title'
 import {
   type ConversationStreamState,
   MIN_LOADING_DISPLAY_MS,
   CONVERSATION_PAGE_SIZE,
   SCROLL_BOTTOM_THRESHOLD_PX,
-  DEFAULT_TEMPERATURE,
   buildEnrichedHistory,
   clearLlmRequestSegStart,
   createPersistentMessagesCache,
@@ -409,25 +411,26 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const ownerId = s.employeeId || employeeId
       rememberConversationOwner(s.conversationId, ownerId)
 
-      // 幂等：从缓存取历史（未加载时从 DB 获取，避免空缓存覆盖既有消息），
+      // 运行中会话的历史以 DB 为准：其他窗口（小秘书）可能在会话开始前写入了新的用户追问，
+      // 本窗口缓存未必有这条消息。DB 条数不少于缓存时覆盖缓存，否则保留缓存（含尚未落库的本地消息）。
       // 占位消息只写缓存不落库：流式过程中的内容不持久化，若把 isStreaming 占位写进 DB，
       // 事件再丢失（见下方监听注册）就会留下一条永远"生成中"的空消息
       const cache = ownerId ? getOrCreateEmployeeMessagesCache(ownerId) : resolveConvCache(s.conversationId)
       let base = cache.get(s.conversationId)
-      if (base === undefined) {
-        try {
-          const fullConv = await window.electronAPI.conversation.get(s.conversationId)
-          base = ((JSON.parse(fullConv?.messages_json || '[]') as MessageWithThought[]) || []).map(m => ensureSegments(m))
-          // 顺带恢复模型绑定：其他窗口（小秘书）发起的任务不在本窗口对话列表里，
-          // 打开任务时据此还原它实际使用的模型
-          if (!_persistentDefaultModels.has(s.conversationId)) {
-            const dbModel = parseConvDefaultModel(fullConv)
-            if (dbModel) _persistentDefaultModels.set(s.conversationId, dbModel)
-          }
-        } catch {
-          base = []
+      try {
+        const fullConv = await window.electronAPI.conversation.get(s.conversationId)
+        const fromDb = ((JSON.parse(fullConv?.messages_json || '[]') as MessageWithThought[]) || []).map(m => ensureSegments(m))
+        if (fromDb.length > 0 && fromDb.length >= (base?.length || 0)) base = fromDb
+        // 顺带恢复模型绑定：其他窗口（小秘书）发起的任务不在本窗口对话列表里，
+        // 打开任务时据此还原它实际使用的模型
+        if (!_persistentDefaultModels.has(s.conversationId)) {
+          const dbModel = parseConvDefaultModel(fullConv)
+          if (dbModel) _persistentDefaultModels.set(s.conversationId, dbModel)
         }
+      } catch {
+        if (base === undefined) base = []
       }
+      if (!base) base = []
       // 已有流式占位时复用；否则若最后一条就是助手消息，也沿用它（小秘书后台运行会持续把过程
       // 落库，打开任务时要接着这条消息继续写，而不是新建一条空占位）。
       // 最后一条是用户消息时不复用，避免把输出写到上一轮已完成的回复上。
@@ -560,6 +563,37 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       if (_visibleEmployeeId === id) _visibleEmployeeId = null
     }
   }, [id])
+
+  /**
+   * 其他窗口（小秘书）在同一个任务上发起会话时：
+   * 本窗口若正打开该任务，先从 DB 同步已落库的消息（小秘书会先写用户追问），
+   * 再接入运行中会话，后续增量由统一流监听写入同一个助手消息。
+   * 发起窗口不会收到该广播，避免自己刷新自己。
+   */
+  const syncExternalSessionRef = useRef<(conversationId: string) => void>(() => {})
+  syncExternalSessionRef.current = (conversationId: string) => {
+    if (conversationId !== activeConversationIdRef.current) return
+    const tracked = Array.from(streamStatesRef.current.values())
+      .some(s => s.conversationId === conversationId && s.isStreaming)
+    if (tracked) return
+    void (async () => {
+      try {
+        const fullConv = await window.electronAPI.conversation.get(conversationId)
+        if (fullConv && conversationId === activeConversationIdRef.current) {
+          const msgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[]).map(m => ensureSegments(m))
+          setConvMessages(conversationId, msgs)
+        }
+      } catch { /* 拉取失败时仍接入流，至少保证后续输出可见 */ }
+      await reconcileRunningStreams(undefined, conversationId)
+    })()
+  }
+
+  useEffect(() => {
+    const off = window.electronAPI.llm.onSessionStarted?.(({ conversationId }) => {
+      if (conversationId) syncExternalSessionRef.current(conversationId)
+    })
+    return () => { off?.() }
+  }, [])
 
   const initEmployee = async () => {
     const version = initVersionRef.current
@@ -844,7 +878,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     try {
       const result = await window.electronAPI.conversation.create({
         employee_id: id!,
-        title: t('workbench.defaultConvTitle', { date: dayjs().format('MM/DD HH:mm') }),
+        title: defaultConversationTitle(),
         minimal_mode: minimalMode,
       })
       const convId = (result as Conversation).id
@@ -1286,50 +1320,15 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   }
 
   const generateConversationTitle = async (conversationId: string, userContent: string) => {
-    try {
-      const quickModel = await getSceneDefaultModel('quick')
-      // 兜底：quick 场景模型 → 第一个 provider
-      const providerId = quickModel?.provider_id
-        || providers[0]?.id
-      if (!providerId) return
-
-      const modelId = quickModel?.model_id || undefined
-      const result = await window.electronAPI.llm.chat({
-        provider_id: providerId,
-        model_id: modelId,
-        messages: [
-          {
-            role: 'system',
-            content: t('workbench.titleGenSystemPrompt'),
-          },
-          {
-            role: 'user',
-            content: userContent,
-          },
-        ],
-        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 10000 },
-      })
-
-      if (result.success && result.content) {
-        const raw = result.content.trim().replace(/["""'']/g, '')
-        // 中文标题按 20 字截断，英文按 60 字符截断（约 10 个单词）
-        const maxLength = /[\u4e00-\u9fa5]/.test(raw) ? 20 : 60
-        const title = raw.substring(0, maxLength).trim()
-        if (title) {
-          await window.electronAPI.conversation.update({
-            id: conversationId,
-            title,
-          })
-          setAllConversations((prev) =>
-            prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
-          )
-          // 通知外部页面（任务列表）刷新，让新标题立即可见
-          window.dispatchEvent(new CustomEvent('conversation-title-updated', {
-            detail: { conversationId, title },
-          }))
-        }
-      }
-    } catch (e) { console.error('Failed to generate conversation title:', e) }
+    const title = await requestConversationTitle(conversationId, userContent)
+    if (!title) return
+    setAllConversations((prev) =>
+      prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
+    )
+    // 通知外部页面（任务列表）刷新，让新标题立即可见
+    window.dispatchEvent(new CustomEvent('conversation-title-updated', {
+      detail: { conversationId, title },
+    }))
   }
 
   const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {

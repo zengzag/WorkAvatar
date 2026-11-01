@@ -13,7 +13,7 @@ import type EmployeeAgentService from '../services/employee-agent.service'
 import { createPiProvider } from '../services/agent/llm/pi-provider-factory'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
-import { safeHandle } from './_shared'
+import { broadcastToOtherRenderers, safeHandle } from './_shared'
 import { flushRunStream, hasOtherSessionViewer, registerSessionWebContents, sendToSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
 import SubAgentRuntime from '../services/agent-runtime/runtime'
 import WorkspaceManagerService from '../services/workspace-manager.service'
@@ -164,6 +164,15 @@ export function registerLLMHandlers(
     activeSessionsMeta.set(sessionId, { employeeId: params.employee_id, conversationId: params.conversation_id })
     sessionOwner.set(sessionId, event.sender)
     registerSessionWebContents(sessionId, event.sender)
+
+    // 其他窗口若正打开同一任务，需要立即接入本会话（否则主窗口看不到小秘书的追问/回答）
+    if (params.conversation_id) {
+      broadcastToOtherRenderers(event.sender, IPC_CHANNELS.LLM_SESSION_STARTED, {
+        sessionId,
+        employeeId: params.employee_id,
+        conversationId: params.conversation_id,
+      })
+    }
 
     interactionService.registerSession(sessionId, event.sender)
 
