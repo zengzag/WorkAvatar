@@ -127,7 +127,7 @@ function coerceTime(input: any): number | undefined {
   return parsed !== null ? parsed : undefined
 }
 
-const TIME_HINT = '时间参数接受 Unix 秒（number）或日期字符串（如 "2026-07-24"、"2026-07-24 15:00"），由服务端解析。'
+const TIME_HINT = 'Time arguments accept Unix seconds (number) or a date string (e.g. "2026-07-24", "2026-07-24 15:00"); the server parses them.'
 
 export function createConversationListTool(employeeId: string): ToolDefinition[] {
   const db = DatabaseService.getInstance().getDb()
@@ -136,19 +136,19 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
     id: 'list_conversations',
     name: 'list_conversations',
     title: '列出历史对话',
-    summary: '按员工/时间范围列出历史对话元信息（标题、id、消息数等），支持分页。用于浏览而非关键词检索。',
+    summary: 'List conversation metadata (title, id, message count) filtered by employee or time range, with pagination. For browsing, not keyword search.',
     description: [
-      '按员工 ID 与时间范围过滤，列出历史对话的基础元信息（仅 id、标题、摘要、消息数、最后消息时间、员工信息），不返回对话正文。',
-      '用途：浏览某段时间内的对话清单、定位具体 conversation_id 后用 get_conversation_detail 取正文。',
-      '与 search_conversations 的区别：本工具是按条件过滤列表，不做关键词匹配；需要按内容关键词检索时用 search_conversations。',
+      'List conversation metadata (id, title, summary, message count, last message time, employee) filtered by employee and time range; the conversation body is not returned.',
+      'Use it to browse conversations in a period, then read the body of a specific conversation_id with get_conversation_detail.',
+      'Difference from search_conversations: this is a filtered list, not keyword matching; use search_conversations for content search.',
       '',
-      '员工过滤：',
-      '- 不传 employee_ids 且 include_all_employees=false（默认）：仅检索当前数字员工的对话',
-      '- 传入 employee_ids（一个或多个）：仅检索指定数字员工的对话',
-      '- include_all_employees=true：检索所有数字员工的对话（忽略 employee_ids）',
+      'Employee filter:',
+      '- No employee_ids and include_all_employees=false (default): current employee only.',
+      '- employee_ids: the specified employees only.',
+      '- include_all_employees=true: all employees (employee_ids ignored).',
       '',
       TIME_HINT,
-      '分页：使用 limit + offset，返回 total 总数和 hasMore 标记。',
+      'Pagination: limit + offset; the result includes total and hasMore.',
     ].join('\n'),
     parameters: {
       type: 'object',
@@ -156,29 +156,29 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
         employee_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '指定数字员工 ID 列表（一个或多个）。不传且 include_all_employees=false 时仅检索当前数字员工',
+          description: 'Employee ids to include. Without it and include_all_employees=false, only the current employee is searched',
         },
         include_all_employees: {
           type: 'boolean',
-          description: '是否检索所有数字员工的对话。设为 true 时忽略 employee_ids（默认 false）',
+          description: 'Search all employees; when true, employee_ids is ignored (default false)',
         },
         start_time: {
           type: 'string',
-          description: '起始时间（含），按对话最后消息时间过滤',
+          description: 'Inclusive start time, filtered by the conversation\'s last message time',
         },
         end_time: {
           type: 'string',
-          description: '结束时间（含），按对话最后消息时间过滤',
+          description: 'Inclusive end time, filtered by the conversation\'s last message time',
         },
         limit: {
           type: 'number',
-          description: '返回数量（1-100，默认 20）',
+          description: 'Number of results to return (1-100, default 20)',
           minimum: 1,
           maximum: 100,
         },
         offset: {
           type: 'number',
-          description: '偏移量，用于分页（默认 0）',
+          description: 'Pagination offset (default 0)',
           minimum: 0,
         },
       },
@@ -304,36 +304,36 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
     id: 'get_conversation_detail',
     name: 'get_conversation_detail',
     title: '获取对话详情',
-    summary: '按对话 id 取单条对话正文（仅用户/助手文本，剥离工具与思考），支持增量续取。',
+    summary: 'Read one conversation\'s text (user/assistant only, no tools or reasoning), with incremental continuation.',
     description: [
-      '按 conversation_id 获取单条对话的详细内容（即数字员工的"任务详情"）。',
-      '返回内容仅包含 user 与 assistant 的 answer 文本，剥离 thinking（推理）与 tool_call（工具调用）段，避免污染上下文。',
-      '每条消息附带发送时间（取自消息 timestamp，格式化为本地可读字符串）。',
+      'Get the detailed content of one conversation by conversation_id (the employee\'s task detail).',
+      'Only user and assistant answer text is returned; thinking and tool_call segments are stripped so they do not pollute the context.',
+      'Each message is tagged with its send time (formatted from the message timestamp).',
       '',
-      '增量访问：',
-      '- 通过 max_chars 限制单次返回的字符总数（默认 8000，最大 30000）',
-      '- 当一次取不完时返回 nextCursor，将其原样传入下一次调用的 cursor 参数即可续取后续内容',
-      '- hasMore=false 表示已到末尾',
-      '- 单条超长消息会在内部切分，nextCursor 指向剩余部分',
+      'Incremental reads:',
+      '- max_chars caps the characters returned per call (default 8000, max 30000).',
+      '- When the content is not exhausted, nextCursor is returned; pass it back unchanged as cursor.',
+      '- hasMore=false means the end has been reached.',
+      '- An over-long single message is split internally; nextCursor points to the remainder.',
       '',
-      '推荐先用 list_conversations 或 search_conversations 拿到 conversation_id，再用本工具读正文。',
+      'Get conversation_id from list_conversations or search_conversations first.',
     ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
         conversation_id: {
           type: 'string',
-          description: '对话 ID（即任务 ID，由 list_conversations 或 search_conversations 返回的 conversationId）',
+          description: 'Conversation id (task id) returned by list_conversations or search_conversations',
         },
         max_chars: {
           type: 'number',
-          description: '单次返回的最大字符数（500-30000，默认 8000）',
+          description: 'Maximum characters to return per call (500-30000, default 8000)',
           minimum: 500,
           maximum: 30000,
         },
         cursor: {
           type: 'string',
-          description: '续取游标（上一次返回的 nextCursor 原样传入即可，无需解析）',
+          description: 'Continuation cursor: pass the previous nextCursor back unchanged',
         },
       },
       required: ['conversation_id'],

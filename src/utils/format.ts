@@ -8,6 +8,12 @@ export function formatFileSize(bytes: number): string {
   return filesize(bytes) as string
 }
 
+/** 取路径最后一段目录名（兼容 Windows 反斜杠与末尾分隔符） */
+export function getDirName(p: string): string {
+  const trimmed = (p || '').replace(/[\\/]+$/, '')
+  return trimmed.split(/[\\/]/).pop() || trimmed
+}
+
 /**
  * 格式化耗时（秒）：
  * - 不足 1 分钟：<10s 保留 1 位小数，≥10s 取整，如 1.2s / 45s

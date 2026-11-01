@@ -47,7 +47,7 @@ interface DBMcpServerRow {
 /** serverId → 活跃 client 实例缓存（agent 创建时复用，避免每次都重新 spawn / connect） */
 interface ActiveClientEntry {
   client: McpClient
-  /** 引用计数：每次 agent 注册引用 +1，agent 销毁时 -1，归零时关闭 client */
+  /** 引用计数：每次 agent 注册引用 +1，agent 销毁时 -1；归零后启动空闲 timer，超时才关闭 client */
   refCount: number
   /** 守护 timer：长时间未引用则自动关闭，防止泄漏 */
   idleTimer: NodeJS.Timeout | null
@@ -232,7 +232,7 @@ class McpRegistryService {
   /**
    * 为指定员工构造启用的 MCP server 对应的 ToolDefinition 列表。
    *
-   * 调用时机：EmployeeAgentService.getOrCreateAgent() 中，紧接内置工具注册之后。
+   * 调用时机：EmployeeAgentService.doCreateAgent() 中，紧接内置工具注册之后。
    * 行为：
    *   1. 拉取该员工 is_enabled=1 的所有 server
    *   2. 对每个 server，获取或创建活跃 client（复用缓存避免重复 spawn）

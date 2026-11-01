@@ -1,21 +1,27 @@
 """Add comments to a DOCX document.
+
 Accepts either an unpacked directory OR a .docx/.dotx file directly.
+
 Usage:
     # Against an unpacked directory (writes satellite files in place)
     python comment.py unpacked/ "Comment text"
     python comment.py unpacked/ "Reply text" --parent 0
+
     # Against a .docx directly (extracts, writes satellite files, rezips)
     python comment.py contract.docx "This cap is too low" -o annotated.docx
     python comment.py contract.docx "Comment" --id 5      # explicit ID
+
 The comment ID is auto-assigned (max existing + 1) unless --id is given.
 Plain text is XML-escaped automatically; if you pass already-escaped text
 (e.g. &amp;, &#x2019;) use --raw to skip escaping.
+
 After running, add markers to word/document.xml so the comment is visible:
   <w:commentRangeStart w:id="N"/>
   ... commented content ...
   <w:commentRangeEnd w:id="N"/>
   <w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="N"/></w:r>
 """
+
 import argparse
 import random
 import shutil
@@ -24,10 +30,13 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+
 import defusedxml.minidom
 from xml.parsers.expat import ExpatError
 from xml.sax.saxutils import escape as xml_escape
+
 from office.helpers import opc_target, rezip as _rezip, safe_extract as _safe_extract
+
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 NS = {
     "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -36,6 +45,7 @@ NS = {
     "w16cid": "http://schemas.microsoft.com/office/word/2016/wordml/cid",
     "w16cex": "http://schemas.microsoft.com/office/word/2018/wordml/cex",
 }
+
 COMMENT_XML = """\
 <w:comment w:id="{id}" w:author="{author}" w:date="{date}" w:initials="{initials}">
   <w:p w14:paraId="{para_id}" w14:textId="77777777">
@@ -53,12 +63,14 @@ COMMENT_XML = """\
     </w:r>
   </w:p>
 </w:comment>"""
+
 COMMENT_MARKER_TEMPLATE = """
 Add to word/document.xml (markers must be direct children of w:p, never inside w:r):
   <w:commentRangeStart w:id="{cid}"/>
   <w:r>...</w:r>
   <w:commentRangeEnd w:id="{cid}"/>
   <w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="{cid}"/></w:r>"""
+
 REPLY_MARKER_TEMPLATE = """
 Nest markers inside parent {pid}'s markers (direct children of w:p, never inside w:r):
   <w:commentRangeStart w:id="{pid}"/><w:commentRangeStart w:id="{cid}"/>
@@ -66,28 +78,37 @@ Nest markers inside parent {pid}'s markers (direct children of w:p, never inside
   <w:commentRangeEnd w:id="{cid}"/><w:commentRangeEnd w:id="{pid}"/>
   <w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="{pid}"/></w:r>
   <w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="{cid}"/></w:r>"""
+
 SMART_QUOTE_ENTITIES = {
-    "\u201c": "&#x201C;",
-    "\u201d": "&#x201D;",
-    "\u2018": "&#x2018;",
-    "\u2019": "&#x2019;",
+    "“": "&#x201C;",
+    "”": "&#x201D;",
+    "‘": "&#x2018;",
+    "’": "&#x2019;",
 }
+
+
 def _generate_hex_id() -> str:
     return f"{random.randint(0, 0x7FFFFFFE):08X}"
+
+
 def _encode_smart_quotes(text: str) -> str:
     for char, entity in SMART_QUOTE_ENTITIES.items():
         text = text.replace(char, entity)
     return text
+
+
 def _append_xml(xml_path: Path, root_tag: str, content: str) -> None:
     dom = defusedxml.minidom.parseString(xml_path.read_text(encoding="utf-8"))
     root = dom.getElementsByTagName(root_tag)[0]
     ns_attrs = " ".join(f'xmlns:{k}="{v}"' for k, v in NS.items())
     wrapper_dom = defusedxml.minidom.parseString(f"<root {ns_attrs}>{content}</root>")
-    for child in wrapper_dom.documentElement.childNodes:
+    for child in wrapper_dom.documentElement.childNodes:  
         if child.nodeType == child.ELEMENT_NODE:
             root.appendChild(dom.importNode(child, True))
     output = _encode_smart_quotes(dom.toxml(encoding="UTF-8").decode("utf-8"))
     xml_path.write_text(output, encoding="utf-8")
+
+
 def _find_para_id(comments_path: Path, comment_id: int) -> str | None:
     dom = defusedxml.minidom.parseString(comments_path.read_text(encoding="utf-8"))
     for c in dom.getElementsByTagName("w:comment"):
@@ -96,6 +117,8 @@ def _find_para_id(comments_path: Path, comment_id: int) -> str | None:
                 if pid := p.getAttribute("w14:paraId"):
                     return pid
     return None
+
+
 def _next_comment_id(comments_path: Path) -> int:
     if not comments_path.exists():
         return 0
@@ -107,6 +130,8 @@ def _next_comment_id(comments_path: Path) -> int:
         except ValueError:
             pass
     return (max(ids) + 1) if ids else 0
+
+
 def _get_next_rid(rels_path: Path) -> int:
     dom = defusedxml.minidom.parseString(rels_path.read_text(encoding="utf-8"))
     max_rid = 0
@@ -118,18 +143,24 @@ def _get_next_rid(rels_path: Path) -> int:
             except ValueError:
                 pass
     return max_rid + 1
+
+
 def _has_relationship(rels_path: Path, target: str) -> bool:
     dom = defusedxml.minidom.parseString(rels_path.read_text(encoding="utf-8"))
     return any(
         rel.getAttribute("Target") == target
         for rel in dom.getElementsByTagName("Relationship")
     )
+
+
 def _has_content_type(ct_path: Path, part_name: str) -> bool:
     dom = defusedxml.minidom.parseString(ct_path.read_text(encoding="utf-8"))
     return any(
         o.getAttribute("PartName") == part_name
         for o in dom.getElementsByTagName("Override")
     )
+
+
 _COMMENT_RELS = [
     ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments", "comments.xml"),
     ("http://schemas.microsoft.com/office/2011/relationships/commentsExtended", "commentsExtended.xml"),
@@ -142,6 +173,8 @@ _COMMENT_OVERRIDES = [
     ("/word/commentsIds.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml"),
     ("/word/commentsExtensible.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml"),
 ]
+
+
 def _ensure_comment_relationships(unpacked_dir: Path) -> None:
     rels_path = unpacked_dir / "word" / "_rels" / "document.xml.rels"
     if not rels_path.exists():
@@ -169,11 +202,13 @@ def _ensure_comment_relationships(unpacked_dir: Path) -> None:
         rel.setAttribute("Id", f"rId{next_rid}")
         rel.setAttribute("Type", rel_type)
         rel.setAttribute("Target", target)
-        root.appendChild(rel)
+        root.appendChild(rel)  
         next_rid += 1
         changed = True
     if changed:
         rels_path.write_bytes(dom.toxml(encoding="UTF-8"))
+
+
 def _ensure_comment_content_types(unpacked_dir: Path) -> None:
     ct_path = unpacked_dir / "[Content_Types].xml"
     if not ct_path.exists():
@@ -191,10 +226,12 @@ def _ensure_comment_content_types(unpacked_dir: Path) -> None:
         override = dom.createElement("Override")
         override.setAttribute("PartName", part_name)
         override.setAttribute("ContentType", content_type)
-        root.appendChild(override)
+        root.appendChild(override)  
         changed = True
     if changed:
         ct_path.write_bytes(dom.toxml(encoding="UTF-8"))
+
+
 def add_comment(
     unpacked_dir: Path | str,
     text: str,
@@ -212,16 +249,20 @@ def add_comment(
     word = unpacked_dir / "word"
     if not word.exists():
         raise FileNotFoundError(f"{word} not found (not an unpacked .docx?)")
+
     comments = word / "comments.xml"
     if comment_id is None:
         comment_id = _next_comment_id(comments)
+
     parent_para = None
     if parent_id is not None:
         parent_para = _find_para_id(comments, parent_id) if comments.exists() else None
         if not parent_para:
             raise ValueError(f"parent comment {parent_id} not found")
+
     para_id, durable_id = _generate_hex_id(), _generate_hex_id()
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     if not comments.exists():
         shutil.copy(TEMPLATE_DIR / "comments.xml", comments)
     _ensure_comment_relationships(unpacked_dir)
@@ -234,6 +275,7 @@ def add_comment(
             para_id=para_id, text=text,
         ),
     )
+
     ext = word / "commentsExtended.xml"
     if not ext.exists():
         shutil.copy(TEMPLATE_DIR / "commentsExtended.xml", ext)
@@ -247,6 +289,7 @@ def add_comment(
             ext, "w15:commentsEx",
             f'<w15:commentEx w15:paraId="{para_id}" w15:done="0"/>',
         )
+
     ids = word / "commentsIds.xml"
     if not ids.exists():
         shutil.copy(TEMPLATE_DIR / "commentsIds.xml", ids)
@@ -254,6 +297,7 @@ def add_comment(
         ids, "w16cid:commentsIds",
         f'<w16cid:commentId w16cid:paraId="{para_id}" w16cid:durableId="{durable_id}"/>',
     )
+
     extensible = word / "commentsExtensible.xml"
     if not extensible.exists():
         shutil.copy(TEMPLATE_DIR / "commentsExtensible.xml", extensible)
@@ -261,8 +305,11 @@ def add_comment(
         extensible, "w16cex:commentsExtensible",
         f'<w16cex:commentExtensible w16cex:durableId="{durable_id}" w16cex:dateUtc="{ts}"/>',
     )
+
     action = "reply" if parent_id is not None else "comment"
     return comment_id, para_id, f"Added {action} id={comment_id} (paraId={para_id})"
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Add a comment to a DOCX (directory or .docx file).")
     p.add_argument("input", help="Unpacked DOCX directory OR a .docx/.dotx file")
@@ -277,7 +324,9 @@ def main() -> None:
     p.add_argument("-o", "--output",
                    help="Output .docx path (only used when input is a .docx; default: overwrite input)")
     args = p.parse_args()
+
     src = Path(args.input)
+
     try:
         if src.is_dir():
             if args.output:
@@ -308,9 +357,12 @@ def main() -> None:
     except (FileNotFoundError, ValueError, zipfile.BadZipFile, ExpatError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
     if args.parent is not None:
         print(REPLY_MARKER_TEMPLATE.format(pid=args.parent, cid=cid))
     else:
         print(COMMENT_MARKER_TEMPLATE.format(cid=cid))
+
+
 if __name__ == "__main__":
     main()

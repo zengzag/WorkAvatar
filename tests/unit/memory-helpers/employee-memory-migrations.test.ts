@@ -1,5 +1,5 @@
 /**
- * 记忆迁移集成测试（node:sqlite，复刻旧版真实库结构）。
+ * 记忆迁移集成测试（node:sqlite，模拟旧版真实库结构）。
  *
  * 覆盖风险最高的环节——表重建：
  * - 旧库（employee_id NOT NULL、无 scope、FTS 未分词）迁移后数据完整、scope 回填、
@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { migrateMemorySchema, tableColumns, type MigrationDatabase } from '../../../electron/main/services/employee-memory-migrations'
 import { buildMemoryFtsMatch } from '../../../electron/main/services/employee-memory-fts'
 
-/** 复刻上一版（无 scope / 无 attempts）的库结构 */
+/** 模拟上一版（无 scope / 无 attempts）的库结构 */
 function createLegacyDb(): DatabaseSync {
   const db = new DatabaseSync(':memory:')
   db.exec(`

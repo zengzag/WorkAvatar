@@ -7,6 +7,7 @@ import enUS from 'antd/locale/en_US'
 import { buildRouter } from './router'
 import './i18n'
 import './styles/index.css'
+import './styles/theme.css'
 import {
   useAppearanceStore,
   getEffectiveTheme,
@@ -17,10 +18,12 @@ import {
 } from './stores/appearance.store'
 import { useNavConfigStore } from './stores/nav.store'
 import { installConsoleForwarder } from './utils/logger'
+import { startupMark } from './utils/startup-timer'
 import { injectHostGlobals, loadPlugins } from './plugins/loader'
 
 // 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
 installConsoleForwarder()
+startupMark('渲染进程入口执行', '含 preload 与入口模块加载执行')
 
 // 共享库单例注入（插件经 __WA_HOST__ 复用宿主 React/antd/i18n，防止双实例）
 injectHostGlobals()
@@ -28,6 +31,14 @@ injectHostGlobals()
 const ANT_LOCALE_MAP: Record<string, any> = {
   'zh-CN': zhCN,
   'en-US': enUS,
+}
+
+/** 淡出启动骨架（index.html 内的静态节点，不属于 React 树） */
+function hideBootSplash(): void {
+  const splash = document.getElementById('boot-splash')
+  if (!splash) return
+  splash.classList.add('is-hidden')
+  setTimeout(() => splash.remove(), 200)
 }
 
 const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -44,91 +55,152 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     return cleanup
   }, [initialize, initializeNav])
 
+  // React 首次提交后再淡出启动骨架，避免骨架消失时露出一片空白
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => requestAnimationFrame(hideBootSplash))
+    return () => cancelAnimationFrame(raf)
+  }, [])
+
   const effectiveTheme = useMemo(() => getEffectiveTheme(themeMode), [themeMode])
 
   const antLocale = useMemo(() => ANT_LOCALE_MAP[locale] || zhCN, [locale])
 
   const themeConfig = useMemo(
-    () => ({
-      algorithm:
-        effectiveTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-      token: {
-        fontSize: FONT_SIZE_MAP[fontSizeLevel],
-        fontSizeSM: FONT_SIZE_SM_MAP[fontSizeLevel],
-        fontSizeLG: FONT_SIZE_LG_MAP[fontSizeLevel],
-        borderRadius: 4,
-        borderRadiusLG: 6,
-        borderRadiusSM: 3,
-        wireframe: false,
-        // 更紧凑的间距，提升专业感
-        controlHeight: 28,
-        controlHeightSM: 24,
-        controlHeightLG: 32,
-        // 更细致的边框
-        borderWidth: 1,
-        // 更柔和的阴影
-        boxShadowTertiary: '0 1px 2px 0 rgba(0,0,0,0.03), 0 1px 6px -1px rgba(0,0,0,0.02), 0 2px 4px 0 rgba(0,0,0,0.02)',
-      },
-      components: {
-        Layout: {
-          headerBg: effectiveTheme === 'dark' ? '#1a1a1a' : '#fff',
-          siderBg: effectiveTheme === 'dark' ? '#1a1a1a' : '#fff',
-          bodyBg: effectiveTheme === 'dark' ? '#0a0a0a' : '#f0f0f0',
-          headerHeight: 40,
-          headerPadding: '0 16px',
+    () => {
+      const isDark = effectiveTheme === 'dark'
+      const accent = isDark ? '#4096ff' : '#1677ff'
+      return {
+        algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+        token: {
+          fontSize: FONT_SIZE_MAP[fontSizeLevel],
+          fontSizeSM: FONT_SIZE_SM_MAP[fontSizeLevel],
+          fontSizeLG: FONT_SIZE_LG_MAP[fontSizeLevel],
+          fontFamily:
+            '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif',
+          borderRadius: 7,
+          borderRadiusLG: 10,
+          borderRadiusSM: 5,
+          borderRadiusXS: 3,
+          wireframe: false,
+          controlHeight: 30,
+          controlHeightSM: 26,
+          controlHeightLG: 36,
+          borderWidth: 1,
+
+          colorPrimary: accent,
+          colorInfo: accent,
+          colorLink: accent,
+          colorTextLightSolid: '#ffffff',
+          colorSuccess: isDark ? '#3fb950' : '#1a7f37',
+          colorWarning: isDark ? '#d29922' : '#9a6700',
+          colorError: isDark ? '#f85149' : '#cf222e',
+          // 自定义的语义色为低饱和深色，antd 据此推导出的浅色底/边框会发灰发脏，
+          // 亮色下需显式给回干净的浅色底（Tag、Alert 等状态色容器共用）
+          ...(isDark ? {} : {
+            colorSuccessBg: '#e8f5ec',
+            colorSuccessBorder: '#b7dfc3',
+            colorWarningBg: '#fdf4e3',
+            colorWarningBorder: '#efd8ab',
+            colorErrorBg: '#fdecea',
+            colorErrorBorder: '#f6c9c6',
+          }),
+
+          colorBgLayout: isDark ? '#07090d' : '#f3f6fb',
+          colorBgContainer: isDark ? '#0f1218' : '#ffffff',
+          colorBgElevated: isDark ? '#141925' : '#ffffff',
+          colorBorder: isDark ? '#2a3342' : '#dfe6f0',
+          colorBorderSecondary: isDark ? '#1e2533' : '#edf1f7',
+          colorText: isDark ? '#e9eef8' : '#101828',
+          colorTextSecondary: isDark ? '#a7b1c2' : '#4a5568',
+          colorTextTertiary: isDark ? '#7e8a9d' : '#667085',
+          colorTextQuaternary: isDark ? '#6b7689' : '#98a2b3',
+          colorFillQuaternary: isDark ? 'rgba(255,255,255,.03)' : 'rgba(16,24,40,.03)',
+          colorFillTertiary: isDark ? 'rgba(255,255,255,.055)' : 'rgba(16,24,40,.05)',
+          colorFillSecondary: isDark ? 'rgba(255,255,255,.08)' : 'rgba(16,24,40,.07)',
+          colorBgTextHover: isDark ? 'rgba(255,255,255,.06)' : 'rgba(16,24,40,.05)',
+          boxShadowTertiary: isDark
+            ? '0 1px 2px 0 rgba(0,0,0,.5)'
+            : '0 1px 2px 0 rgba(16,24,40,.04), 0 8px 24px -20px rgba(16,24,40,.4)',
         },
-        Menu: {
-          darkItemBg: '#1a1a1a',
-          itemBg: 'transparent',
-          itemHeight: 36,
-          itemMarginInline: 8,
-          itemBorderRadius: 4,
-          iconSize: 16,
-          darkSubMenuItemBg: '#1a1a1a',
-          // 折叠子菜单弹出层背景与侧边栏保持一致（避免暗色下走 antd 默认偏色）
-          popupBg: '#ffffff',
-          darkPopupBg: '#1a1a1a',
-          // 悬停时给图标一个更明显的背景，类似选中的交互感
-          itemHoverBg: 'rgba(0, 0, 0, 0.06)',
-          darkItemHoverBg: 'rgba(255, 255, 255, 0.10)',
+        components: {
+          Layout: {
+            headerBg: 'transparent',
+            siderBg: 'transparent',
+            bodyBg: 'transparent',
+            headerHeight: 40,
+            headerPadding: '0 14px',
+          },
+          Menu: {
+            itemBg: 'transparent',
+            darkItemBg: 'transparent',
+            itemHeight: 38,
+            itemMarginInline: 8,
+            itemBorderRadius: 7,
+            iconSize: 16,
+            itemSelectedBg: 'transparent',
+            darkItemSelectedBg: 'transparent',
+            darkSubMenuItemBg: 'transparent',
+            popupBg: isDark ? '#141925' : '#ffffff',
+            darkPopupBg: '#141925',
+            itemHoverBg: 'transparent',
+            darkItemHoverBg: 'transparent',
+          },
+          Table: {
+            stickyScrollBarBg: isDark ? 'rgba(255,255,255,.15)' : 'rgba(0,0,0,.15)',
+            cellPaddingBlock: 9,
+            cellPaddingInline: 12,
+            headerBg: isDark ? '#12161f' : '#fafcff',
+            headerColor: isDark ? '#7e8a9d' : '#667085',
+            headerSplitColor: 'transparent',
+            rowHoverBg: isDark ? 'rgba(255,255,255,.04)' : 'rgba(16,24,40,.03)',
+          },
+          Card: {
+            headerFontSize: 13,
+            headerHeight: 42,
+            paddingLG: 16,
+          },
+          Tabs: {
+            horizontalItemPadding: '9px 12px',
+            titleTextSize: 13,
+            inkBarColor: accent,
+            itemSelectedColor: accent,
+          },
+          Button: {
+            controlHeight: 30,
+            controlHeightSM: 26,
+            controlHeightLG: 36,
+            paddingInline: 12,
+            fontWeight: 500,
+          },
+          Input: {
+            controlHeight: 30,
+            controlHeightSM: 26,
+          },
+          Select: {
+            controlHeight: 30,
+            controlHeightSM: 26,
+          },
+          Segmented: {
+            itemSelectedBg: isDark ? '#1a2130' : '#ffffff',
+            borderRadius: 8,
+            borderRadiusSM: 6,
+          },
+          Tooltip: {
+            colorBgSpotlight: isDark ? '#262d3a' : '#1d2128',
+          },
+          Drawer: {
+            colorBgElevated: isDark ? '#0f1218' : '#ffffff',
+          },
+          Modal: {
+            contentBg: isDark ? '#0f1218' : '#ffffff',
+            headerBg: 'transparent',
+          },
+          Tag: {
+            defaultBg: isDark ? 'rgba(255,255,255,.055)' : 'rgba(16,24,40,.05)',
+          },
         },
-        Table: {
-          stickyScrollBarBg: effectiveTheme === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)',
-          cellPaddingBlock: 8,
-          cellPaddingInline: 12,
-          headerBg: effectiveTheme === 'dark' ? '#1f1f1f' : '#fafafa',
-          headerColor: effectiveTheme === 'dark' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)',
-        },
-        Card: {
-          headerFontSize: 14,
-          headerHeight: 40,
-          paddingLG: 16,
-        },
-        Tabs: {
-          horizontalItemPadding: '8px 12px',
-          titleTextSize: 13,
-        },
-        Button: {
-          controlHeight: 28,
-          controlHeightSM: 24,
-          controlHeightLG: 32,
-          paddingInline: 12,
-        },
-        Input: {
-          controlHeight: 28,
-          controlHeightSM: 24,
-        },
-        Select: {
-          controlHeight: 28,
-          controlHeightSM: 24,
-        },
-        Segmented: {
-          itemSelectedBg: effectiveTheme === 'dark' ? '#2a2a2a' : '#e8e8e8',
-          borderRadius: 4,
-          borderRadiusSM: 3,
-        },
-      },
-    }),
+      }
+    },
     [effectiveTheme, fontSizeLevel]
   )
 
@@ -149,10 +221,18 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
 // 启动时序：读取导航配置 → 共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配静态路由（插件路由为占位动态分发）→ 挂载
 async function bootstrap() {
+  startupMark('bootstrap 开始')
   // 必须先读完持久化导航配置再加载插件：插件注入导航项时才能保留用户已保存的排序/显隐
   await useNavConfigStore.getState().initialize()
-  await loadPlugins()
+  startupMark('导航配置加载完成')
+  // 小秘书浮窗不需要插件页面：跳过插件渲染端加载，避免两个常驻小窗各跑一份插件 bundle
+  const isLightWindow = window.location.hash.startsWith('#/secretary/')
+  if (!isLightWindow) {
+    await loadPlugins()
+  }
+  startupMark('插件渲染端加载完成')
   const router = buildRouter()
+  startupMark('路由构建完成')
 
   // 插件集合变更订阅：主进程导入/启停/删除/重新扫描后广播变更，
   // 渲染端重新拉取清单并增量加载/卸载（导航/路由/视图），免整页 reload，不影响进行中的对话。
@@ -168,6 +248,11 @@ async function bootstrap() {
       </AppWithTheme>
     </React.StrictMode>
   )
+  startupMark('React render 调用完成')
+  // 双 rAF ≈ 首次绘制完成（窗口 ready-to-show 以此为前置）
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => startupMark('首帧绘制完成'))
+  })
 }
 
 bootstrap()

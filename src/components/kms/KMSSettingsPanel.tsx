@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Tabs, Card, Space, Typography, theme, InputNumber, Divider, Tag, Switch, Tooltip,
+  Tabs, Card, Space, Typography, theme, InputNumber, Divider, Tag, Switch, Tooltip, Input, Button, Segmented,
 } from 'antd'
 import {
   RobotOutlined, FolderOpenOutlined,
@@ -12,7 +12,7 @@ import KMSDirPanel from './KMSDirPanel'
 import KMSSearchDirPanel from './KMSSearchDirPanel'
 import KMSIndexPanel from './KMSIndexPanel'
 import type { LLMProvider } from '../../types'
-import type { KMSSettings, KMSModelConfig, KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
+import type { KMSSettings, KMSModelConfig, KMSAutoIndexConfig, KMSAutoIndexStatus, KMSFileSearchSettings } from '../../hooks/useKMS'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -54,6 +54,7 @@ interface KMSSettingsPanelProps {
     summaryModel?: KMSModelConfig | null
     searchParams?: { resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
     autoIndex?: KMSAutoIndexConfig
+    fileSearch?: KMSFileSearchSettings
   }) => Promise<boolean>
   dirs: IndexDir[]
   onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
@@ -103,9 +104,15 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [knowledgeCardThreshold, setKnowledgeCardThreshold] = useState<number>(settings.searchParams?.knowledgeCardThreshold ?? 5)
   const [autoRefreshStaleCards, setAutoRefreshStaleCards] = useState<boolean>(settings.searchParams?.autoRefreshStaleCards ?? true)
   const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
+  const [fileSearchEngine, setFileSearchEngine] = useState<'builtin' | 'everything'>(settings.fileSearch?.engine ?? 'builtin')
+  const [everythingHost, setEverythingHost] = useState(settings.fileSearch?.everything?.host ?? '127.0.0.1')
+  const [everythingPort, setEverythingPort] = useState<number>(settings.fileSearch?.everything?.port ?? 80)
+  const [testingEverything, setTestingEverything] = useState(false)
+  const [everythingStatus, setEverythingStatus] = useState<{ available: boolean; message: string } | null>(null)
   const skipModelSaveRef = useRef(true)
   const skipParamsSaveRef = useRef(true)
   const skipEmbeddingSaveRef = useRef(true)
+  const skipFileSearchSaveRef = useRef(true)
 
   useEffect(() => {
     window.electronAPI.llm.getProviders().then((result: any) => {
@@ -122,8 +129,12 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     setEnableKnowledgeCards(settings.searchParams?.enableKnowledgeCards ?? true)
     setKnowledgeCardThreshold(settings.searchParams?.knowledgeCardThreshold ?? 5)
     setAutoRefreshStaleCards(settings.searchParams?.autoRefreshStaleCards ?? true)
+    setFileSearchEngine(settings.fileSearch?.engine ?? 'builtin')
+    setEverythingHost(settings.fileSearch?.everything?.host ?? '127.0.0.1')
+    setEverythingPort(settings.fileSearch?.everything?.port ?? 80)
     skipModelSaveRef.current = true
     skipParamsSaveRef.current = true
+    skipFileSearchSaveRef.current = true
   }, [settings])
 
   const handleSaveAutoIndex = useCallback(async (config: KMSAutoIndexConfig): Promise<boolean> => {
@@ -179,6 +190,51 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     }, 500)
     return () => clearTimeout(timer)
   }, [embeddingMaxChars])
+
+  // 自动保存：文件搜索引擎与 Everything 连接配置
+  useEffect(() => {
+    if (skipFileSearchSaveRef.current) {
+      skipFileSearchSaveRef.current = false
+      return
+    }
+    const timer = setTimeout(() => {
+      onSaveSettings({
+        fileSearch: {
+          engine: fileSearchEngine,
+          everything: { host: everythingHost.trim() || '127.0.0.1', port: everythingPort },
+        },
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [fileSearchEngine, everythingHost, everythingPort, onSaveSettings])
+
+  const handleTestEverything = useCallback(async () => {
+    setTestingEverything(true)
+    try {
+      const result = await window.electronAPI.kms.testEverything({
+        host: everythingHost.trim() || '127.0.0.1',
+        port: everythingPort,
+      })
+      if (result?.available) {
+        setEverythingStatus({
+          available: true,
+          message: t('kms.settingsPanel.everythingAvailable', { count: result.totalResults ?? 0 }),
+        })
+      } else {
+        setEverythingStatus({
+          available: false,
+          message: t('kms.settingsPanel.everythingUnavailable', { error: result?.error || '' }),
+        })
+      }
+    } catch (err: any) {
+      setEverythingStatus({
+        available: false,
+        message: t('kms.settingsPanel.everythingUnavailable', { error: String(err?.message || err) }),
+      })
+    } finally {
+      setTestingEverything(false)
+    }
+  }, [everythingHost, everythingPort, t])
 
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -324,6 +380,71 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             onChange={setAutoReparseHotData}
           />
         </div>
+      </Card>
+
+      {/* 文件搜索引擎 */}
+      <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.fileSearchEngine')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.fileSearchEngineDesc')}</Text>
+          </div>
+          <Segmented
+            value={fileSearchEngine}
+            onChange={(value) => {
+              const engine = value as 'builtin' | 'everything'
+              setFileSearchEngine(engine)
+              setEverythingStatus(null)
+              if (engine === 'everything') void handleTestEverything()
+            }}
+            options={[
+              { label: t('kms.settingsPanel.fileSearchEngineBuiltin'), value: 'builtin' },
+              { label: 'Everything', value: 'everything' },
+            ]}
+          />
+        </div>
+
+        {fileSearchEngine === 'everything' && (
+          <>
+            <Divider style={{ margin: '12px 0' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.everythingService')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.everythingServiceDesc')}</Text>
+              </div>
+              <Input
+                value={everythingHost}
+                onChange={e => setEverythingHost(e.target.value)}
+                placeholder="127.0.0.1"
+                style={{ width: 140 }}
+              />
+              <InputNumber
+                value={everythingPort}
+                onChange={v => setEverythingPort(v || 80)}
+                min={1}
+                max={65535}
+                style={{ width: 90 }}
+              />
+              <Button size="small" loading={testingEverything} onClick={handleTestEverything}>
+                {t('kms.settingsPanel.everythingTest')}
+              </Button>
+            </div>
+            {everythingStatus && (
+              <Text
+                type={everythingStatus.available ? 'success' : 'danger'}
+                style={{ fontSize: 12, display: 'block', marginTop: 8 }}
+              >
+                {everythingStatus.message}
+              </Text>
+            )}
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+              {t('kms.settingsPanel.everythingHint')}
+            </Text>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+              {t('kms.settingsPanel.everythingScopeHint')}
+            </Text>
+          </>
+        )}
       </Card>
 
       {/* 知识卡片设置 */}

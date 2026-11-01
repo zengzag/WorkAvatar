@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -12,12 +12,14 @@ import {
   App,
   theme,
   ColorPicker,
+  Tooltip,
 } from 'antd'
 import {
   SaveOutlined,
   FolderOpenOutlined,
   DeleteOutlined,
   ThunderboltOutlined,
+  CloseOutlined,
 } from '@ant-design/icons'
 import EmployeeAvatar, {
   EMPLOYEE_AVATAR_ICONS,
@@ -26,6 +28,39 @@ import EmployeeAvatar, {
 } from '../common/EmployeeAvatar'
 
 const { TextArea } = Input
+
+/** 头像目标边长（px）：居中裁切正方形后缩放 */
+const AVATAR_EDGE = 256
+/** 头像 data URL 字符上限：超限时降分辨率重编码，避免大图拖慢列表渲染与导出 */
+const AVATAR_MAX_DATA_URL_LENGTH = 400 * 1024
+
+/** 居中裁切为正方形并绘制到指定边长 */
+const drawAvatarCanvas = (bitmap: ImageBitmap, edge: number): HTMLCanvasElement => {
+  const side = Math.min(bitmap.width, bitmap.height)
+  const canvas = document.createElement('canvas')
+  canvas.width = edge
+  canvas.height = edge
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas unavailable')
+  ctx.drawImage(
+    bitmap,
+    (bitmap.width - side) / 2,
+    (bitmap.height - side) / 2,
+    side,
+    side,
+    0,
+    0,
+    edge,
+    edge,
+  )
+  return canvas
+}
+
+/** WebP 体积远小于 PNG 且保留透明底；环境不支持时回退 PNG */
+const encodeAvatar = (canvas: HTMLCanvasElement, quality: number): string => {
+  const webp = canvas.toDataURL('image/webp', quality)
+  return webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/png')
+}
 
 interface BasicInfoSectionProps {
   form: ReturnType<typeof Form.useForm>[0]
@@ -51,6 +86,34 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   const { message } = App.useApp()
   const { token } = theme.useToken()
   const [generating, setGenerating] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  /** 头像图片压缩：居中裁切为正方形并缩放到 256px；超限时逐级降分辨率，保证入库体积可控 */
+  const handlePickImage = useCallback(async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      message.error(t('employeeSettings.avatarImageInvalid'))
+      return
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      message.error(t('employeeSettings.avatarImageTooLarge'))
+      return
+    }
+    try {
+      const bitmap = await createImageBitmap(file)
+      let dataUrl = ''
+      try {
+        for (const edge of [AVATAR_EDGE, 192, 128]) {
+          dataUrl = encodeAvatar(drawAvatarCanvas(bitmap, edge), 0.85)
+          if (dataUrl.length <= AVATAR_MAX_DATA_URL_LENGTH) break
+        }
+      } finally {
+        bitmap.close?.()
+      }
+      form.setFieldValue('avatar_image', dataUrl)
+    } catch {
+      message.error(t('employeeSettings.avatarImageFailed'))
+    }
+  }, [form, message, t])
 
   // 头像图标选项（预览统一走 EmployeeAvatar，保证与实际渲染一致）
   const iconOptions = useMemo(() => EMPLOYEE_AVATAR_ICONS.map((key) => ({
@@ -63,9 +126,10 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
     ),
   })), [t])
 
-  // 实时预览：跟随表单里的图标 / 颜色
+  // 实时预览：跟随表单里的图标 / 颜色 / 上传图片
   const avatarIcon = Form.useWatch('avatar_icon', form) as string | undefined
   const avatarColor = Form.useWatch('avatar_color', form) as string | undefined
+  const avatarImage = Form.useWatch('avatar_image', form) as string | undefined
 
   /** 用 LLM 根据名称、规则、工具与技能生成简短描述，填入表单（未保存的表单值优先） */
   const handleGenerateDescription = useCallback(async () => {
@@ -135,8 +199,42 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           </Col>
           <Col span={14}>
             <Form.Item label={t('employeeSettings.avatarStyle')}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <EmployeeAvatar avatarIcon={avatarIcon} avatarColor={avatarColor} size={32} shape="square" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                  <EmployeeAvatar
+                    avatarIcon={avatarIcon}
+                    avatarColor={avatarColor}
+                    avatarImage={avatarImage}
+                    size={32}
+                    shape="square"
+                  />
+                  {!readonly && avatarImage && (
+                    <Tooltip title={t('employeeSettings.avatarRemove')}>
+                      <button
+                        type="button"
+                        onClick={() => form.setFieldValue('avatar_image', '')}
+                        style={{
+                          position: 'absolute',
+                          top: -5,
+                          right: -5,
+                          width: 16,
+                          height: 16,
+                          padding: 0,
+                          borderRadius: '50%',
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          background: token.colorBgContainer,
+                          color: token.colorTextSecondary,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <CloseOutlined style={{ fontSize: 9 }} />
+                      </button>
+                    </Tooltip>
+                  )}
+                </div>
                 <div style={{ width: 1, height: 24, background: token.colorBorderSecondary }} />
                 <Form.Item name="avatar_icon" noStyle>
                   <Select disabled={readonly} style={{ width: 116 }} options={iconOptions} />
@@ -156,6 +254,38 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
                     presets={[{ label: t('employeeSettings.avatarColorPresets'), colors: AVATAR_COLOR_PRESETS }]}
                   />
                 </Form.Item>
+                {!readonly && (
+                  <>
+                    <Form.Item name="avatar_image" noStyle>
+                      <input type="hidden" />
+                    </Form.Item>
+                    <Button
+                      type="link"
+                      style={{
+                        padding: 0,
+                        height: 'auto',
+                        marginLeft: 'auto',
+                        whiteSpace: 'nowrap',
+                      }}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      {avatarImage
+                        ? t('employeeSettings.avatarReplace')
+                        : t('employeeSettings.avatarUpload')}
+                    </Button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        e.target.value = ''
+                        if (file) handlePickImage(file)
+                      }}
+                    />
+                  </>
+                )}
               </div>
             </Form.Item>
           </Col>

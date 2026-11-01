@@ -1,5 +1,5 @@
 /**
- * ANN 后端基准测试（kms_ann_spike_report 的后续验证工具）
+ * ANN 后端基准测试
  *
  * 对比两个后端在同一批合成向量上的表现：
  * - vec0（sqlite-vec 虚表）：插入 + 近似最近邻查询
@@ -24,7 +24,7 @@ export interface AnnBenchmarkResult {
   vectorCount: number
 }
 
-/** 生成可复现（LCG 伪随机）的合成单位向量集，embedding = vectors[0] 是全部查询的 doc 集合 */
+/** 生成可复现（LCG 伪随机）的合成单位向量集；查询向量取前 queryCount 条，文档集为全部向量 */
 export function generateSyntheticVectors(count: number, dimension: number): Float32Array[] {
   let seed = 42
   const next = () => {
@@ -82,7 +82,7 @@ export function runAnnBenchmark(
   const vectors = generateSyntheticVectors(vectorCount, dimension)
   const vecTableName = 'ann_benchmark_vec'
 
-  // 建 vec0 表 + 计时插入（分批 500，同生产代码）
+  // 建 vec0 表 + 单事务计时插入全部向量
   const startedInsert = performance.now()
   db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${vecTableName} USING vec0(embedding float[${dimension}] distance_metric=cosine)`)
   db.exec(`DELETE FROM ${vecTableName}`)

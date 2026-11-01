@@ -3,7 +3,7 @@ import fs from 'fs'
 import { promises as fsp } from 'fs'
 import path from 'path'
 import KMSDatabaseService from './kms-database.service'
-import KMSCrawlerService from './kms-crawler.service'
+import KMSCrawlerService, { SKIP_DIRS as CRAWLER_SKIP_DIRS, SUPPORTED_EXTENSIONS } from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions, type SourceType } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSIndexWorkerClientService from './kms-index-worker-client.service'
@@ -11,6 +11,7 @@ import KMSAutoIndexService from './kms-auto-index.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
 import KMSSearchDirWatcherService from './kms-search-dir-watcher.service'
+import KMSEverythingService, { type EverythingSearchScope, type EverythingTestResult } from './kms-everything.service'
 import KMSKeywordStatsService from './kms-keyword-stats.service'
 import KMSKnowledgeCardService from './kms-knowledge-card.service'
 import KMSContentVersionService from './kms-content-version.service'
@@ -41,6 +42,21 @@ let _embeddedFileIdsCacheTime = 0
 const EMBEDDED_FILE_IDS_CACHE_TTL = 60000
 const QUERY_EMBEDDING_CACHE_TTL = 10 * 60 * 1000
 const QUERY_EMBEDDING_CACHE_MAX = 200
+
+/** Everything 搜索结果的文件 id 前缀：文件可能不在索引库中，预览时按路径解析 */
+const EVERYTHING_FILE_ID_PREFIX = 'everything:'
+
+/** 路径比较归一化（Windows 大小写不敏感） */
+function normalizePathForCompare(value: string): string {
+  return String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+}
+
+function parseExtensionList(value: string | null | undefined): string[] {
+  return String(value || '')
+    .split(',')
+    .map(e => e.trim().toLowerCase().replace(/^\./, ''))
+    .filter(Boolean)
+}
 
 /**
  * KMS 顶层服务（外观模式）
@@ -185,7 +201,7 @@ class KMSService {
    *
    * 分类处理该目录下的文件：
    * - 仍属于至少一个合集的文件：迁移到虚拟手动目录（保留索引与文件记录）
-   * - 不属于任何合集的文件：仅删除 kms_files 记录，不清理 FTS5 / 向量库
+   * - 不属于任何合集的文件：删除 kms_files、kms_search_index、kms_paragraphs 记录，FTS5 / 向量库孤儿留给数据库清理
    *
    * 搜索已 JOIN kms_files，删除文件记录后搜索结果自动排除。
    * 残留的 FTS5 / embedding 孤儿记录可通过「设置 > 数据库清理」回收空间。
@@ -815,7 +831,7 @@ class KMSService {
   }
 
   /**
-   * 按自然语言 query 搜索合集摘要（LIKE 模糊匹配 summary + key_topics_json）
+   * 按自然语言 query 对合集名、描述、摘要与 key_topics 做应用层关键词打分（无向量索引）
    * 用于 kms_search 工具内部附加搜索合集摘要内容，无需向量索引
    * 返回合集元数据 + 摘要 + 主题
    */
@@ -830,7 +846,7 @@ class KMSService {
     const normalized = query.trim().toLowerCase()
     if (!normalized) return []
 
-    // 关键词拆分（与搜索引擎一致：空格 + 中英文边界）
+    // 关键词拆分（仅按空白切分）
     const words = normalized.split(/\s+/).filter(s => s.length > 0)
     if (words.length === 0) return []
 
@@ -973,6 +989,32 @@ class KMSService {
 
   /**
    * 按文件名搜索文件（不匹配文件内容）
+   * 检索引擎由 KMS 设置 fileSearch.engine 决定；Everything 不可用时自动回退内置搜索。
+   */
+  async searchFiles(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) return []
+    if (this.isEverythingFileSearchEnabled()) {
+      try {
+        return await this.searchFilesWithEverything(trimmedQuery, options)
+      } catch (err: any) {
+        logger.warn(`Everything 文件搜索不可用，回退内置搜索: ${err?.message || err}`)
+      }
+    }
+    return this.searchFilesBuiltin(trimmedQuery, options)
+  }
+
+  /** 读取文件搜索引擎设置；主库未就绪（如单测环境）时回退内置搜索 */
+  private isEverythingFileSearchEnabled(): boolean {
+    try {
+      return readKmsSettings().fileSearch.engine === 'everything'
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 内置文件搜索
    * 搜索范围 = 索引目录中的文件（kms_files）+ 启用的文件搜索目录中的文件（kms_search_dir_files）。
    * 文件搜索目录的文件不参与索引与全文搜索，仅按文件名/路径匹配。
    * 支持与现有搜索相同的过滤条件（dirIds, collectionIds, fileExtensions, timeRangeStart, timeRangeEnd）
@@ -981,9 +1023,9 @@ class KMSService {
    * - 查询按空白/标点切分后逐词匹配（词间 AND），避免整句 LIKE 漏召回
    * - 单个词在任一分支无命中时降级为 OR 匹配（兼顾宽松搜索意图）
    * - LIKE 通配符按字面转义；支持对 file_path 的整句子串匹配（目录场景）
-   * - 候选集截断 + JS 打分（词命中数 × 匹配率 + 新鲜度平手）后排序
+   * - 候选集截断 + JS 打分（整句命中优先于词命中数，新鲜度仅作平手排序）后排序
    */
-  searchFiles(query: string, options?: SearchOptions): SearchResult[] {
+  private searchFilesBuiltin(query: string, options?: SearchOptions): SearchResult[] {
     const startTime = Date.now()
     const trimmedQuery = query.trim()
     if (!trimmedQuery) return []
@@ -1116,6 +1158,187 @@ class KMSService {
     } as SearchResult))
   }
 
+  /**
+   * Everything 文件搜索
+   * 范围限定在已配置的索引目录 + 启用的文件搜索目录，过滤规则与内置搜索对齐
+   * （递归深度、扩展名、合集、时间范围、AI 排除、跳过目录）。
+   */
+  private async searchFilesWithEverything(query: string, options?: SearchOptions): Promise<SearchResult[]> {
+    const startTime = Date.now()
+    const limit = Math.min(options?.topK ?? 200, 1000)
+    const filterExtensions = (options?.fileExtensions || [])
+      .map(e => e.trim().toLowerCase().replace(/^\./, ''))
+      .filter(Boolean)
+    const scopes = this.getEverythingSearchScopes(options?.dirIds)
+    if (scopes.length === 0) return []
+
+    const items = await KMSEverythingService.getInstance().search(query, {
+      count: limit * 3,
+      scopes,
+      fileExtensions: filterExtensions,
+      timeRangeStart: options?.timeRangeStart,
+      timeRangeEnd: options?.timeRangeEnd,
+    })
+
+    const terms = query
+      .split(/[\s,，。；;：:、？?！!/\\()（）【】\[\]{}'"]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+    if (terms.length === 0) return []
+
+    const queryLower = query.toLowerCase()
+    const nowSec = Math.floor(Date.now() / 1000)
+    const excludedDirs = this.getAiExcludedDirPaths()
+    const excludedFiles = this.getAiExcludedFilePaths()
+    const collectionPaths = options?.collectionIds && options.collectionIds.length > 0
+      ? this.getCollectionFilePathSet(options.collectionIds)
+      : null
+    const seen = new Set<string>()
+    const scored: Array<{ file_path: string; file_name: string; modified_time: number; score: number }> = []
+
+    for (const item of items) {
+      const normalizedPath = normalizePathForCompare(item.file_path)
+      if (seen.has(normalizedPath)) continue
+      seen.add(normalizedPath)
+
+      const matched = this.matchEverythingScope(scopes, normalizedPath)
+      if (!matched) continue
+      if (!matched.scope.recursive && matched.relativePath.includes('\\')) continue
+      if (!this.isEverythingExtensionAllowed(matched.scope, item.file_ext)) continue
+      if (filterExtensions.length > 0 && !filterExtensions.includes(item.file_ext)) continue
+      if (options?.timeRangeStart !== undefined && item.modified_time * 1000 < options.timeRangeStart) continue
+      if (options?.timeRangeEnd !== undefined && item.modified_time * 1000 > options.timeRangeEnd) continue
+      if (collectionPaths && !collectionPaths.has(normalizedPath)) continue
+      if (excludedFiles.has(normalizedPath)) continue
+      if (excludedDirs.some(dir => normalizedPath.startsWith(dir + '\\'))) continue
+      if (this.isSkippedRelativePath(matched.relativePath)) continue
+
+      const nameLower = item.file_name.toLowerCase()
+      let hitCount = 0
+      for (const term of terms) {
+        const t = term.toLowerCase()
+        if (nameLower.includes(t) || normalizedPath.includes(t)) hitCount++
+      }
+      const fullPhrase = nameLower.includes(queryLower) || normalizedPath.includes(queryLower)
+      const base = fullPhrase ? terms.length + 1 : hitCount
+      if (base === 0) continue
+      const freshness = Math.max(0, 1 - Math.max(0, nowSec - item.modified_time) / (365 * 86400))
+      scored.push({
+        file_path: item.file_path,
+        file_name: item.file_name,
+        modified_time: item.modified_time,
+        score: base * 1000 + freshness,
+      })
+    }
+
+    scored.sort((a, b) => b.score - a.score)
+    logger.info(`searchFiles(everything) "${query}": ${scored.length} results, ${Date.now() - startTime}ms`)
+    return scored.slice(0, limit).map(item => ({
+      file_id: `${EVERYTHING_FILE_ID_PREFIX}${item.file_path}`,
+      file_name: item.file_name,
+      file_path: item.file_path,
+      text: item.file_name,
+      match_type: 'file_name' as SourceType,
+      modified_time: item.modified_time,
+    } as SearchResult))
+  }
+
+  /** 构造 Everything 搜索范围：选中的索引目录（或全部）+ 启用的文件搜索目录 */
+  private getEverythingSearchScopes(dirIds?: string[]): EverythingSearchScope[] {
+    const scopes: EverythingSearchScope[] = []
+    const indexRows = dirIds && dirIds.length > 0
+      ? this.db.prepare(
+          `SELECT dir_path, recursive, file_extensions FROM kms_index_dirs WHERE id IN (${dirIds.map(() => '?').join(',')})`
+        ).all(...dirIds) as any[]
+      : this.db.prepare('SELECT dir_path, recursive, file_extensions FROM kms_index_dirs').all() as any[]
+
+    for (const row of indexRows) {
+      if (!row.dir_path || row.dir_path === KMSService.MANUAL_SOURCE_PATH) continue
+      if (!path.isAbsolute(row.dir_path)) continue
+      scopes.push({
+        dirPath: row.dir_path,
+        recursive: row.recursive !== 0,
+        extensions: new Set(parseExtensionList(row.file_extensions)),
+        allowedExtensions: SUPPORTED_EXTENSIONS,
+      })
+    }
+
+    const searchRows = this.db.prepare(
+      'SELECT dir_path, recursive, file_extensions FROM kms_search_dirs WHERE enabled = 1'
+    ).all() as any[]
+    for (const row of searchRows) {
+      if (!row.dir_path || !path.isAbsolute(row.dir_path)) continue
+      scopes.push({
+        dirPath: row.dir_path,
+        recursive: row.recursive !== 0,
+        extensions: new Set(parseExtensionList(row.file_extensions)),
+      })
+    }
+    return scopes
+  }
+
+  /** 匹配结果所属范围目录（取最长前缀），并返回相对路径（已归一化为小写） */
+  private matchEverythingScope(
+    scopes: EverythingSearchScope[],
+    normalizedFilePath: string,
+  ): { scope: EverythingSearchScope; relativePath: string } | null {
+    let best: { scope: EverythingSearchScope; relativePath: string } | null = null
+    for (const scope of scopes) {
+      const dir = normalizePathForCompare(scope.dirPath)
+      if (!normalizedFilePath.startsWith(dir + '\\')) continue
+      const relativePath = normalizedFilePath.slice(dir.length + 1)
+      if (!best || relativePath.length < best.relativePath.length) {
+        best = { scope, relativePath }
+      }
+    }
+    return best
+  }
+
+  private isEverythingExtensionAllowed(scope: EverythingSearchScope, ext: string): boolean {
+    if (scope.allowedExtensions && !scope.allowedExtensions.has(ext)) return false
+    if (scope.extensions.size > 0 && !scope.extensions.has(ext)) return false
+    return true
+  }
+
+  /** 与内置扫描一致的跳过目录/临时文件过滤 */
+  private isSkippedRelativePath(relativePath: string): boolean {
+    const parts = relativePath.split('\\')
+    const fileName = parts[parts.length - 1] || ''
+    if (fileName.startsWith('~$') || fileName.startsWith('.~')) return true
+    for (let i = 0; i < parts.length - 1; i++) {
+      const segment = parts[i]
+      if (!segment) continue
+      if (CRAWLER_SKIP_DIRS.has(segment) || segment.startsWith('.')) return true
+    }
+    return false
+  }
+
+  private getAiExcludedDirPaths(): string[] {
+    return (this.db.prepare(
+      'SELECT dir_path FROM kms_index_dirs WHERE COALESCE(ai_exclusion_level, 0) >= 2'
+    ).all() as any[]).map(row => normalizePathForCompare(row.dir_path))
+  }
+
+  private getAiExcludedFilePaths(): Set<string> {
+    return new Set((this.db.prepare(
+      'SELECT file_path FROM kms_files WHERE COALESCE(ai_exclusion_level, 0) >= 2'
+    ).all() as any[]).map(row => normalizePathForCompare(row.file_path)))
+  }
+
+  private getCollectionFilePathSet(collectionIds: string[]): Set<string> {
+    const rows = this.db.prepare(`
+      SELECT f.file_path FROM kms_files f
+      JOIN kms_file_collections c ON c.file_id = f.id
+      WHERE c.collection_id IN (${collectionIds.map(() => '?').join(',')})
+    `).all(...collectionIds) as any[]
+    return new Set(rows.map(row => normalizePathForCompare(row.file_path)))
+  }
+
+  /** Everything 连接检测（设置页使用） */
+  async testEverythingConnection(config?: { host?: string; port?: number }): Promise<EverythingTestResult> {
+    return KMSEverythingService.getInstance().testConnection(config)
+  }
+
   private async getQueryEmbeddingCached(query: string, config: KmsEmbeddingConfig): Promise<Float32Array | undefined> {
     const normalized = query.trim().toLowerCase()
     const cacheKey = `${config.providerId}\u0000${config.modelName}\u0000${normalized}`
@@ -1228,26 +1451,37 @@ class KMSService {
   }
 
   async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {
+    // Everything 搜索结果可能不在索引库中，file_id 携带真实路径
+    if (fileId.startsWith(EVERYTHING_FILE_ID_PREFIX)) {
+      const filePath = fileId.slice(EVERYTHING_FILE_ID_PREFIX.length)
+      const indexed = this.db.prepare('SELECT id FROM kms_files WHERE file_path = ?').get(filePath) as any
+      if (indexed) return KMSFileReaderService.getInstance().getFileFullContent(indexed.id)
+      return this.readFileContentByPath(filePath)
+    }
     try {
       return await KMSFileReaderService.getInstance().getFileFullContent(fileId)
     } catch (err) {
       // 文件搜索目录的文件不在 kms_files 索引管线中，直接从磁盘读取（供预览）
       const row = this.db.prepare('SELECT * FROM kms_search_dir_files WHERE id = ?').get(fileId) as any
       if (!row) throw err
-      const MAX_CONTENT_CHARS = 5_000_000
-      let content = ''
-      try {
-        content = await fsp.readFile(row.file_path, 'utf8')
-      } catch {
-        content = ''
-      }
-      const truncated = content.length > MAX_CONTENT_CHARS
-      return {
-        content: truncated ? content.substring(0, MAX_CONTENT_CHARS) : content,
-        fileName: row.file_name,
-        filePath: row.file_path,
-        truncated,
-      }
+      return this.readFileContentByPath(row.file_path, row.file_name)
+    }
+  }
+
+  private async readFileContentByPath(filePath: string, fileName?: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {
+    const MAX_CONTENT_CHARS = 5_000_000
+    let content = ''
+    try {
+      content = await fsp.readFile(filePath, 'utf8')
+    } catch {
+      content = ''
+    }
+    const truncated = content.length > MAX_CONTENT_CHARS
+    return {
+      content: truncated ? content.substring(0, MAX_CONTENT_CHARS) : content,
+      fileName: fileName || path.basename(filePath),
+      filePath,
+      truncated,
     }
   }
 

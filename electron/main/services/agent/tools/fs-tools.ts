@@ -114,13 +114,13 @@ export const fileDeleteTool: ToolDefinition = {
   id: 'file_delete',
   name: 'file_delete',
   title: '删除文件/文件夹',
-  summary: '删除文件或文件夹（移入回收站，可恢复），支持一次传多个路径与 * ? ** 通配符批量删除。',
-  description: `Delete files or directories by moving them to the system trash (recoverable).
+  summary: 'Delete files or folders; supports multiple paths and * ? ** wildcards in one call.',
+  description: `Delete files or directories. On systems with a trash they are moved there (recoverable); otherwise they are permanently deleted.
 
 - path or paths: several targets may be passed at once; each may contain the wildcards * ? ** and every real match is deleted.
 - recursive=true is required to delete a non-empty directory; without it you get an error rather than a silent delete.
 - Drive roots, filesystem roots, and the workspace root (or any ancestor of it) are refused.
-- Targets outside the workspace need confirmation. Deletion is irreversible, so the confirmation cannot be covered by "always allow".`,
+- Targets outside the workspace need confirmation. Deletion may be permanent, so the confirmation cannot be covered by "always allow".`,
   parameters: {
     type: 'object',
     properties: {
@@ -155,7 +155,7 @@ export const fileCopyTool: ToolDefinition = {
   id: 'file_copy',
   name: 'file_copy',
   title: '复制文件/文件夹',
-  summary: '复制文件或目录到目标位置（目录递归复制）。用于把工作区里的成品交付到用户指定目录（工作区外会弹一次授权）。',
+  summary: 'Copy a file or directory to a destination (directories recursively); use it to deliver finished artifacts from the workspace to the user\'s folder (outside-workspace copies need one confirmation).',
   description: `Copy a file or a directory to a destination — use it to deliver a finished artifact from the workspace to the user's folder.
 
 - source / destination: absolute, or relative to the workspace.
@@ -203,10 +203,10 @@ export const reportGeneratedFilesTool: ToolDefinition = {
   id: 'report_generated_files',
   name: 'report_generated_files',
   title: '展示生成文件',
-  summary: '声明本次任务的成品文件路径，前端会在消息下方展示可预览卡片。',
-  description: `Declare the deliverable files this task produced (Word / Excel / PowerPoint / PDF / images) so the user gets preview cards.
+  summary: 'Declare deliverable files so the UI can render preview cards below the reply; only when files exist.',
+  description: `Declare the user-facing files this task produced (Word / Excel / PowerPoint / PDF / images) so the user gets preview cards. Skip it when there are none.
 
-Paths that do not exist, are not files, or have an extension outside the preview whitelist are silently dropped.`,
+Paths that do not exist, are not files, or have an extension outside the preview whitelist are filtered out and listed in the result.`,
   parameters: {
     type: 'object',
     properties: {

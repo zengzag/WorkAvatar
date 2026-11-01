@@ -17,6 +17,8 @@ export const EMPLOYEE_CHANNELS = {
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_DELETE_ALL: 'conversation:delete-all',
   CONVERSATION_SEARCH_GLOBAL: 'conversation:search-global',
+  /** 主进程 → 所有窗口：会话创建 / 列表相关字段变更 / 删除（任务列表实时同步） */
+  CONVERSATION_CHANGED: 'conversation:changed',
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
@@ -68,6 +70,8 @@ export interface EmployeeUpdateParams {
   avatar_type?: string
   avatar_icon?: string
   avatar_color?: string
+  /** 上传的头像图片（data URL） */
+  avatar_image?: string
   memory_enabled?: boolean
   /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化） */
   delegation_json?: string
@@ -120,8 +124,10 @@ export interface ConversationCreateParams {
   skill_id?: string
   title?: string
   minimal_mode?: boolean
-  /** 复用指定工作区路径（分支任务），传入时不新建任务目录 */
+  /** 复用指定工作区路径（分支任务），传入时不新建任务目录；workspace_mode='custom' 时表示用户指定目录 */
   workspace_path?: string
+  /** 工作区类型：custom=用户指定目录（新建任务时选择），缺省为 default（自动创建任务目录） */
+  workspace_mode?: 'default' | 'custom'
 }
 
 export interface ConversationSearchParams {
@@ -207,8 +213,10 @@ export interface EmployeeMemoryListParams {
 export interface EmployeeMemoryCreateParams {
   employee_id?: string
   scope?: MemoryScope
-  key: string
-  topic: string
+  /** 缺省时服务端按内容生成同桶唯一的标识符 */
+  key?: string
+  /** 缺省时落到默认分类（事实知识） */
+  topic?: string
   content: string
   is_pinned?: boolean
   source?: 'auto' | 'manual'

@@ -102,7 +102,7 @@ export class ToolDispatcher {
     }
   }
 
-  /** 格式化工具未捕获异常：包含工具名、参数摘要、错误信息与堆栈首行 */
+  /** 格式化工具未捕获异常：包含工具名、参数摘要、错误信息与非 node:internal 的前 3 个栈帧 */
   private formatUncaughtError(toolName: string, params: Record<string, any>, error: any): string {
     const msg = error?.message || String(error)
     const parts: string[] = [`工具 "${toolName}" 抛出未捕获异常: ${msg}`]
@@ -129,7 +129,7 @@ export class ToolDispatcher {
     }
     if (error?.stack) {
       const stackLines = error.stack.split('\n')
-      // 取堆栈中第一处工具相关位置（含 .tool.ts 或工具名），最多 3 行
+      // 取非 node:internal 的栈帧，最多 3 行
       const relevant = stackLines
         .slice(1, 6)
         .map((l: string) => l.trim())

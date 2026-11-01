@@ -1,4 +1,5 @@
 import type { ToolDefinition } from './types'
+import * as fs from 'fs'
 import * as os from 'os'
 import { IS_WINDOWS, runCommandPlatform, truncateOutput } from './exec-shared'
 import { getWorkspacePath } from './fs-shared'
@@ -24,13 +25,13 @@ export const envProbeTool: ToolDefinition = {
   id: 'env_probe',
   name: 'env_probe',
   title: '环境探测',
-  summary: '一次性探测操作系统、Shell、工作目录与常见命令行工具（node/python/git 等）是否可用及版本。',
-  description: `探测当前执行环境，返回操作系统、Shell 类型、工作目录，以及常用命令行工具（node、npm、pnpm、python、pip、uv、git、rg、docker、go、cargo、java、gcc、make 等）是否安装及版本。
+  summary: 'Probe the OS, shell, workspace, and availability/version of common command-line tools (node, python, git, etc.).',
+  description: `Probe the execution environment and return the OS, shell type, working directory, and whether common command-line tools are installed (node, npm, pnpm, python, pip, uv, git, rg, docker, go, cargo, java, gcc, make).
 
-使用场景：
-- 执行任何外部命令前先调用一次，避免用错运行时或反复盲试命令。
-- 需要安装依赖、运行脚本、构建项目时，据此选择本机已有的工具链。
-- 无参数；结果只读，不会修改任何文件。`,
+When to use:
+- Once before running external commands, to avoid the wrong runtime or repeated blind attempts.
+- Before installing dependencies, running scripts, or building a project, to choose the available toolchain.
+- Takes no arguments, is read-only, and modifies no files.`,
   parameters: {
     type: 'object',
     properties: {},
@@ -41,7 +42,10 @@ export const envProbeTool: ToolDefinition = {
       ? 'PowerShell（优先 pwsh 7，回退 powershell.exe 5.1）'
       : '/bin/bash'
     // 无工作区上下文时用空目录当可写边界，避免把应用目录当沙箱（沙箱会改目录 ACL）
-    const sandboxRoot = getWorkspacePath() || emptyWorkspaceRoot()
+    const workspacePath = getWorkspacePath()
+    // 工作区懒创建：任务未写过文件时目录还不存在，spawn 会因 cwd 缺失失败，探测改用临时目录兜底
+    const workspaceMissing = !!workspacePath && !fs.existsSync(workspacePath)
+    const sandboxRoot = workspacePath && !workspaceMissing ? workspacePath : emptyWorkspaceRoot()
 
     const lines: string[] = [
       '# 环境探测',
@@ -51,6 +55,9 @@ export const envProbeTool: ToolDefinition = {
       `- 路径分隔符: ${IS_WINDOWS ? '\\' : '/'}；换行: ${IS_WINDOWS ? 'CRLF' : 'LF'}`,
       `- 宿主运行时: Node.js ${process.version}（Electron 内置，非系统 Node）`,
     ]
+    if (workspaceMissing) {
+      lines.push(`- 注意: 任务工作区 ${workspacePath} 尚未创建（首次写入文件时自动创建），本次探测在临时目录执行`)
+    }
 
     const probe = await runCommandPlatform(buildProbeScript(), {
       cwd: sandboxRoot,

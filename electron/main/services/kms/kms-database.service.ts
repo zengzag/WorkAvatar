@@ -2,7 +2,6 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
 import { isMainThread } from 'worker_threads'
-import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
 import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
@@ -126,7 +125,7 @@ class KMSDatabaseService {
 
   /**
    * 启动时自动清理过期数据，防止数据库日益庞大。
-   * - kms_access_log：删除 30 天前记录（访问日志仅用于近 30 天冷热数据判定）
+   * - kms_access_log：删除 90 天前记录（访问日志用于 30 天晋升与 90 天降级判定）
    * - kms_keyword_stats：删除 90 天未搜索且 search_count < 3 的低频关键词
    *
    * 注意：此方法在构造函数中调用，此时 KMSDatabaseService.instance 尚未赋值，
@@ -209,6 +208,7 @@ class KMSDatabaseService {
    * 无法识别 asar 虚拟路径，需要转换为 app.asar.unpacked 的真实文件系统路径。
    */
   private loadSqliteVec(db: Database.Database): void {
+    const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec')
     let extPath = sqliteVec.getLoadablePath()
     if (extPath.includes('app.asar')) {
       extPath = extPath.replace('app.asar', 'app.asar.unpacked')
@@ -444,7 +444,7 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_file_collections_file ON kms_file_collections(file_id);
       CREATE INDEX IF NOT EXISTS idx_kms_file_collections_collection ON kms_file_collections(collection_id);
 
-      -- 合集级摘要表（对应原 KB 的 kb_global_summaries）
+      -- 合集级摘要表
       -- embedding/dimension/embedding_model 存储摘要向量，用于语义匹配
       CREATE TABLE IF NOT EXISTS kms_collection_summaries (
         id TEXT PRIMARY KEY,
@@ -1002,7 +1002,7 @@ class KMSDatabaseService {
       logger.warn('清理游离文件失败:', err?.message || err)
     }
 
-    // 3.5 清理 kms_access_log 旧记录：访问日志只用于近 30 天冷热数据判定，
+    // 3.5 清理 kms_access_log 旧记录：访问日志用于冷热判定（晋升窗口 30 天、降级窗口 90 天），
     // 90 天前的记录无业务价值且会持续膨胀主库体积
     let cleanedAccessLog = 0
     try {

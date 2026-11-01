@@ -229,7 +229,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
         const config = await llmClient.getProviderConfig(provider_id)
         if (!config) continue
 
-        // 与 employee-agent.service.ts 第 138-140 行相同的解析逻辑
+        // 与 employee-agent.service.ts 的 getModelConfig 解析逻辑一致（按 id → model 匹配）
         const modelIdentifier = model_id?.trim() || undefined
         const modelConfig = this.getModelConfig(config, modelIdentifier)
         const resolvedModelName = modelConfig?.model || modelIdentifier || config.model

@@ -53,6 +53,7 @@ vi.mock('../../../electron/main/services/agent/llm/pi-provider-factory', () => (
 }))
 
 import EmployeeMemoryService from '../../../electron/main/services/employee-memory.service'
+import { measureMemoryChars } from '../../../electron/shared/memory-metrics'
 
 beforeEach(() => {
   dbState.db = createDb()
@@ -94,6 +95,17 @@ describe('revision / create', () => {
     )
     expect(created.employee_id).toBeNull()
     expect(created.scope).toBe('global')
+  })
+
+  it('缺省 key/topic：按内容生成唯一 key 并使用默认分类', () => {
+    const svc = EmployeeMemoryService.getInstance()
+    const a = svc.createMemory({ employee_id: 'e1', content: '用户偏好简洁回复' })
+    const b = svc.createMemory({ employee_id: 'e1', content: '用户偏好简洁回复' })
+
+    expect(a.key).toBe('用户偏好简洁回复')
+    expect(a.topic).toBe('事实知识')
+    // 同桶内 key 唯一，避免按 key 更新/删除时命中多条
+    expect(b.key).not.toBe(a.key)
   })
 
   it('超长 content 在标点处截断（>80 位置有句号）', () => {
@@ -204,15 +216,23 @@ describe('检索', () => {
 })
 
 describe('统计 / 对话摘要', () => {
-  it('getMemoryStats 汇总数量/字符/置顶', () => {
+  it('getMemoryStats 汇总数量/容量（字符当量）/置顶', () => {
     const svc = EmployeeMemoryService.getInstance()
     svc.createMemory(base({ content: 'abc', is_pinned: true }))
     svc.createMemory(base({ key: 'k2', content: 'de' }))
+    svc.createMemory(base({ key: 'k3', content: '中文记忆' }))
 
     const stats = svc.getMemoryStats({ scope: 'employee', employeeId: 'e1' })
-    expect(stats.count).toBe(2)
-    expect(stats.totalChars).toBe(5)
+    expect(stats.count).toBe(3)
+    // 英文 1 字符计 0.5，中文 1 字计 1：(3+2)*0.5 + 4 = 6.5 → 7
+    expect(stats.totalChars).toBe(7)
     expect(stats.pinnedCount).toBe(1)
+  })
+
+  it('measureMemoryChars：CJK 计 1，其余计 0.5', () => {
+    expect(measureMemoryChars('中文')).toBe(2)
+    expect(measureMemoryChars('abcd')).toBe(2)
+    expect(measureMemoryChars('中a')).toBe(1.5)
   })
 
   it('needsConsolidation：字符量超阈值返回 true', () => {

@@ -18,6 +18,7 @@ import { pathToAppFileUrl } from '../../utils/file-url'
 import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 import { isCodePreviewPath, MAX_CODE_PREVIEW_BYTES } from '../../utils/shiki'
 import CodePreview from './CodePreview'
+import ImagePreview, { isImagePreviewPath } from './ImagePreview'
 
 const FileViewer = lazy(() => import('@file-viewer/react-full'))
 
@@ -76,6 +77,7 @@ const FilePreview: React.FC<FilePreviewProps> = ({ file }) => {
     () => isCodePreviewPath(file.path) && file.size <= MAX_CODE_PREVIEW_BYTES,
     [file.path, file.size],
   )
+  const imagePreview = useMemo(() => !codePreview && isImagePreviewPath(file.ext), [codePreview, file.ext])
   const viewerOptions = useMemo(() => ({
     theme: previewTheme,
     // 侧边栏预览聚焦"看"：隐藏顶部工具栏（搜索/缩放/主题），主题切换与系统打开由右下角按钮提供
@@ -146,6 +148,8 @@ const FilePreview: React.FC<FilePreviewProps> = ({ file }) => {
     >
       {codePreview ? (
         <CodePreview file={file} fileUrl={fileUrl} dark={previewTheme === 'dark'} />
+      ) : imagePreview ? (
+        <ImagePreview fileUrl={fileUrl} fileName={file.name} onOpenWithSystem={openWithSystem} />
       ) : (
         <Suspense
           fallback={
@@ -159,12 +163,14 @@ const FilePreview: React.FC<FilePreviewProps> = ({ file }) => {
       )}
       <div style={{ position: 'absolute', bottom: 12, right: 12, zIndex: 10 }}>
         <Space>
-          <Button
-            size="small"
-            icon={previewTheme === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-            onClick={() => setPreviewTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-            title={t('workbench.togglePreviewTheme')}
-          />
+          {!imagePreview && (
+            <Button
+              size="small"
+              icon={previewTheme === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+              onClick={() => setPreviewTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+              title={t('workbench.togglePreviewTheme')}
+            />
+          )}
           <Button
             size="small"
             icon={<ExportOutlined />}

@@ -90,8 +90,8 @@ export interface AgentRunOptions {
   /** 稳定锚点上下文（合成 user 消息）：置于 system 之后、history 之前，不参与压缩 */
   contextHead?: Message[]
   /**
-   * 易变任务上下文（记忆/知识库范围）：作为本次 run 首次请求末尾的追加文本注入，
-   * 不进入 history，也不写入 pi 上下文。后续工具轮次不重复注入，减少未缓存 token；
+   * 易变任务上下文（记忆/知识库范围）：作为本次 run 首次请求及 ask_user 返回后请求的末尾追加文本注入，
+   * 不进入 history，也不写入 pi 上下文。其余工具轮次不重复注入，减少未缓存 token；
    * 工作区/任务时间由稳定上下文头承载。
    */
   requestTail?: string

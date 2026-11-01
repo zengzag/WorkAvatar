@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
+import type { SecretaryCharacterId } from '../shared/channels/secretary'
 import type {
   WorkspaceOpenInExplorerParams,
   WorkspaceListFilesParams,
@@ -51,6 +52,7 @@ import type {
   KMSUpdateDirParams,
   KMSAddSearchDirParams,
   KMSUpdateSearchDirParams,
+  KMSTestEverythingParams,
   KMSSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
@@ -81,6 +83,7 @@ import type {
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
+  PluginSettingsInfo,
   ShellBgKillResult,
   ShellBgTaskItem,
   SubAgentProfile,
@@ -174,6 +177,12 @@ const electronAPI = {
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
     searchGlobal: (params: ConversationSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, params),
+    /** 其他窗口创建的会话或列表相关字段变更（任务列表实时同步） */
+    onChanged: (callback: (data: { id: string; action: 'create' | 'update' | 'delete' | 'delete-all' }) => void) => {
+      const handler = (_event: any, data: { id: string; action: 'create' | 'update' | 'delete' | 'delete-all' }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.CONVERSATION_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CONVERSATION_CHANGED, handler)
+    },
   },
 
   attachment: {
@@ -190,22 +199,34 @@ const electronAPI = {
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
     chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
+    /** 原地重试：重新发起失败的那一次 LLM 请求 */
+    resumeEmployeeChatStream: (conversationId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_RESUME, conversationId),
     compactConversation: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, params),
     getContextStats: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
     listActiveSessions: (employeeId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_LIST_ACTIVE_SESSIONS, employeeId),
+    /** 接入其他窗口发起的运行中会话（打开小秘书任务时同步接收流式事件） */
+    attachSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ATTACH_SESSION, sessionId),
+    /** 运行中会话是否已有其他窗口接入（发起方据此让出收尾落库） */
+    isSessionAttached: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_SESSION_ATTACHED, sessionId) as Promise<boolean>,
+    /** 其他窗口发起了会话：已打开该任务的窗口据此接入并同步消息 */
+    onSessionStarted: (callback: (data: { sessionId: string; employeeId?: string; conversationId?: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; employeeId?: string; conversationId?: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.LLM_SESSION_STARTED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_SESSION_STARTED, handler)
+    },
     onChunk: (callback: (data: { sessionId: string; chunk?: string; chunks?: string[] }) => void) => {
       const handler = (_event: any, data: { sessionId: string; chunk?: string; chunks?: string[] }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
-    onDone: (callback: (data: { sessionId: string; metadata?: any }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; metadata?: any }) => callback(data)
+    onDone: (callback: (data: { sessionId: string; metadata?: any; attachedElsewhere?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; metadata?: any; attachedElsewhere?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_DONE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_DONE, handler)
     },
-    onError: (callback: (data: { sessionId: string; error: string }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; error: string }) => callback(data)
+    onError: (callback: (data: { sessionId: string; error: string; attachedElsewhere?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; error: string; attachedElsewhere?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
     },
@@ -233,6 +254,12 @@ const electronAPI = {
       const handler = (_event: any, data: { sessionId: string; toolCallId: string; name: string; progress: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
+    },
+    /** 每次模型请求开始：渲染端据此记录失败重试的段回滚边界 */
+    onIterationStart: (callback: (data: { sessionId: string; iteration: number }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; iteration: number }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_ITERATION_START, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_ITERATION_START, handler)
     },
     onRunEvent: (callback: (data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => void) => {
       const handler = (_event: any, data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => callback(data)
@@ -309,6 +336,61 @@ const electronAPI = {
     },
   },
 
+  // 小秘书浮窗：挂件窗与面板窗共用
+  secretary: {
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_GET_STATE),
+    showPanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SHOW_PANEL),
+    hidePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_HIDE_PANEL),
+    togglePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_TOGGLE_PANEL),
+    setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; hotkey: string; employeeId: string; character: SecretaryCharacterId }>) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SET_SETTINGS, patch),
+    /** 挂件拖动开始：主进程记录光标与窗口起点，后续按系统光标坐标移动 */
+    dragStart: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_START),
+    /** 挂件拖动中：主进程自己读取光标屏幕坐标，不依赖渲染端的 screenX/Y */
+    movePetTo: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET),
+    /** 拖动结束：主进程吸附到边缘并持久化位置 */
+    dragEnd: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_END),
+    /** 面板内容高度变化，主进程同步窗口高度 */
+    setPanelHeight: (height: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_HEIGHT, height),
+    /** 面板左右边缘拖拽只调整宽度；anchor 为保持不动的那条边，高度仍由内容上报决定 */
+    setPanelSize: (size: { width?: number; anchor?: 'left' | 'right' }) =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, size),
+    /** 挂件窗口透明区域的鼠标穿透开关 */
+    setIgnoreMouse: (ignore: boolean) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_IGNORE_MOUSE, ignore),
+    quit: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_QUIT),
+    /** 挂件右键：主进程弹原生菜单 */
+    showContextMenu: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_CONTEXT_MENU),
+    /** 主进程请求主窗口打开「设置 → 小秘书」 */
+    onOpenSettings: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_OPEN_SETTINGS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_OPEN_SETTINGS, handler)
+    },
+    /** 打开主窗口并定位到任务详情 */
+    openTask: (payload: { employeeId: string; conversationId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_OPEN_TASK, payload),
+    onOpenTask: (callback: (payload: { employeeId: string; conversationId: string }) => void) => {
+      const handler = (_event: any, payload: { employeeId: string; conversationId: string }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_OPEN_TASK, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_OPEN_TASK, handler)
+    },
+    onPanelVisibility: (callback: (open: boolean) => void) => {
+      const handler = (_event: any, open: boolean) => callback(!!open)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, handler)
+    },
+    onSettingsChanged: (callback: (settings: { enabled: boolean; size: number; opacity: number; hotkey: string; employeeId: string; character: SecretaryCharacterId }) => void) => {
+      const handler = (_event: any, settings: any) => callback(settings)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, handler)
+    },
+    onSideChanged: (callback: (side: 'left' | 'right') => void) => {
+      const handler = (_event: any, side: 'left' | 'right') => callback(side)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
+    },
+  },
+
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getCategories: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_CATEGORIES),
@@ -342,6 +424,12 @@ const electronAPI = {
     assignToEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, params),
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
     toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
+    // 技能安装/卸载/员工技能启停变更通知，返回取消订阅函数
+    onChanged: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.SKILL_REGISTRY_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SKILL_REGISTRY_CHANGED, handler)
+    },
   },
 
   runtimeEnv: {
@@ -388,6 +476,7 @@ const electronAPI = {
     updateSearchDir: (params: KMSUpdateSearchDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_SEARCH_DIR, params),
     deleteSearchDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_SEARCH_DIR, id),
     refreshSearchDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REFRESH_SEARCH_DIR, id),
+    testEverything: (params?: KMSTestEverythingParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_TEST_EVERYTHING, params || {}),
     getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
     getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
@@ -572,6 +661,10 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_COMMANDS) as Promise<Array<{ pluginId: string; id: string; title: string }>>,
     resolveFileOwner: (extension: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
+    getSettings: (pluginId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_GET_SETTINGS, { pluginId }) as Promise<PluginSettingsInfo>,
+    setSettings: (pluginId: string, values: Record<string, unknown>) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_SET_SETTINGS, { pluginId, values }) as Promise<PluginSettingsInfo>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
   },
 

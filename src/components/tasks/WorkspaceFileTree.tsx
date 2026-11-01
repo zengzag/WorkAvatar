@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { WorkspaceFileEntry } from '../../../electron/shared/ipc-channels'
 import { useTaskPanelStore } from '../../stores/task-panel.store'
 import { getFileColor, getFileIcon } from '../workbench/FilePreview'
+import WorkspaceEntryMenu from './WorkspaceEntryMenu'
 
 const { Text } = Typography
 
@@ -33,17 +34,19 @@ const FileRow: React.FC<{
   const [hovered, setHovered] = useState(false)
   const IconComp = getFileIcon(entry.ext)
   return (
-    <div
-      onClick={() => onOpenFile(entry)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{ ...rowStyle(hovered, token), paddingLeft: 10 + depth * INDENT }}
-    >
-      <IconComp style={{ fontSize: 13, color: getFileColor(entry.ext), flexShrink: 0 }} />
-      <Text style={{ fontSize: 12.5, minWidth: 0, flex: 1 }} ellipsis={{ tooltip: entry.path }}>
-        {entry.name}
-      </Text>
-    </div>
+    <WorkspaceEntryMenu path={entry.path} onPreview={() => onOpenFile(entry)}>
+      <div
+        onClick={() => onOpenFile(entry)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{ ...rowStyle(hovered, token), paddingLeft: 10 + depth * INDENT }}
+      >
+        <IconComp style={{ fontSize: 13, color: getFileColor(entry.ext), flexShrink: 0 }} />
+        <Text style={{ fontSize: 12.5, minWidth: 0, flex: 1 }} ellipsis={{ tooltip: entry.path }}>
+          {entry.name}
+        </Text>
+      </div>
+    </WorkspaceEntryMenu>
   )
 }
 
@@ -59,20 +62,22 @@ const DirectoryNode: React.FC<{
   const [hovered, setHovered] = useState(false)
   return (
     <>
-      <div
-        onClick={() => toggleDirExpanded(entry.path)}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ ...rowStyle(hovered, token), paddingLeft: 6 + depth * INDENT }}
-      >
-        {expanded
-          ? <DownOutlined style={{ fontSize: 9, color: token.colorTextTertiary, flexShrink: 0 }} />
-          : <RightOutlined style={{ fontSize: 9, color: token.colorTextTertiary, flexShrink: 0 }} />}
-        <FolderOutlined style={{ fontSize: 13, color: token.colorWarning, flexShrink: 0 }} />
-        <Text style={{ fontSize: 12.5, minWidth: 0, flex: 1 }} ellipsis={{ tooltip: entry.path }}>
-          {entry.name}
-        </Text>
-      </div>
+      <WorkspaceEntryMenu path={entry.path} isDirectory>
+        <div
+          onClick={() => toggleDirExpanded(entry.path)}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          style={{ ...rowStyle(hovered, token), paddingLeft: 6 + depth * INDENT }}
+        >
+          {expanded
+            ? <DownOutlined style={{ fontSize: 9, color: token.colorTextTertiary, flexShrink: 0 }} />
+            : <RightOutlined style={{ fontSize: 9, color: token.colorTextTertiary, flexShrink: 0 }} />}
+          <FolderOutlined style={{ fontSize: 13, color: token.colorWarning, flexShrink: 0 }} />
+          <Text style={{ fontSize: 12.5, minWidth: 0, flex: 1 }} ellipsis={{ tooltip: entry.path }}>
+            {entry.name}
+          </Text>
+        </div>
+      </WorkspaceEntryMenu>
       {expanded && (
         <DirectoryLevel
           dirPath={entry.path}

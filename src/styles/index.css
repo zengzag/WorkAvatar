@@ -9,19 +9,19 @@
   --font-size-sm: 12px;
   --font-size-lg: 15px;
   --font-size-xl: 18px;
-  --bg-primary: #f7f7f8;
+  --bg-primary: #f3f6fb;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #fafafa;
-  --border-color: #ececec;
-  --text-primary: rgba(0, 0, 0, 0.88);
-  --text-secondary: rgba(0, 0, 0, 0.65);
-  --text-tertiary: rgba(0, 0, 0, 0.45);
-  --shadow-color: rgba(0, 0, 0, 0.04);
+  --bg-tertiary: #f7f9fd;
+  --border-color: #dfe6f0;
+  --text-primary: #101828;
+  --text-secondary: #4a5568;
+  --text-tertiary: #667085;
+  --shadow-color: rgba(16, 24, 40, 0.04);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
   --xy-controls-button-background-color-default: #ffffff;
-  --xy-controls-button-background-color-hover-default: #f5f5f5;
-  --xy-controls-button-border-color-default: #e8e8e8;
+  --xy-controls-button-background-color-hover-default: #f7f9fd;
+  --xy-controls-button-border-color-default: #dfe6f0;
   --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
   --xy-minimap-background-color-default: #ffffff;
   --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
@@ -30,13 +30,13 @@
 }
 
 html.dark {
-  --bg-primary: #141414;
-  --bg-secondary: #1a1a1a;
-  --bg-tertiary: #1f1f1f;
-  --border-color: #2a2a2a;
-  --text-primary: rgba(255, 255, 255, 0.88);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-tertiary: rgba(255, 255, 255, 0.45);
+  --bg-primary: #07090d;
+  --bg-secondary: #0f1218;
+  --bg-tertiary: #141925;
+  --border-color: #2a3342;
+  --text-primary: #e9eef8;
+  --text-secondary: #a7b1c2;
+  --text-tertiary: #7e8a9d;
   --shadow-color: rgba(0, 0, 0, 0.3);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
@@ -51,7 +51,7 @@ html.dark {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: var(--font-size-base);
@@ -61,12 +61,18 @@ body {
   background-color: var(--bg-primary);
 }
 
-/* 应用是固定视口壳层：只给 #root 设 overflow:hidden 是不够的 ——
-   antd 的 Tooltip / Dropdown 等浮层是 portal 到 body 上的，
-   一旦浮层探出视口，被撑大的就是文档本身，于是凭空冒出滚动条
-   （#root 用的是 100vw，还会连带把横向滚动条也带出来）。
-   在 body 这层同样收口即可（浮层本身由 rc-trigger 自动贴边，不会被裁）。 */
-html,
+/* 应用是固定视口壳层，根元素必须钉成"不可滚动的视口大小"：
+   antd 的 Tooltip / Dropdown 等浮层 portal 到 body 上并以绝对定位探出视口，
+   被撑大的是文档本身。此时只要有人调用 scrollIntoView / focus，
+   文档就会整体滚下去几十~几百像素，顶部标题栏（含窗口按钮）被顶出窗口上沿、只露半截；
+   而 overflow:hidden / clip 只是不显示滚动条，文档依旧是可滚动容器，拦不住程序化滚动。
+   把 html 固定到视口（固定定位的盒子不参与文档滚动溢出），文档才真正不可滚动。 */
+html {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
 body {
   overflow: hidden;
 }
@@ -218,22 +224,18 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
 }
 
-/* 快速创建输入框：抹掉 antd TextArea 自带聚焦样式 */
+/* 待办快速添加输入框：抹掉 antd TextArea 自带聚焦样式 */
 .quick-add-input::placeholder {
   color: var(--text-tertiary, rgba(0, 0, 0, 0.45));
 }
 
-.quick-add-input,
-.quick-add-input:hover,
-.quick-add-input:focus {
+.ant-input.quick-add-input,
+.ant-input.quick-add-input:hover,
+.ant-input.quick-add-input:focus {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
   outline: none !important;
-}
-
-.quick-add-input:focus {
-  outline: none;
 }
 
 .ant-input-textarea-focused.quick-add-input {
@@ -297,16 +299,6 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   overflow-y: auto;
 }
 
-/* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
-@keyframes nav-rec-pulse {
-  0% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.7); }
-  100% { opacity: 1; transform: scale(1); }
-}
-.nav-rec-indicator {
-  animation: nav-rec-pulse 1.2s ease-in-out infinite;
-}
-
 /* 通用光标闪烁：用于实时字幕、流式纪要生成等场景 */
 @keyframes blink {
   0%, 50% { opacity: 1; }
@@ -335,7 +327,7 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
 }
 
 /* 折叠态最新输出预览行：按容器宽度折行，容器仅一行高、滚动到底部，
-   因此只暴露最后一行——写满一行后整行清空跳到下一行（而非横向滚动） */
+   因此只暴露最后一行——写满一行后整行滑入下一行 */
 .dm-preview-line {
   white-space: normal;
   word-break: break-all;

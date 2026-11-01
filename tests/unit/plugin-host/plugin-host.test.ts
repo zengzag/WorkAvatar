@@ -217,6 +217,7 @@ function writePlugin(
     deps?: Record<string, string>
     ipc?: string[]
     employees?: Array<{ key: string; name: string; systemPrompt: string }>
+    settings?: Array<Record<string, unknown>>
     capabilities?: unknown[]
     cfg?: FixtureCfg
   } = {},
@@ -235,6 +236,7 @@ function writePlugin(
   if (opts.renderer) manifest.renderer = opts.renderer
   if (opts.deps) manifest.dependencies = opts.deps
   if (opts.employees) manifest.employees = opts.employees
+  if (opts.settings) manifest.settings = opts.settings
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2))
   fs.writeFileSync(path.join(dir, 'main.js'), makeMainJs(opts.cfg ?? {}))
   if (opts.locale) {
@@ -370,6 +372,35 @@ describe('扫描与校验（init / scanPluginInto）', () => {
     expect(renderer[0].id).toBe('good')
     expect(renderer[0].version).toBe('1.0.0')
     expect(renderer[0].locales['zh-CN']).toEqual({ hello: '你好' })
+  })
+
+  it('插件设置：扁平 locale key 在宿主侧解析，保存后回读生效', () => {
+    writePlugin('setp', {
+      locale: {
+        'zh-CN': { 'settings.greeting': '问候语', 'settings.greetingDesc': '问候前缀' },
+        'en-US': { 'settings.greeting': 'Greeting', 'settings.greetingDesc': 'Greeting prefix' },
+      },
+      settings: [
+        {
+          key: 'greeting',
+          type: 'string',
+          label: 'settings.greeting',
+          description: 'settings.greetingDesc',
+          default: 'Hello',
+        },
+      ],
+    })
+    const host = makeHost()
+    host.init()
+
+    const info = host.getPluginSettings('setp')
+    expect(info.fields[0].label).toBe('问候语')
+    expect(info.fields[0].description).toBe('问候前缀')
+    expect(info.values.greeting).toBe('Hello')
+
+    const saved = host.setPluginSettings('setp', { greeting: 'Hi' })
+    expect(saved.values.greeting).toBe('Hi')
+    expect(host.getPluginSettings('setp').values.greeting).toBe('Hi')
   })
 
   it('id 非法 / 保留字 / capabilities 非法 → invalid', () => {

@@ -169,6 +169,70 @@ const buildDelegationResultText = (seg: MessageSegment): string => {
   return `${seg.resultSummary || '(子员工已完成)'}${fileLines}`
 }
 
+/** 是否为 LLM 调用失败的提示段（兼容旧数据里按 id 约定生成的错误段） */
+export const isErrorNoticeSegment = (seg: MessageSegment): boolean =>
+  seg.isErrorNotice === true || /_(start_)?err_\d+$/.test(seg.id)
+
+/**
+ * 每次模型请求开始时的段数量（内存态）：请求失败后据此回滚这次请求的残缺输出。
+ * key 为助手消息 id，按消息隔离（续写/重试只影响自己）。
+ */
+const _llmRequestSegStart = new Map<string, number>()
+
+export const markLlmRequestStart = (msgId: string, segCount: number): void => {
+  _llmRequestSegStart.set(msgId, segCount)
+}
+
+export const peekLlmRequestSegStart = (msgId: string): number | undefined => _llmRequestSegStart.get(msgId)
+
+export const clearLlmRequestSegStart = (msgId: string): void => {
+  _llmRequestSegStart.delete(msgId)
+}
+
+/**
+ * 重试前回滚失败请求的残缺输出：段裁剪到失败请求开始时，
+ * 正文按保留的 answer 段重算（content 是流式累加值，无法按段切分）。
+ */
+export const rollbackFailedAttempt = (
+  segments: MessageSegment[] = [],
+  segStart?: number,
+): { segments: MessageSegment[]; content: string } => {
+  const bounded = segStart !== undefined && segStart >= 0 && segStart <= segments.length
+  const cut = bounded ? (segStart as number) : segments.length
+  const head = segments.slice(0, cut)
+  // 失败请求期间到达的子任务卡属于仍在运行的委托：保留，否则其后续事件无处落位
+  const liveDelegations = segments.slice(cut).filter(s => s.type === 'delegation')
+  const kept = [...head, ...liveDelegations].filter(s => !isErrorNoticeSegment(s))
+  return {
+    segments: kept,
+    content: kept.filter(s => s.type === 'answer').map(s => s.content || '').join(''),
+  }
+}
+
+/**
+ * 原地续写的段 id 起始计数：新段 id 必须避开消息内已有段，
+ * 否则 React key 重复、折叠态会命中错段。
+ */
+export const nextStreamCounters = (msgId: string, segments: MessageSegment[] = []) => {
+  const counters = { segCounter: 0, toolCallCounter: 0, runCounter: 0, groupSeq: 0 }
+  const bump = (id: string | undefined, prefix: string, key: keyof typeof counters) => {
+    if (!id || !id.startsWith(prefix)) return
+    const n = Number(id.slice(prefix.length))
+    if (Number.isInteger(n) && n + 1 > counters[key]) counters[key] = n + 1
+  }
+  const walk = (list: MessageSegment[]) => {
+    for (const s of list) {
+      bump(s.id, `${msgId}_seg_`, 'segCounter')
+      bump(s.id, `${msgId}_tool_`, 'toolCallCounter')
+      bump(s.id, `${msgId}_run_`, 'runCounter')
+      bump(s.id, `grp_${msgId}_`, 'groupSeq')
+      if (s.subSegments?.length) walk(s.subSegments)
+    }
+  }
+  walk(segments)
+  return counters
+}
+
 export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
   id: string
   name: string

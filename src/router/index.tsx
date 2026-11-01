@@ -11,6 +11,9 @@ const CreationWizard = lazy(() => import('../pages/CreationWizard'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
 const Onboarding = lazy(() => import('../pages/Onboarding'))
+const SecretaryPetWindow = lazy(() => import('../components/secretary/PetWindow'))
+const SecretaryPanelWindow = lazy(() => import('../components/secretary/PanelWindow'))
+const SecretaryWindowLayout = lazy(() => import('../components/secretary/SecretaryWindowLayout'))
 
 const lazyElement = (node: ReactNode) => (
   <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }} />}>
@@ -78,6 +81,23 @@ export function buildRouter() {
         { path: 'kms', element: lazyElement(<KMSPage />) },
         ...pluginHostRoutes(),
       ],
+    },
+    // 小秘书浮窗：透明置顶窗口，挂件与面板各自一个路由
+    {
+      path: '/secretary/pet',
+      element: lazyElement(
+        <SecretaryWindowLayout>
+          <SecretaryPetWindow />
+        </SecretaryWindowLayout>
+      ),
+    },
+    {
+      path: '/secretary/panel',
+      element: lazyElement(
+        <SecretaryWindowLayout>
+          <SecretaryPanelWindow />
+        </SecretaryWindowLayout>
+      ),
     },
   ])
 }

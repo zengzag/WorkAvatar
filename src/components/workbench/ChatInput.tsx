@@ -1,8 +1,9 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, LeftOutlined, RightOutlined, MenuOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useMemo, useRef, useCallback, useState, useEffect, useLayoutEffect, memo } from 'react'
+import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
+import { getDirName } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import EmployeeAvatar from '../common/EmployeeAvatar'
@@ -12,55 +13,6 @@ const { Text } = Typography
 
 /** 模型选择的最大数量（对比模式上限） */
 const MAX_SELECTED_MODELS = 3
-
-let textMeasureCtx: CanvasRenderingContext2D | null = null
-/** 估算文本渲染宽度（用于员工 chip 单行布局计算） */
-const measureTextWidth = (text: string, fontPx: number): number => {
-  if (!textMeasureCtx) {
-    try { textMeasureCtx = document.createElement('canvas').getContext('2d') } catch { /* ignore */ }
-  }
-  if (!textMeasureCtx) return text.length * fontPx
-  textMeasureCtx.font = `${fontPx}px "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif`
-  return Math.ceil(textMeasureCtx.measureText(text).width)
-}
-
-/** 圆形图标按钮：高亮仅跟随鼠标悬停（禁用态永不高亮） */
-const HoverIconButton: React.FC<{
-  icon: React.ReactNode
-  title: string
-  size: number
-  token: any
-  disabled?: boolean
-  onClick?: () => void
-}> = ({ icon, title, size, token, disabled, onClick }) => {
-  const [hovered, setHovered] = useState(false)
-  // 按钮可能因翻页在悬停中被禁用（禁用元素不派发 mouseleave），此时需主动复位
-  useEffect(() => { if (disabled) setHovered(false) }, [disabled])
-  const active = hovered && !disabled
-  return (
-    <button
-      type="button"
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        width: size, height: size, borderRadius: '50%', flexShrink: 0,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: 'inherit', userSelect: 'none',
-        border: `1px solid ${active ? token.colorPrimary : token.colorBorderSecondary}`,
-        background: token.colorBgContainer,
-        color: disabled ? token.colorTextQuaternary : (active ? token.colorPrimary : token.colorTextSecondary),
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.45 : 1,
-        transition: 'border-color 0.2s ease, color 0.2s ease',
-      }}
-    >
-      {icon}
-    </button>
-  )
-}
 
 export interface AttachedImage {
   id: string
@@ -88,7 +40,16 @@ export interface AvailableSkill {
 /** 文件令牌在 HTML 中的标记类名 */
 const FILE_TOKEN_CLASS = 'chat-input-file-token'
 
-/** 从 File 对象生成唯一 id */
+/** 零宽字符：contentEditable 聚焦/清空时常会插入，不能当作有效内容 */
+const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF]/g
+
+/** 编辑器是否实际为空（忽略纯空白与零宽字符，文件令牌视为有内容） */
+const isEditorEffectivelyEmpty = (editor: HTMLElement): boolean => {
+  if (editor.querySelectorAll(`.${FILE_TOKEN_CLASS}`).length > 0) return false
+  return (editor.textContent || '').replace(ZERO_WIDTH_CHARS, '').trim().length === 0
+}
+
+/** 生成文件令牌唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
 /** 生成图片附件项：data URL 先落盘为主进程附件，消息里以 wa-attachment:// 引用流转（避免 base64 进 DB/localStorage）。
@@ -375,6 +336,16 @@ const ChatInput: React.FC<{
   availableSkills?: AvailableSkill[]
   centerMode?: boolean
   showEmployeeSelector?: boolean
+  /** 新任务工作区选择器：与数字员工选择器同排展示 */
+  workspaceSelector?: {
+    /** 当前指定目录；null 表示默认工作区 */
+    path: string | null
+    /** 用户手动指定过的工作区目录（最近使用优先） */
+    recent: Array<{ path: string; label: string }>
+    onSelectDefault: () => void
+    onSelectPath: (path: string) => void
+    onPick: () => void
+  }
   employees?: Employee[]
   selectedEmployeeId?: string
   onSelectEmployee?: (id: string) => void
@@ -386,7 +357,7 @@ const ChatInput: React.FC<{
   isCompacting?: boolean
   /** 隐藏高级工具栏（高权限/模型对比/资料库/极简模式/技能下拉），用于轻量对话视图 */
   hideToolbar?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, workspaceSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -410,10 +381,11 @@ const ChatInput: React.FC<{
   /** 同步：内容变化后通知父组件（草稿），并更新空状态（控制 placeholder 与发送按钮） */
   const emitDraftChange = useCallback(() => {
     if (!editorRef.current) return
-    const draftStr = serializeEditorDraft(editorRef.current)
-    onDraftChange?.(draftStr)
+    // 仅换行/空格/零宽字符不算有效内容（contentEditable 常残留 <br>），避免空白草稿让 placeholder 永久消失
+    const empty = isEditorEffectivelyEmpty(editorRef.current)
+    onDraftChange?.(empty ? '' : serializeEditorDraft(editorRef.current))
     // 同步更新空状态（即使未提供 onDraftChange 也必须更新，否则 placeholder 不消失、发送按钮不恢复）
-    setEditorEmpty(!editorRef.current.textContent && editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`).length === 0)
+    setEditorEmpty(empty)
   }, [onDraftChange])
 
   /** 仅用于统计文件令牌数量（供删除回调使用，避免重复状态） */
@@ -423,10 +395,18 @@ const ChatInput: React.FC<{
 
   /** 恢复草稿到 contentEditable 编辑器 */
   const restoreDraft = useCallback((draftStr: string) => {
-    if (!editorRef.current) return
-    deserializeDraftToEditor(editorRef.current, draftStr || '', token, removeFileById)
-    setEditorEmpty(!draftStr)
-  }, [token, removeFileById])
+    const editor = editorRef.current
+    if (!editor) return
+    deserializeDraftToEditor(editor, draftStr || '', token, removeFileById)
+    // 以恢复后的真实内容判断是否为空：空白字符/孤立 <br> 一律清空，保证 placeholder 可见
+    const empty = isEditorEffectivelyEmpty(editor)
+    if (empty) {
+      editor.innerHTML = ''
+      // 草稿里只有空白时顺手清掉缓存，避免每次进入都恢复出一段"看不见的内容"
+      if (draftStr) onDraftChange?.('')
+    }
+    setEditorEmpty(empty)
+  }, [token, removeFileById, onDraftChange])
 
   // restoreDraft / getInitialDraft 的 ref 镜像：useEffect 通过 ref 读取最新实现，
   // 避免其引用变化（如主题 token 变化、onDraftChange 重建）触发恢复草稿覆盖编辑器内容
@@ -549,6 +529,8 @@ const ChatInput: React.FC<{
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      // 流式回复/压缩期间禁用发送：否则消息会被下游静默丢弃，而输入框已被清空导致内容丢失
+      if (isStreaming || isCompacting) return
       const plain = getPlainText()
       // skill 命令唯一匹配且无参数：替换 /xxx 为 `/<name> ` 让用户继续输入参数
       if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
@@ -561,7 +543,7 @@ const ChatInput: React.FC<{
       }
       handleSendRef.current()
     }
-  }, [getPlainText, currentSlashItems, emitDraftChange])
+  }, [getPlainText, currentSlashItems, emitDraftChange, isStreaming, isCompacting])
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
   // skill 激活统一通过 activate_skill 工具；一条消息内可含多个技能命令，逐个转换
@@ -590,13 +572,12 @@ const ChatInput: React.FC<{
   /** 编辑器是否有内容（文字 或 文件令牌） */
   const hasEditorContent = useCallback((): boolean => {
     if (!editorRef.current) return false
-    const tokens = editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`)
-    if (tokens.length > 0) return true
-    const text = (editorRef.current.textContent || '').replace(/\u200B/g, '').trim()
-    return text.length > 0
+    return !isEditorEffectivelyEmpty(editorRef.current)
   }, [])
 
   const handleSend = useCallback(() => {
+    // 流式回复/压缩期间禁用发送，避免消息被下游丢弃后输入框仍被清空
+    if (isStreaming || isCompacting) return
     if (!hasEditorContent() && attachedImages.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
     let content = editorRef.current ? extractContentFromEditor(editorRef.current).replace(/\u200B/g, '') : ''
@@ -605,16 +586,14 @@ const ChatInput: React.FC<{
     if (content.startsWith('/') && invocableSkills.some(s => content.slice(1).startsWith(s.name))) {
       content = convertSkillCommand(content)
     }
-    // 重要兜底：用户可能只附加了文件令牌没输文字
-    // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
-    // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
-    // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
+    // 仅附加文件令牌、没有文字时，extractContentFromEditor 会把令牌路径写入 content，仍可正常发送；
+    // 若 content 为空且无图片，上面的 hasEditorContent 已提前返回。
     onSend(content, imageUrls, selectedModels, { highPermission: fullAllow })
     // 清空编辑器
     if (editorRef.current) editorRef.current.innerHTML = ''
     emitDraftChange()
     onDraftChange?.('')
-  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange, isStreaming, isCompacting])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
@@ -1112,6 +1091,8 @@ const ChatInput: React.FC<{
   const [defaultModelSearch, setDefaultModelSearch] = useState('')
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false)
   const [employeeSearch, setEmployeeSearch] = useState('')
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false)
+  const [workspaceSearch, setWorkspaceSearch] = useState('')
 
   const defaultModelLabel = useMemo(() => {
     if (!defaultProviderId || !defaultModelId) return ''
@@ -1242,81 +1223,7 @@ const ChatInput: React.FC<{
     </div>
   ), [t, token, defaultModelSearch, filteredDefaultModels, defaultProviderId, defaultModelId, onDefaultModelChange])
 
-  // 数字员工快捷条可用宽度
-  const railWrapRef = useRef<HTMLDivElement>(null)
-  const [railWidth, setRailWidth] = useState(0)
-  useLayoutEffect(() => {
-    const el = railWrapRef.current
-    if (!el) return
-    setRailWidth(el.clientWidth)
-    const ro = new ResizeObserver(entries => {
-      for (const entry of entries) setRailWidth(entry.contentRect.width)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  const ITEM_GAP = 6
-  const LABEL_MAX_WIDTH = 88
-  // 左右翻页箭头按钮为图标按钮，尺寸固定
-  const ARROW_BTN_WIDTH = 26
-  // 「全部员工」按钮为图标按钮，尺寸固定
-  const MENU_BTN_WIDTH = 32
-
-  // 单个 chip 的最大自然宽度：左内边距5 + 头像22 + 间距7 + 标题(上限88) + 右内边距12 + 边框2
-  const maxChipWidth = useMemo(() => {
-    const list = employees || []
-    if (list.length === 0) return 0
-    return Math.max(...list.map(emp =>
-      5 + 22 + 7 + Math.min(measureTextWidth(emp.name, 13), LABEL_MAX_WIDTH) + 12 + 2
-    ))
-  }, [employees])
-
-  // 每页容纳的员工数：按最宽 chip 保守估算，保证任意一页都能完整显示
-  const pageSize = useMemo(() => {
-    const total = (employees || []).length
-    if (total === 0) return 1
-    if (railWidth <= 0) return total
-    const available = Math.max(
-      maxChipWidth,
-      railWidth - (ARROW_BTN_WIDTH * 2 + MENU_BTN_WIDTH + ITEM_GAP * 3)
-    )
-    let used = 0
-    let count = 0
-    while (count < total) {
-      const next = used + (count > 0 ? ITEM_GAP : 0) + maxChipWidth
-      if (next > available) break
-      used = next
-      count++
-    }
-    return Math.max(1, count)
-  }, [employees, railWidth, maxChipWidth])
-
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil((employees || []).length / pageSize)),
-    [employees, pageSize]
-  )
-
-  // 翻页游标；尺寸或列表变化导致越界时收敛到最后一页
-  const [employeePage, setEmployeePage] = useState(0)
-  useEffect(() => {
-    setEmployeePage(p => Math.min(p, totalPages - 1))
-  }, [totalPages])
-
-  const safePage = Math.min(employeePage, totalPages - 1)
-  const shownEmployees = useMemo(() => {
-    const start = safePage * pageSize
-    return (employees || []).slice(start, start + pageSize)
-  }, [employees, safePage, pageSize])
-
-  // 选择员工：选中并翻到该员工所在页，保证选中态在快捷条上可见
-  const handlePickEmployee = useCallback((id: string) => {
-    const idx = (employees || []).findIndex(e => e.id === id)
-    if (idx >= 0) setEmployeePage(Math.floor(idx / pageSize))
-    onSelectEmployee?.(id)
-  }, [employees, pageSize, onSelectEmployee])
-
-  // 「全部员工」弹层的过滤结果（含快捷条上已显示的员工）
+  // 数字员工弹层的过滤结果
   const filteredEmployees = useMemo(() => {
     const list = employees || []
     if (!employeeSearch.trim()) return list
@@ -1326,6 +1233,36 @@ const ChatInput: React.FC<{
       (e.description || '').toLowerCase().includes(search)
     )
   }, [employees, employeeSearch])
+
+  // 当前数字员工名称（选择器触发器展示）
+  const activeEmployeeName = useMemo(
+    () => (employees || []).find(e => e.id === selectedEmployeeId)?.name,
+    [employees, selectedEmployeeId]
+  )
+
+  // 工作区触发器文案：指定目录取目录名，否则为默认工作区
+  const workspaceLabel = workspaceSelector?.path
+    ? getDirName(workspaceSelector.path)
+    : t('tasks.defaultWorkspace')
+
+  // 工作区弹层的过滤结果
+  const filteredWorkspaces = useMemo(() => {
+    const list = workspaceSelector?.recent || []
+    if (!workspaceSearch.trim()) return list
+    const search = workspaceSearch.toLowerCase()
+    return list.filter(ws => ws.label.toLowerCase().includes(search) || ws.path.toLowerCase().includes(search))
+  }, [workspaceSelector?.recent, workspaceSearch])
+
+  /** 选择器触发器样式：无边框文字按钮，悬停/展开时高亮 */
+  const selectorTriggerStyle = (open: boolean): React.CSSProperties => ({
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    padding: '3px 8px', borderRadius: 6, maxWidth: 200, minWidth: 0,
+    border: '1px solid transparent', background: open ? token.colorFillTertiary : 'transparent',
+    color: open ? token.colorPrimary : token.colorText,
+    cursor: 'pointer', userSelect: 'none', fontFamily: 'inherit',
+    fontSize: 13, lineHeight: '20px',
+    transition: 'background 0.15s ease, color 0.15s ease',
+  })
 
   // 执行模式：纯对话（原极简模式）/ 手动审批（默认）/ 完全允许（任务级高权限），三者互斥
   const executionMode: 'pureChat' | 'manual' | 'fullAllow' =
@@ -1435,88 +1372,126 @@ const ChatInput: React.FC<{
 
   return (
     <div style={centerMode
-      ? { padding: '0 16px', flexShrink: 0, maxWidth: 680, width: '100%', margin: '0 auto' }
-      : { padding: '8px 6% 12px 6%', flexShrink: 0 }
+      ? { padding: '0 16px', flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto' }
+      : { padding: '8px 6% 12px 6%', flexShrink: 0, maxWidth: 900, width: '100%', margin: '0 auto' }
     }>
-      {showEmployeeSelector && employees && employees.length > 0 && (
-        <div ref={railWrapRef} style={{ paddingTop: 6, paddingBottom: 6, width: '100%' }}>
-          <div style={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', alignItems: 'center', gap: 6, overflow: 'hidden', maxWidth: '100%' }}>
-            {/* 左翻页：翻到上一组数字员工 */}
-            {totalPages > 1 && (
-              <HoverIconButton
-                icon={<LeftOutlined style={{ fontSize: 10 }} />}
-                title={t('workbench.prevEmployees')}
-                size={ARROW_BTN_WIDTH}
-                token={token}
-                disabled={safePage === 0}
-                onClick={() => setEmployeePage(p => Math.max(0, p - 1))}
-              />
-            )}
-
-            {shownEmployees.map(emp => {
-              const active = emp.id === selectedEmployeeId
-              return (
-                <Tooltip key={emp.id} title={emp.description || emp.name} mouseEnterDelay={0.4}>
-                  <button
-                    type="button"
-                    onClick={() => handlePickEmployee(emp.id)}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 7,
-                      padding: '4px 12px 4px 5px', borderRadius: 999,
-                      cursor: 'pointer', userSelect: 'none', minWidth: 0, maxWidth: 134,
-                      fontFamily: 'inherit',
-                      border: `1px solid ${active ? token.colorPrimary : token.colorBorderSecondary}`,
-                      background: active ? token.colorPrimaryBg : token.colorBgContainer,
-                      boxShadow: active ? `0 0 0 3px ${token.colorPrimaryBg}` : 'none',
-                      color: active ? token.colorPrimary : token.colorTextSecondary,
-                      fontWeight: active ? 600 : 400,
-                      fontSize: 13, lineHeight: '22px',
-                      transition: 'border-color 0.2s ease, color 0.2s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (active) return
-                      e.currentTarget.style.borderColor = token.colorPrimary
-                      e.currentTarget.style.color = token.colorText
-                    }}
-                    onMouseLeave={(e) => {
-                      if (active) return
-                      e.currentTarget.style.borderColor = token.colorBorderSecondary
-                      e.currentTarget.style.color = token.colorTextSecondary
-                    }}
-                  >
-                    <EmployeeAvatar
-                      employeeId={emp.id}
-                      avatarType={emp.avatar_type}
-                      avatarIcon={emp.avatar_icon}
-                      avatarColor={emp.avatar_color}
-                      source={emp.source}
-                      size={22}
-                      active={active}
-                    />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 88, minWidth: 0, whiteSpace: 'nowrap' }}>{emp.name}</span>
-                  </button>
-                </Tooltip>
-              )
-            })}
-
-            {/* 右翻页：翻到下一组数字员工 */}
-            {totalPages > 1 && (
-              <HoverIconButton
-                icon={<RightOutlined style={{ fontSize: 10 }} />}
-                title={t('workbench.nextEmployees')}
-                size={ARROW_BTN_WIDTH}
-                token={token}
-                disabled={safePage >= totalPages - 1}
-                onClick={() => setEmployeePage(p => Math.min(totalPages - 1, p + 1))}
-              />
-            )}
-
-            {/* 全部数字员工：Popover 选择器（含搜索、滚动） */}
+      {(workspaceSelector || (showEmployeeSelector && employees && employees.length > 0)) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingTop: 6, paddingBottom: 6, maxWidth: '100%' }}>
+          {/* 工作区选择：搜索 + 最近使用目录，底部提供默认工作区 / 选择目录 */}
+          {workspaceSelector && (
+            <Popover
+              open={workspacePickerOpen}
+              onOpenChange={(o) => { setWorkspacePickerOpen(o); if (!o) setWorkspaceSearch('') }}
+              content={
+                <div style={{ width: 180 }}>
+                  <Input
+                    placeholder={t('tasks.searchWorkspace')}
+                    prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
+                    value={workspaceSearch}
+                    onChange={(e) => setWorkspaceSearch(e.target.value)}
+                    allowClear
+                    size="small"
+                    variant="borderless"
+                    style={{ padding: '2px 8px', marginBottom: 4 }}
+                  />
+                  {/* 单行 34px + 间距 2px：默认展示 4 个，其余滚动 */}
+                  <div style={{ maxHeight: 144, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {filteredWorkspaces.length === 0 && (
+                      <div style={{ padding: '20px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+                        {workspaceSearch ? t('tasks.noMatchingWorkspace') : t('tasks.noRecentWorkspace')}
+                      </div>
+                    )}
+                    {filteredWorkspaces.map(ws => {
+                      const selected = workspaceSelector.path === ws.path
+                      return (
+                        <div
+                          key={ws.path}
+                          title={ws.path}
+                          onClick={() => {
+                            setWorkspacePickerOpen(false)
+                            setWorkspaceSearch('')
+                            workspaceSelector.onSelectPath(ws.path)
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '7px 8px', borderRadius: 6, cursor: 'pointer',
+                            fontSize: 13,
+                            background: selected ? token.colorPrimaryBg : 'transparent',
+                            color: selected ? token.colorPrimary : token.colorText,
+                            transition: 'background 0.15s',
+                          }}
+                          onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = token.colorBgTextHover }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = selected ? token.colorPrimaryBg : 'transparent' }}
+                        >
+                          <FolderOutlined style={{ fontSize: 14 }} />
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws.label}</span>
+                          {selected && <CheckOutlined style={{ fontSize: 11 }} />}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, marginTop: 4, paddingTop: 4 }}>
+                    <div
+                      onClick={() => { setWorkspacePickerOpen(false); setWorkspaceSearch(''); workspaceSelector.onSelectDefault() }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '7px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                        color: workspaceSelector.path ? token.colorText : token.colorPrimary,
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = token.colorBgTextHover }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <FolderOutlined style={{ fontSize: 14 }} />
+                      <span style={{ flex: 1 }}>{t('tasks.defaultWorkspace')}</span>
+                      {!workspaceSelector.path && <CheckOutlined style={{ fontSize: 11 }} />}
+                    </div>
+                    <div
+                      onClick={() => { setWorkspacePickerOpen(false); setWorkspaceSearch(''); workspaceSelector.onPick() }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '7px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                        color: token.colorText,
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = token.colorBgTextHover }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <FolderOpenOutlined style={{ fontSize: 14 }} />
+                      <span style={{ flex: 1 }}>{t('tasks.chooseWorkspaceDir')}</span>
+                    </div>
+                  </div>
+                </div>
+              }
+              trigger="click"
+              placement="bottomLeft"
+              arrow={false}
+              styles={{ container: { padding: 8 } }}
+            >
+              <button
+                type="button"
+                title={workspaceSelector.path || workspaceLabel}
+                style={selectorTriggerStyle(workspacePickerOpen)}
+                onMouseEnter={(e) => {
+                  if (workspacePickerOpen) return
+                  e.currentTarget.style.background = token.colorFillTertiary
+                }}
+                onMouseLeave={(e) => {
+                  if (workspacePickerOpen) return
+                  e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                <FolderOutlined style={{ fontSize: 14 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{workspaceLabel}</span>
+                <DownOutlined style={{ fontSize: 10, opacity: 0.5 }} />
+              </button>
+            </Popover>
+          )}
+          {/* 数字员工选择：搜索 + 员工列表 */}
+          {showEmployeeSelector && employees && employees.length > 0 && (
             <Popover
               open={employeePickerOpen}
               onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}
               content={
-                <div style={{ width: 256, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ width: 170, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <Input
                     placeholder={t('workbench.searchEmployee')}
                     prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
@@ -1527,7 +1502,8 @@ const ChatInput: React.FC<{
                     variant="borderless"
                     style={{ padding: '2px 8px', marginBottom: 2 }}
                   />
-                  <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {/* 单行 34px + 间距 2px：默认展示 5 个，其余滚动 */}
+                  <div style={{ maxHeight: 178, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {filteredEmployees.length === 0 && (
                       <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
                         {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
@@ -1538,14 +1514,16 @@ const ChatInput: React.FC<{
                       return (
                         <div
                           key={emp.id}
-                          onClick={() => { handlePickEmployee(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
+                          onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 10,
-                            padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                            padding: '7px 8px', borderRadius: 6, cursor: 'pointer',
+                            fontSize: 13,
                             background: empActive ? token.colorPrimaryBg : 'transparent',
+                            color: empActive ? token.colorPrimary : token.colorText,
                             transition: 'background 0.15s',
                           }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : token.colorBgTextHover }}
+                          onMouseEnter={(e) => { if (!empActive) e.currentTarget.style.background = token.colorBgTextHover }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : 'transparent' }}
                         >
                           <EmployeeAvatar
@@ -1553,16 +1531,18 @@ const ChatInput: React.FC<{
                             avatarType={emp.avatar_type}
                             avatarIcon={emp.avatar_icon}
                             avatarColor={emp.avatar_color}
+                            avatarImage={emp.avatar_image}
                             source={emp.source}
-                            size={30}
+                            size={20}
                             active={empActive}
                           />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <Text strong={empActive} style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: empActive ? token.colorPrimary : 'inherit' }}>{emp.name}</Text>
-                            {emp.description && (
-                              <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
-                            )}
-                          </div>
+                          <span style={{
+                            flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            fontWeight: empActive ? 500 : 400,
+                          }}>
+                            {emp.name}
+                          </span>
+                          {empActive && <CheckOutlined style={{ fontSize: 11 }} />}
                         </div>
                       )
                     })}
@@ -1576,31 +1556,25 @@ const ChatInput: React.FC<{
             >
               <button
                 type="button"
-                title={t('workbench.allEmployees')}
-                style={{
-                  width: MENU_BTN_WIDTH, height: MENU_BTN_WIDTH, borderRadius: '50%', flexShrink: 0,
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', userSelect: 'none',
-                  fontFamily: 'inherit',
-                  border: `1px solid ${employeePickerOpen ? token.colorPrimary : token.colorBorderSecondary}`,
-                  background: token.colorBgContainer,
-                  color: employeePickerOpen ? token.colorPrimary : token.colorTextSecondary,
-                  transition: 'border-color 0.2s ease, color 0.2s ease',
-                }}
+                title={activeEmployeeName || t('nav.employees')}
+                style={selectorTriggerStyle(employeePickerOpen)}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = token.colorPrimary
-                  e.currentTarget.style.color = token.colorPrimary
+                  if (employeePickerOpen) return
+                  e.currentTarget.style.background = token.colorFillTertiary
                 }}
                 onMouseLeave={(e) => {
                   if (employeePickerOpen) return
-                  e.currentTarget.style.borderColor = token.colorBorderSecondary
-                  e.currentTarget.style.color = token.colorTextSecondary
+                  e.currentTarget.style.background = 'transparent'
                 }}
               >
-                <MenuOutlined style={{ fontSize: 12 }} />
+                <RobotOutlined style={{ fontSize: 14 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {activeEmployeeName || t('nav.employees')}
+                </span>
+                <DownOutlined style={{ fontSize: 10, opacity: 0.5 }} />
               </button>
             </Popover>
-          </div>
+          )}
         </div>
       )}
       {attachedImages.length > 0 && (
@@ -1653,17 +1627,17 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 12, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
+      <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 14, padding: '8px 8px 8px 14px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorder}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorderSecondary }}>
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorder }}>
         {isDragOver && (
           <div style={{
             position: 'absolute', inset: 0,
-            borderRadius: 9,
+            borderRadius: 13,
             background: token.colorPrimaryBg,
             border: `2px dashed ${token.colorPrimary}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1676,7 +1650,7 @@ const ChatInput: React.FC<{
             </div>
           </div>
         )}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* contentEditable 输入框，支持在光标位置嵌入文件令牌 */}
           <div
             ref={editorRef}
@@ -1712,14 +1686,15 @@ const ChatInput: React.FC<{
               onClick={() => editorRef.current?.focus()}
               style={{
                 position: 'absolute',
+                zIndex: 1,
                 pointerEvents: 'none',
-                color: token.colorTextQuaternary,
+                color: token.colorTextTertiary,
                 fontSize: 13,
                 lineHeight: 1.6,
                 padding: '4px 0',
-                left: 12,
-                right: 40,
-                top: 4,
+                left: 0,
+                right: 0,
+                top: 0,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -1733,13 +1708,14 @@ const ChatInput: React.FC<{
               aria-hidden
               style={{
                 position: 'absolute',
+                zIndex: 1,
                 pointerEvents: 'none',
-                color: token.colorTextQuaternary,
+                color: token.colorTextTertiary,
                 fontSize: 13,
                 lineHeight: 1.6,
                 padding: '4px 0',
-                left: 12,
-                top: 4,
+                left: 0,
+                top: 0,
               }}
             >
               {t('workbench.compactingPlaceholder')}

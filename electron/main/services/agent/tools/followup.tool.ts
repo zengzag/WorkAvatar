@@ -18,7 +18,7 @@ export const followupTool: ToolDefinition = {
   id: 'followup_delegation',
   name: 'followup_delegation',
   title: '追问子智能体',
-  summary: '针对已完成委托的结果追问/补充要求，子智能体保留原任务上下文',
+  summary: 'Ask a finished delegation for revisions or clarifications; the sub-agent keeps its original task context.',
   description: `Ask follow-up questions or request revisions on a finished delegation. The same sub-agent keeps its original task context, so prefer this over re-delegating when a result is wrong, incomplete, or misses an acceptance criterion.
 
 delegation_id: the delegationId returned by delegate_to_employee / followup_delegation.

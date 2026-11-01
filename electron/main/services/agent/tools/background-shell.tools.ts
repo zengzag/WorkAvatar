@@ -26,25 +26,25 @@ export const shellOutputTool: ToolDefinition = {
   id: 'shell_output',
   name: 'shell_output',
   title: '读取后台任务输出',
-  summary: '读取 shell_exec(run_in_background) 启动的任务输出，支持增量续读与等待新输出。',
-  description: `读取后台任务的输出。任务由 shell_exec(run_in_background=true) 启动。
+  summary: 'Read output from a task started with shell_exec(run_in_background), with incremental reads and waits for new output.',
+  description: `Read the output of a background task started with shell_exec(run_in_background=true).
 
-- task_id：后台任务 ID（sh 启动结果里返回）。
-- offset：起始偏移（上次返回的 next_offset）。不传时返回尾部输出，适合"看看现在怎么样了"。
-- max_chars：本次最多返回的字符数（默认 ${DEFAULT_READ_CHARS}，上限 ${MAX_READ_CHARS}）。
-- wait_ms：等待新输出的毫秒数（上限 ${MAX_WAIT_MS}）。任务仍在运行且当前没有新输出时会等待，便于等启动日志/构建结束；不要滥用长等待。
+- task_id: background task id (returned at launch).
+- offset: start offset (the next_offset from the previous read). Omit it to read the tail, which is useful for a status check.
+- max_chars: maximum characters to return (default ${DEFAULT_READ_CHARS}, max ${MAX_READ_CHARS}).
+- wait_ms: milliseconds to wait for new output (max ${MAX_WAIT_MS}). Returns as soon as output arrives; do not use long waits unnecessarily.
 
-行为说明：
-- 输出只保留最近 200000 字符，更早的内容会被淘汰并在结果中提示。
-- 返回的 next_offset 用于下次续读；任务结束后仍可读取已保留的输出。
-- 明明可以一次性等待结束的场景（如一次构建），建议直接用前台 shell_exec，而不是后台 + 轮询。`,
+Behavior:
+- Only the most recent 200000 characters are retained; older output is dropped and reported.
+- next_offset continues the next read; retained output remains readable after the task ends.
+- If a command can finish within the turn (e.g. a single build), run it in the foreground instead of polling.`,
   parameters: {
     type: 'object',
     properties: {
-      task_id: { type: 'string', description: '后台任务 ID（shell_exec 的 run_in_background 启动结果返回）' },
-      offset: { type: 'number', description: '起始字符偏移（上次返回的 next_offset）；不传则返回尾部输出', minimum: 0 },
-      max_chars: { type: 'number', description: `本次最多返回字符数（默认 ${DEFAULT_READ_CHARS}，上限 ${MAX_READ_CHARS}）`, minimum: 1, maximum: MAX_READ_CHARS },
-      wait_ms: { type: 'number', description: `等待新输出的毫秒数（上限 ${MAX_WAIT_MS}，默认 0 不等待）`, minimum: 0, maximum: MAX_WAIT_MS },
+      task_id: { type: 'string', description: 'Background task id returned by shell_exec(run_in_background=true)' },
+      offset: { type: 'number', description: 'Start character offset (the previous next_offset); omit to read the tail', minimum: 0 },
+      max_chars: { type: 'number', description: `Maximum characters to return (default ${DEFAULT_READ_CHARS}, max ${MAX_READ_CHARS})`, minimum: 1, maximum: MAX_READ_CHARS },
+      wait_ms: { type: 'number', description: `Milliseconds to wait for new output (max ${MAX_WAIT_MS}; default 0)`, minimum: 0, maximum: MAX_WAIT_MS },
     },
     required: ['task_id'],
   },
@@ -94,17 +94,17 @@ export const shellKillTool: ToolDefinition = {
   id: 'shell_kill',
   name: 'shell_kill',
   title: '终止后台任务',
-  summary: '终止 shell_exec(run_in_background) 启动的后台任务（连同其子进程树）。',
-  description: `终止一个后台任务，连同它派生的子进程树一并结束（Windows 走 taskkill /T /F）。
+  summary: 'Terminate a background task started with shell_exec(run_in_background), including its child process tree.',
+  description: `Terminate a background task and its child process tree (Windows uses taskkill /T /F).
 
-- task_id：后台任务 ID。
-- 对已结束的任务调用是安全的，会直接返回当前状态，不会报错。
-- dev server / watch 等任务确认不再需要时请及时终止，避免占用端口与资源；同一会话同时运行的后台任务上限为 8 个。
-- 用户也可在对话界面下方的「后台任务」入口手动停止（agent 回合异常结束时该入口仍然可用，无需依赖本工具）。`,
+- task_id: background task id.
+- Calling it on an already-finished task is safe; it returns the current status without error.
+- Stop dev servers and watch tasks once they are no longer needed to free ports and resources; at most 8 background tasks run per conversation.
+- The user can also stop them from the "Background tasks" entry below the conversation.`,
   parameters: {
     type: 'object',
     properties: {
-      task_id: { type: 'string', description: '要终止的后台任务 ID' },
+      task_id: { type: 'string', description: 'Background task id to terminate' },
     },
     required: ['task_id'],
   },

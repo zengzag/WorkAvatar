@@ -71,7 +71,7 @@ vi.mock('../../../electron/main/services/path.service', () => ({
 
 import DatabaseService from '../../../electron/main/services/database.service'
 
-/** 复刻用户真实旧库：employee_memories 无 scope 列、employee_id NOT NULL */
+/** 模拟用户真实旧库：employee_memories 无 scope 列、employee_id NOT NULL */
 function createLegacyDbFile(dbPath: string): void {
   const db = new DatabaseSync(dbPath)
   db.exec(`

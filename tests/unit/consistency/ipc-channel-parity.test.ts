@@ -47,7 +47,10 @@ for (const { file, text } of mainSources) {
     handled.set(name, file)
   }
   for (const name of matchAll(text, /ipcMain\.on\(\s*IPC_CHANNELS\.([A-Z0-9_]+)/g)) listened.set(name, file)
-  for (const name of matchAll(text, /\.send\(\s*IPC_CHANNELS\.([A-Z0-9_]+)/g)) pushed.set(name, file)
+  // webContents.send 直接推送；sendToSessionWebContents / broadcastToRenderers 是集中推送封装（首个参数为会话/窗口标识）
+  for (const name of matchAll(text, /(?:\.send|sendToSessionWebContents|broadcastToRenderers)\(\s*(?:[A-Za-z_$][\w$.]*,\s*)?IPC_CHANNELS\.([A-Z0-9_]+)/g)) {
+    pushed.set(name, file)
+  }
 }
 
 const preloadInvoke = new Set(matchAll(preloadText, /ipcRenderer\.invoke\(\s*IPC_CHANNELS\.([A-Z0-9_]+)/g))

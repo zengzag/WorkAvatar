@@ -70,6 +70,8 @@ export interface Employee {
   avatar_icon?: string
   /** 自定义头像颜色 hex（空=按 id 自动配色） */
   avatar_color?: string
+  /** 上传的头像图片（data URL；空=用图标+颜色渲染） */
+  avatar_image?: string
   default_skill_id?: string
   /** 员工来源，缺省视为 user（旧数据兼容） */
   source?: EmployeeSource
@@ -109,7 +111,7 @@ export interface EmployeeDelegationConfig {
 /**
  * 解析 delegation_json，容错缺失/非法 JSON，返回默认配置。
  * 缺省即开启委托能力（可派发临时子智能体/子智能体模板）；
- * 委托给「已有数字员工」仍需在 targetIds 中显式选择目标，未选择时运行时拒绝。
+ * targetIds 为空表示不限制可委托员工，非空时仅允许白名单内的员工。
  * 用户显式配置 {"enabled":false} 可整体关闭。
  */
 export function parseEmployeeDelegation(json?: string | null): EmployeeDelegationConfig {
@@ -165,6 +167,8 @@ export interface Conversation {
   collection_ids_json?: string
   /** 任务独立工作区目录（空字符串表示未分配，回退到员工工作区） */
   workspace_path?: string
+  /** 工作区类型：default=自动创建的任务目录（归入"默认工作区"），custom=用户指定目录 */
+  workspace_mode?: 'default' | 'custom'
   /** 父会话 ID：委托产生的子会话记录其主管会话 ID，空字符串表示顶层会话 */
   parent_conversation_id?: string
 }

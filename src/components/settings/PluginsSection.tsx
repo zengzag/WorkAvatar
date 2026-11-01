@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { App, Button, Card, List, Popconfirm, Space, Switch, Tag, Tooltip } from 'antd'
-import { DeleteOutlined, FolderOpenOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { App, Button, Card, Empty, Popconfirm, Space, Spin, Switch, Tag, Tooltip, Typography } from 'antd'
+import {
+  DeleteOutlined,
+  FolderOpenOutlined,
+  ReloadOutlined,
+  SettingOutlined,
+  UploadOutlined,
+} from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { PluginImportResult, PluginInfo } from '../../../electron/shared/channels/plugin'
+import PluginSettingsDrawer from './PluginSettingsDrawer'
 
 const STATUS_COLOR: Record<PluginInfo['status'], string> = {
   active: 'success',
@@ -15,12 +22,14 @@ const STATUS_COLOR: Record<PluginInfo['status'], string> = {
 /**
  * 插件管理：全部插件统一为用户来源（dev 自动安装 / zip 导入 / 手动放入目录），同一套加载器。
  * 启用/禁用/删除/导入/覆盖升级均即时生效（主进程增量激活 + 渲染端增量加载，无需重启应用）。
+ * 卡片列表同时覆盖有界面插件与纯后台插件（无 renderer/nav），后者通过「插件设置」配置参数。
  */
 const PluginsSection: React.FC = () => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(false)
+  const [settingsPlugin, setSettingsPlugin] = useState<PluginInfo | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -103,7 +112,7 @@ const PluginsSection: React.FC = () => {
 
   return (
     <Card
-      style={{ maxWidth: 760 }}
+      style={{ maxWidth: 1080 }}
       title={t('settings.tabPlugins')}
       extra={
         <Space>
@@ -119,60 +128,118 @@ const PluginsSection: React.FC = () => {
         </Space>
       }
     >
-      <div style={{ marginBottom: 12 }}>
-        <span style={{ color: 'var(--ant-color-text-secondary, rgba(0,0,0,0.65))', fontSize: 13 }}>
-          {t('settings.plugins.hint')}
-        </span>
-      </div>
-      <List
-        loading={loading}
-        dataSource={plugins}
-        locale={{ emptyText: t('settings.plugins.empty') }}
-        renderItem={(plugin) => (
-          <List.Item
-            actions={[
-              <Switch
-                key="switch"
-                size="small"
-                checked={plugin.enabled}
-                onChange={(checked) => handleToggle(plugin, checked)}
-              />,
-              <Popconfirm
-                key="delete"
-                title={t('settings.plugins.deleteConfirm')}
-                onConfirm={() => handleDelete(plugin)}
-              >
-                <Button size="small" danger icon={<DeleteOutlined />} />
-              </Popconfirm>,
-            ]}
+      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        {t('settings.plugins.hint')}
+      </Typography.Text>
+
+      <Spin spinning={loading}>
+        {plugins.length === 0 ? (
+          <Empty style={{ padding: '40px 0' }} description={t('settings.plugins.empty')} />
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))',
+              gap: 10,
+              marginTop: 12,
+            }}
           >
-            <List.Item.Meta
-              title={
-                <span>
-                  {plugin.name}
-                  <Tag style={{ marginLeft: 8 }} color={STATUS_COLOR[plugin.status]}>
-                    {t(`settings.plugins.status_${plugin.status}`)}
-                  </Tag>
-                  <Tag style={{ marginLeft: 4 }}>{`v${plugin.version}`}</Tag>
-                </span>
-              }
-              description={
-                <span style={{ fontSize: 12 }}>
-                  <span style={{ opacity: 0.6 }}>{plugin.id}</span>
-                  {plugin.description ? ` · ${plugin.description}` : ''}
-                  {plugin.statusMessage && plugin.status === 'error' && (
-                    <Tooltip title={plugin.statusMessage}>
-                      <span style={{ marginLeft: 8, color: 'var(--ant-color-error, #ff4d4f)' }}>
-                        {plugin.statusMessage.slice(0, 60)}
-                        {plugin.statusMessage.length > 60 ? '…' : ''}
+            {plugins.map((plugin) => (
+              <Card
+                key={plugin.id}
+                size="small"
+                style={{ height: '100%', borderColor: 'var(--wa-line)', background: 'var(--wa-panel)' }}
+                styles={{ body: { display: 'flex', flexDirection: 'column', gap: 6, height: '100%', padding: 12 } }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 13.5,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {plugin.name}
+                      </span>
+                      <Tag color={STATUS_COLOR[plugin.status]} style={{ marginInlineEnd: 0, flexShrink: 0 }}>
+                        {t(`settings.plugins.status_${plugin.status}`)}
+                      </Tag>
+                      {!plugin.hasRenderer && (
+                        <Tooltip title={t('settings.plugins.headlessHint')}>
+                          <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>{t('settings.plugins.headless')}</Tag>
+                        </Tooltip>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--wa-ink-3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {plugin.id} · v{plugin.version}
+                    </div>
+                  </div>
+                  <Space size={2} style={{ flexShrink: 0 }}>
+                    <Switch
+                      size="small"
+                      checked={plugin.enabled}
+                      onChange={(checked) => handleToggle(plugin, checked)}
+                    />
+                    <Tooltip title={t('settings.plugins.settingsAction')}>
+                      <span style={{ display: 'inline-flex' }}>
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<SettingOutlined />}
+                          disabled={!plugin.hasSettings}
+                          onClick={() => setSettingsPlugin(plugin)}
+                        />
                       </span>
                     </Tooltip>
-                  )}
-                </span>
-              }
-            />
-          </List.Item>
+                    <Popconfirm
+                      title={t('settings.plugins.deleteConfirm')}
+                      onConfirm={() => handleDelete(plugin)}
+                    >
+                      <Tooltip title={t('common.delete')}>
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                      </Tooltip>
+                    </Popconfirm>
+                  </Space>
+                </div>
+
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    marginBottom: 0,
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {plugin.description || t('settings.plugins.noDescription')}
+                </Typography.Paragraph>
+
+                {plugin.statusMessage && (plugin.status === 'error' || plugin.status === 'invalid') && (
+                  <Tooltip title={plugin.statusMessage}>
+                    <Typography.Text
+                      type="danger"
+                      style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {plugin.statusMessage}
+                    </Typography.Text>
+                  </Tooltip>
+                )}
+              </Card>
+            ))}
+          </div>
         )}
+      </Spin>
+
+      <PluginSettingsDrawer
+        plugin={settingsPlugin}
+        onClose={() => setSettingsPlugin(null)}
       />
     </Card>
   )

@@ -93,7 +93,7 @@ export class SkillManager {
 
     // 1. 精确匹配（用 != null 判定：参考文件内容可能为空串，空串也是有效命中）
     let content = skill.references.get(referencePath)
-    // 2. 去掉 references/ 前缀后匹配
+    // 2. 去掉开头的 ./ 或 / 后匹配
     if (content == null) content = skill.references.get(normalized)
     // 3. 仅用文件名匹配（兼容 LLM 传入 references/xxx.md 的情况）
     if (content == null) content = skill.references.get(basename)

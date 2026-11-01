@@ -37,6 +37,19 @@ let tabSeq = 0
 const nextTabId = () => `tab_${Date.now().toString(36)}_${(tabSeq++).toString(36)}`
 
 const EXPANDED_DIRS_KEY = 'tasks:workspaceExpandedDirs'
+const EXPANDED_KEY = 'tasks:workspacePanelExpanded'
+
+function loadExpanded(): boolean {
+  try {
+    return localStorage.getItem(EXPANDED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function saveExpanded(expanded: boolean) {
+  try { localStorage.setItem(EXPANDED_KEY, expanded ? '1' : '0') } catch {}
+}
 
 function loadExpandedDirs(): Record<string, true> {
   try {
@@ -49,7 +62,7 @@ function loadExpandedDirs(): Record<string, true> {
 
 export const useTaskPanelStore = create<TaskPanelState>((set, get) => ({
   open: false,
-  expanded: false,
+  expanded: loadExpanded(),
   tabs: [],
   activeTabId: null,
   openPreview: (file) => {
@@ -88,9 +101,13 @@ export const useTaskPanelStore = create<TaskPanelState>((set, get) => ({
       return { tabs, activeTabId }
     })
   },
-  toggleExpanded: () => set((s) => ({ expanded: !s.expanded })),
-  openPanel: () => set({ open: true, expanded: false }),
-  closePanel: () => set({ open: false, expanded: false }),
+  toggleExpanded: () => set((s) => {
+    saveExpanded(!s.expanded)
+    return { expanded: !s.expanded }
+  }),
+  // 全屏状态跨开关保留：关闭后再次打开侧边栏/点击文件仍按上次的全屏模式展示
+  openPanel: () => set({ open: true }),
+  closePanel: () => set({ open: false }),
   reset: () => set({ tabs: [], activeTabId: null }),
   expandedDirs: loadExpandedDirs(),
   toggleDirExpanded: (dirPath) => set((s) => {

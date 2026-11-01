@@ -321,6 +321,8 @@ const MessageBubble: React.FC<{
   onCopy: (content: string) => void
   onDeleteMessage: (msgId: string) => void
   onRegenerate: (msgId: string) => void
+  /** 出错重试：原地从失败处继续生成 */
+  onRetry?: (msgId: string) => void
   onSwitchModelRegenerate: (msgId: string, providerId: string, modelId: string) => void
   onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
@@ -330,6 +332,8 @@ const MessageBubble: React.FC<{
   getToolDisplayName: (name: string) => string
   providers: any[]
   isLastAssistantMessage?: boolean
+  /** 是否为会话最后一条消息（出错重试只对末尾消息生效） */
+  isLastMessage?: boolean
   contextStats?: any
   isCompacting?: boolean
   onCompact?: () => void
@@ -339,7 +343,7 @@ const MessageBubble: React.FC<{
   assistantEmployee?: Employee | null
   /** 当前对话平均输出速度（tok/s），展示在用量弹窗中 */
   conversationTokensPerSec?: number
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee, conversationTokensPerSec }) => {
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onRetry, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, isLastMessage, contextStats, isCompacting, onCompact, hideMessageActions, assistantEmployee, conversationTokensPerSec }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -454,14 +458,14 @@ const MessageBubble: React.FC<{
         <div style={{
           width: 30,
           height: 30,
-          borderRadius: 6,
+          borderRadius: 8,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
           background: msg.role === 'assistant'
             ? (assistantEmployee ? 'transparent' : token.colorPrimaryBg)
-            : token.colorInfoBg,
+            : 'var(--wa-panel-3)',
         }}>
           {msg.role === 'assistant' ? (
             assistantEmployee ? (
@@ -470,6 +474,7 @@ const MessageBubble: React.FC<{
                 avatarType={assistantEmployee.avatar_type}
                 avatarIcon={assistantEmployee.avatar_icon}
                 avatarColor={assistantEmployee.avatar_color}
+                avatarImage={assistantEmployee.avatar_image}
                 source={assistantEmployee.source}
                 size={30}
                 shape="square"
@@ -516,13 +521,14 @@ const MessageBubble: React.FC<{
               </div>
             ) : (
               <div style={{
-                padding: '8px 12px',
-                borderRadius: 8,
-                background: token.colorInfoBg,
+                padding: '9px 13px',
+                borderRadius: 12,
+                background: 'var(--wa-user-bubble)',
+                border: '1px solid var(--wa-line-2)',
                 color: token.colorText,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
-                lineHeight: 1.6,
+                lineHeight: 1.72,
               }}>
                 {userContentParts.map((part, index) => (
                   part.type === 'text'
@@ -580,12 +586,12 @@ const MessageBubble: React.FC<{
               (displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0)) ||
               (displayContent && !displayIsStreaming)) && (
               <div style={{
-                background: token.colorBgContainer,
+                background: 'transparent',
                 borderRadius: 8,
-                padding: '8px 12px',
+                padding: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 6,
+                gap: 10,
               }}>
                 {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
                   <Text style={{ color: token.colorTextQuaternary, fontSize: 15, lineHeight: 1.6 }}>{t('workbench.thinking')}</Text>
@@ -603,7 +609,7 @@ const MessageBubble: React.FC<{
                 )}
 
                 {(!displayMsg.segments || displayMsg.segments.length === 0) && displayContent && !displayIsStreaming && (
-                  <div className="markdown-content" style={{ fontSize: 15, color: displayIsError ? token.colorError : token.colorText, lineHeight: 1.6, wordBreak: 'break-word' }}>
+                  <div className="markdown-content" style={{ fontSize: 15, color: displayIsError ? token.colorError : token.colorText, lineHeight: 1.78, wordBreak: 'break-word' }}>
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkMath]}
                       rehypePlugins={[rehypeKatex]}
@@ -618,6 +624,18 @@ const MessageBubble: React.FC<{
 
             {!displayIsStreaming && displaySegments && (
               <GeneratedFilesBar segments={displaySegments} />
+            )}
+
+            {!displayIsStreaming && displayIsError && !showBranchContent && isLastMessage && onRetry && (
+              <div style={{ marginTop: 2, marginLeft: 2 }}>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined style={{ fontSize: 12 }} />}
+                  onClick={() => onRetry(msg.id)}
+                >
+                  {t('workbench.retry')}
+                </Button>
+              </div>
             )}
 
             {!displayIsStreaming && displayMsg.isAborted && (
@@ -763,6 +781,7 @@ export default memo(MessageBubble, (prev, next) => {
     && prev.providers === next.providers
     && prev.assistantEmployee === next.assistantEmployee
     && prev.isLastAssistantMessage === next.isLastAssistantMessage
+    && prev.isLastMessage === next.isLastMessage
     && prev.contextStats === next.contextStats
     && prev.conversationTokensPerSec === next.conversationTokensPerSec
     && prev.isCompacting === next.isCompacting

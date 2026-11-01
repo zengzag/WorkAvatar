@@ -93,12 +93,28 @@ const mockState = vi.hoisted(() => {
           },
         }
       }
-      if (s === 'SELECT * FROM conversations WHERE id = ?' || s === 'SELECT workspace_path FROM conversations WHERE id = ?') {
+      if (
+        s === 'SELECT * FROM conversations WHERE id = ?'
+        || s === 'SELECT workspace_path FROM conversations WHERE id = ?'
+        || s === 'SELECT workspace_path, workspace_mode FROM conversations WHERE id = ?'
+      ) {
         return { get: (id: string) => conversations.get(id) }
+      }
+      if (s === 'SELECT workspace_mode FROM conversations WHERE workspace_path = ? LIMIT 1') {
+        return {
+          get: (p: string) => [...conversations.values()].find(c => c.workspace_path === p),
+        }
       }
       if (s.startsWith('SELECT 1 FROM conversations WHERE workspace_path = ?')) {
         return {
           get: (p: string) => ([...conversations.values()].some(c => c.workspace_path === p) ? { found: 1 } : undefined),
+        }
+      }
+      if (s === "SELECT DISTINCT workspace_path FROM conversations WHERE workspace_mode = 'custom' AND workspace_path != ''") {
+        return {
+          all: () => [...conversations.values()]
+            .filter(c => c.workspace_mode === 'custom' && c.workspace_path)
+            .map(c => ({ workspace_path: c.workspace_path })),
         }
       }
       if (s.startsWith('SELECT employee_id') && s.includes('FROM conversations WHERE id = ?')) {
@@ -122,7 +138,8 @@ const mockState = vi.hoisted(() => {
             conversations.set(a[0], {
               id: a[0], employee_id: a[1], skill_id: a[2], title: a[3], messages_json: '[]',
               message_count: 0, minimal_mode: a[4], status: 'active', workspace_path: a[5],
-              parent_conversation_id: a[6], created_at: a[7], updated_at: a[8], last_message_at: null,
+              workspace_mode: a[6], parent_conversation_id: a[7], created_at: a[8], updated_at: a[9],
+              last_message_at: null,
             })
             return { changes: 1 }
           },
@@ -236,14 +253,30 @@ describe('workspace-manager / isWithinEmployeesRoot', () => {
   })
 })
 
+describe('workspace-manager / isWithinWorkspaceBoundary', () => {
+  it('自定义工作区目录及其子路径视为合法', () => {
+    const customRoot = path.join(root, 'user-custom')
+    mockState.conversations.set('conv-custom', { id: 'conv-custom', workspace_mode: 'custom', workspace_path: customRoot })
+    expect(service.isWithinWorkspaceBoundary(customRoot)).toBe(true)
+    expect(service.isWithinWorkspaceBoundary(path.join(customRoot, 'sub'))).toBe(true)
+    expect(service.isWithinWorkspaceBoundary(path.join(root, 'other-custom'))).toBe(false)
+    expect(service.isWithinWorkspaceBoundary(`${customRoot}-evil`)).toBe(false)
+  })
+
+  it('无 custom 会话时不放开 employees/ 之外路径', () => {
+    expect(service.isWithinWorkspaceBoundary(path.join(root, 'anywhere'))).toBe(false)
+  })
+})
+
 describe('workspace-manager / getRegistryWorkspaceRoot', () => {
-  it('生成稳定 8 位哈希目录并落盘', () => {
+  it('生成稳定 8 位哈希目录（懒创建，不落盘）', () => {
     const first = service.getRegistryWorkspaceRoot('builtin:knowledge-base')
     const second = service.getRegistryWorkspaceRoot('builtin:knowledge-base')
     expect(first).toBe(second)
     expect(path.dirname(first)).toBe(employeesRoot)
     expect(path.basename(first)).toMatch(/^[0-9a-f]{8}$/)
-    expect(fs.existsSync(first)).toBe(true)
+    // 员工列表/会话创建都会调用该路径，提前建目录会给从未工作的员工留下空目录
+    expect(fs.existsSync(first)).toBe(false)
   })
 
   it('不同员工 id 映射到不同目录', () => {
@@ -361,6 +394,33 @@ describe('workspace-manager / 员工 CRUD', () => {
   })
 })
 
+describe('workspace-manager / 默认员工播种', () => {
+  it('无用户员工时创建普通员工「通用专家」并写播种标记', () => {
+    service.ensureDefaultEmployee()
+    const list = service.getEmployeeList()
+    expect(list).toHaveLength(1)
+    expect(list[0].name).toBe('通用专家')
+    expect(list[0].rules).toContain('General Expert')
+    expect(fs.existsSync(list[0].workspace_path!)).toBe(true)
+    expect(mockState.settings.get('bootstrap.default_employee_seeded')).toBe('1')
+  })
+
+  it('已有用户员工时不创建（老用户升级不受影响）', () => {
+    service.createEmployee('已有员工')
+    service.ensureDefaultEmployee()
+    expect(service.getEmployeeList()).toHaveLength(1)
+    expect(mockState.settings.get('bootstrap.default_employee_seeded')).toBe('1')
+  })
+
+  it('用户删除默认员工后不再重建', () => {
+    service.ensureDefaultEmployee()
+    const emp = service.getEmployeeList()[0]
+    service.deleteEmployee(emp.id)
+    service.ensureDefaultEmployee()
+    expect(service.getEmployeeList()).toHaveLength(0)
+  })
+})
+
 describe('workspace-manager / createConversation 任务工作区', () => {
   it('未知员工且非注册员工时抛错', () => {
     expect(() => service.createConversation('ghost-employee')).toThrow('Employee not found')
@@ -410,6 +470,30 @@ describe('workspace-manager / createConversation 任务工作区', () => {
     const conv = service.createConversation(emp.id, undefined, 'x', undefined, undefined, outside)
     expect(conv.workspace_path).not.toBe('')
     expect(conv.workspace_path).not.toBe(outside)
+  })
+
+  it('指定工作区目录时直接使用该目录并标记 custom（不创建目录）', () => {
+    const emp = service.createEmployee('员工W')
+    const custom = path.join(root, 'user-workspace')
+    const conv = service.createConversation(emp.id, undefined, '自定义', undefined, undefined, undefined, custom)
+    expect(conv.workspace_path).toBe(path.resolve(custom))
+    expect(conv.workspace_mode).toBe('custom')
+    // 用户指定目录不由应用创建
+    expect(fs.existsSync(custom)).toBe(false)
+  })
+
+  it('默认任务目录标记为 default', () => {
+    const emp = service.createEmployee('员工X')
+    expect(service.createConversation(emp.id).workspace_mode).toBe('default')
+  })
+
+  it('分支复用自定义工作区时继承 custom 类型', () => {
+    const emp = service.createEmployee('员工Y')
+    const custom = path.join(emp.workspace_path!, 'shared-custom')
+    const src = service.createConversation(emp.id, undefined, 'src', undefined, undefined, undefined, custom)
+    const reuse = service.createConversation(emp.id, undefined, '复用', undefined, undefined, src.workspace_path!)
+    expect(reuse.workspace_path).toBe(src.workspace_path)
+    expect(reuse.workspace_mode).toBe('custom')
   })
 
   it('minimalMode 落库为 1', () => {

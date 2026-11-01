@@ -46,7 +46,7 @@ function which(cmd: string): string | null {
   return null
 }
 
-/** 在指定父目录下递归查找匹配的子目录可执行文件（最多 1 层深度） */
+/** 在指定父目录下递归查找可执行文件；depth 控制向下查找层数（默认 1，检测时传 2） */
 function findInDir(parentDir: string, exeName: string, depth = 1): string | null {
   if (!parentDir || !fs.existsSync(parentDir)) return null
   try {
@@ -153,8 +153,8 @@ const DETECT_CONFIGS: Record<RuntimeEnvToolId, DetectConfig> = {
 }
 
 /**
- * 异步执行命令并返回 stdout（trim）。
- * 失败（非零退出、超时、找不到命令）返回 null。
+ * 异步执行命令，返回 { stdout, stderr, code }。
+ * 命令不存在以 code=-1 表示，兜底超时以 code=-2 表示。
  */
 function runCommand(cmd: string, args: string[], opts: { timeout?: number; env?: NodeJS.ProcessEnv } = {}): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve) => {
@@ -202,7 +202,7 @@ function runCommand(cmd: string, args: string[], opts: { timeout?: number; env?:
 }
 
 /**
- * 在指定可执行文件路径上执行 `--version`，解析并返回版本号与原始路径。
+ * 在指定可执行文件路径上执行 `--version`，解析并返回版本号（未匹配到时 version 为 undefined）。
  */
 async function detectByExe(exePath: string, config: DetectConfig): Promise<{ version?: string } | null> {
   const result = await runCommand(exePath, config.versionArgs, { timeout: 8000 })
@@ -294,7 +294,7 @@ function getToolMeta(toolId: RuntimeEnvToolId): { name: string; description: str
   }
 }
 
-/** 工具检测顺序：uv → python → node → pip（pip 依赖 python） */
+/** 运行时结果顺序：uv → python → node → pip（detectAll 并行检测，pip 复用 python 的检测结果） */
 const TOOL_ORDER: RuntimeEnvToolId[] = ['uv', 'python', 'node', 'pip']
 
 class RuntimeEnvService {
@@ -420,8 +420,10 @@ class RuntimeEnvService {
    * @param command 命令（如 powershell / sh / winget）
    * @param args 参数
    * @param opts.phase 用于进度事件的阶段标签
+   * @param opts.message 默认进度文案
+   * @param opts.timeout 超时时间
    * @param opts.env 自定义环境变量
-   * @returns 完整 stdout + stderr 合并文本
+   * @returns 合并输出、退出码与是否被取消
    */
   private runInstallCommand(
     command: string,

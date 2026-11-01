@@ -3,12 +3,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import { Button, Typography, Spin, Tooltip, theme, App, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined, SettingOutlined } from '@ant-design/icons'
+import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined, FolderOutlined, SettingOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
 import BackgroundShellBar from '../components/workbench/BackgroundShellBar'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
-import TaskSidebar, { formatTaskTime, type TaskWithEmployee } from '../components/tasks/TaskSidebar'
+import TaskSidebar, { formatTaskTime, type TaskViewMode, type TaskWithEmployee } from '../components/tasks/TaskSidebar'
 import TaskWorkspacePanel from '../components/tasks/TaskWorkspacePanel'
 import { useTaskPanelStore } from '../stores/task-panel.store'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
@@ -18,6 +18,7 @@ import useEmployeeChat from '../hooks/useEmployeeChat'
 import { getActiveBranchData } from '../hooks/chat-helpers'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 import { subscribePendingTaskJump } from '../utils/pending-task-jump'
+import { getDirName } from '../utils/format'
 import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import type { AvailableSkill } from '../components/workbench/ChatInput'
@@ -48,6 +49,7 @@ const Tasks: React.FC = () => {
   const { t } = useTranslation()
 
   const PAGE_SIZE = 20
+  const VIEW_MODE_KEY = 'tasks:viewMode'
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [employeesLoaded, setEmployeesLoaded] = useState(false)
@@ -61,6 +63,8 @@ const Tasks: React.FC = () => {
   // 右侧工作区面板（文件 / 终端 / 产物预览）
   const panelOpen = useTaskPanelStore((s) => s.open)
   const panelExpanded = useTaskPanelStore((s) => s.expanded)
+  // 仅在面板打开时进入全屏布局：关闭面板后全屏状态仍保留，但需正常显示任务列表与对话栏
+  const panelFullscreen = panelOpen && panelExpanded
   const openPanel = useTaskPanelStore((s) => s.openPanel)
   const closePanel = useTaskPanelStore((s) => s.closePanel)
   const resetPanel = useTaskPanelStore((s) => s.reset)
@@ -77,6 +81,8 @@ const Tasks: React.FC = () => {
   const [taskMode, setTaskMode] = useState<'new' | 'chat'>('new')
   // 新任务时用户选择的员工
   const [newTaskEmployeeId, setNewTaskEmployeeId] = useState<string | null>(null)
+  // 新任务时用户指定的工作区目录（null = 默认工作区，自动创建任务目录）
+  const [newTaskWorkspacePath, setNewTaskWorkspacePath] = useState<string | null>(null)
   // 当前对话对应的员工ID（传给 useEmployeeChat）
   const [currentEmployeeId, setCurrentEmployeeId] = useState<string | undefined>(undefined)
   // 待选择的对话ID（跨员工切换时使用）
@@ -87,14 +93,28 @@ const Tasks: React.FC = () => {
   const currentEmployeeIdRef = useRef<string | undefined>(currentEmployeeId)
   useEffect(() => { currentEmployeeIdRef.current = currentEmployeeId }, [currentEmployeeId])
 
-  // 搜索与筛选
+  // 搜索
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterEmployeeId, setFilterEmployeeId] = useState<string | null>(null)
+  // 任务列表视图：列表（时间分组）/ 员工分组
+  const [viewMode, setViewMode] = useState<TaskViewMode>(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_KEY)
+      return saved === 'employee' || saved === 'workspace' ? saved : 'list'
+    } catch {
+      return 'list'
+    }
+  })
   // 全文内容搜索匹配的任务 ID 集合（null = 未搜索，Set = 搜索结果）
   const [contentMatchIds, setContentMatchIds] = useState<Set<string> | null>(null)
 
-  // 是否使用全量模式：有搜索或筛选时使用全量加载，否则分页模式下初始加载20条，滚动加载更多
-  const useFullLoad = !!searchQuery.trim() || !!filterEmployeeId || !!contentMatchIds
+  // 是否使用全量模式：有搜索或分组视图时使用全量加载，否则分页模式下初始加载20条，滚动加载更多
+  // 分组视图需要拿到全部任务，才能让"每组只看最近5条"不受加载进度限制
+  const useFullLoad = !!searchQuery.trim() || !!contentMatchIds || viewMode !== 'list'
+
+  const handleViewModeChange = useCallback((mode: TaskViewMode) => {
+    setViewMode(mode)
+    try { localStorage.setItem(VIEW_MODE_KEY, mode) } catch {}
+  }, [])
 
   const loadEmployees = useCallback(async () => {
     try {
@@ -121,8 +141,8 @@ const Tasks: React.FC = () => {
         setHasMore(false)
       } else {
         // 分页模式：保持当前已加载条数，避免刷新（如选中任务）后列表被截断回 PAGE_SIZE
-        // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"
-        const limit = Math.max(PAGE_SIZE, loadedCountRef.current)
+        // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"；reset 时按首页大小重新加载
+        const limit = opts?.reset ? PAGE_SIZE : Math.max(PAGE_SIZE, loadedCountRef.current)
         const result = await window.electronAPI.conversation.listAll({ limit, offset: 0 })
         const arr = Array.isArray(result) ? result : []
         setGlobalTasks(arr)
@@ -159,12 +179,17 @@ const Tasks: React.FC = () => {
     }
   }, [PAGE_SIZE, loadedCount, loadingMore, useFullLoad])
 
-  // 搜索/筛选模式切换时：如果从分页模式切换到全量模式，需要重新全量加载
+  // 全量模式（搜索/员工分组）与分页模式切换时重新加载列表：
+  // 进入全量模式拉取全部；退回分页模式时按首页大小重载，相当于重新打开任务列表，避免一次渲染全部任务卡顿
+  const prevFullLoadRef = useRef(useFullLoad)
   useEffect(() => {
+    const wasFullLoad = prevFullLoadRef.current
+    prevFullLoadRef.current = useFullLoad
     if (useFullLoad) {
       loadGlobalTasks({ forceFull: true, reset: true })
+    } else if (wasFullLoad) {
+      loadGlobalTasks({ reset: true })
     }
-    // 仅在 useFullLoad 切换为 true 时触发；切换为 false 时由其他 effect 处理
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useFullLoad])
 
@@ -203,20 +228,17 @@ const Tasks: React.FC = () => {
     return () => { unsub?.() }
   }, [loadEmployees])
 
-  // 清理无效筛选选中态：filterEmployeeId / newTaskEmployeeId / currentEmployeeId  若不在员工列表中则重置
+  // 清理无效选中态：newTaskEmployeeId / currentEmployeeId 若不在员工列表中则重置
   useEffect(() => {
     if (!employeesLoaded) return
     const ids = new Set(employees.map(e => e.id))
-    if (filterEmployeeId && !ids.has(filterEmployeeId)) {
-      setFilterEmployeeId(null)
-    }
     if (newTaskEmployeeId && !ids.has(newTaskEmployeeId)) {
       setNewTaskEmployeeId(null)
     }
     if (currentEmployeeId && !ids.has(currentEmployeeId)) {
       setCurrentEmployeeId(undefined)
     }
-  }, [employees, employeesLoaded, filterEmployeeId, newTaskEmployeeId, currentEmployeeId])
+  }, [employees, employeesLoaded, newTaskEmployeeId, currentEmployeeId])
 
   // 新任务模式下自动选择第一个员工，避免未选员工时发送消息无效
   useEffect(() => {
@@ -283,7 +305,6 @@ const Tasks: React.FC = () => {
     handleCloseComparison,
     handleDeleteComparisonMessage,
     handleOpenComparison,
-    messagesEndRef,
     chatContainerRef,
     handleScroll,
     handleSend,
@@ -293,6 +314,7 @@ const Tasks: React.FC = () => {
     handleCopy,
     handleDeleteMessage,
     handleRegenerate,
+    handleRetryMessage,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
     handleToggleSegment,
@@ -310,7 +332,7 @@ const Tasks: React.FC = () => {
   // 不使用可变的员工级 selectedLlmProviderId，避免 A 任务设置的模型串扰到未绑定的 B 任务
   const sceneDefaultModel = useMemo(() => getCachedSceneDefaultModel('workbench'), [])
 
-  // 工作区面板根目录：对话模式用任务工作区，新任务模式用员工工作区
+  // 当前任务（含任务工作区路径），供状态栏、工作区面板与打开目录使用
   const activeTask = useMemo(
     () => globalTasks.find(t => t.id === activeConversationId),
     [globalTasks, activeConversationId],
@@ -341,12 +363,22 @@ const Tasks: React.FC = () => {
   const statusEmployee = taskMode === 'chat'
     ? employee
     : employees.find(e => e.id === newTaskEmployeeId)
+  // 顶部状态栏工作区：任务指定目录取目录名，自动创建的目录归入默认工作区；新任务用待发送的工作区
+  const statusWorkspacePath = taskMode === 'chat'
+    ? (statusConv?.workspace_mode === 'custom' ? statusConv?.workspace_path : null)
+    : newTaskWorkspacePath
+  const statusWorkspaceLabel = statusWorkspacePath ? getDirName(statusWorkspacePath) : t('tasks.defaultWorkspace')
+  // 工作区面板根目录：仅使用任务工作区（新任务或旧对话无目录时为空）
   const panelRootPath = useMemo(() => {
     if (taskMode === 'chat') {
-      return activeTask?.workspace_path || fetchedConv?.workspace_path || employee?.workspace_path || null
+      return activeTask?.workspace_path || fetchedConv?.workspace_path || null
     }
-    return employee?.workspace_path || null
-  }, [taskMode, activeTask, fetchedConv, employee])
+    return null
+  }, [taskMode, activeTask, fetchedConv])
+  // 状态栏工作区可打开的目录：任务模式打开任务工作区，新任务模式打开待发送的所选目录
+  const statusWorkspaceOpenPath = taskMode === 'chat'
+    ? (panelRootPath || undefined)
+    : (statusWorkspacePath || undefined)
   // 终端会话按任务隔离：任务内 cd 状态与运行中命令互不干扰
   const terminalId = taskMode === 'chat' && activeConversationId
     ? `conv:${activeConversationId}`
@@ -403,19 +435,27 @@ const Tasks: React.FC = () => {
       return
     }
     let cancelled = false
-    window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: currentEmployeeId })
-      .then((result: any) => {
-        if (cancelled) return
-        const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
-          id: s.id,
-          name: s.name,
-          description: s.description || '',
-          userInvocable: s.userInvocable !== false,
-        }))
-        setAvailableSkills(skills)
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
+    const load = () => {
+      window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: currentEmployeeId })
+        .then((result: any) => {
+          if (cancelled) return
+          const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            description: s.description || '',
+            userInvocable: s.userInvocable !== false,
+          }))
+          setAvailableSkills(skills)
+        })
+        .catch(() => {})
+    }
+    load()
+    // 技能安装/启停/分配变更后即时刷新技能下拉，无需重启
+    const unsubscribe = window.electronAPI.skillRegistry.onChanged?.(load)
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
   }, [currentEmployeeId])
 
   // 检测 employee 加载完成，执行待选择的对话
@@ -431,9 +471,6 @@ const Tasks: React.FC = () => {
   // 过滤后的任务列表（支持标题/员工名匹配 + 全文内容搜索）
   const filteredTasks = useMemo(() => {
     let result = globalTasks
-    if (filterEmployeeId) {
-      result = result.filter(t => t.employee_id === filterEmployeeId)
-    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       result = result.filter(t =>
@@ -443,7 +480,7 @@ const Tasks: React.FC = () => {
       )
     }
     return result
-  }, [globalTasks, filterEmployeeId, searchQuery, contentMatchIds])
+  }, [globalTasks, searchQuery, contentMatchIds])
 
   // 新建任务（保留当前已选员工，清除激活对话避免新消息发到旧对话）
   // 注意：不在此处清空草稿缓存，用户从任务切换回新任务时保留之前输入的草稿；
@@ -498,7 +535,7 @@ const Tasks: React.FC = () => {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
-      // 任务目录非空时，询问是否一并删除任务目录
+      // 工作区目录非空时，询问是否一并删除工作区目录
       if (res?.taskDirNonEmpty && res?.taskDir) {
         modal.confirm({
           title: t('workbench.deleteTaskDirTitle'),
@@ -531,7 +568,7 @@ const Tasks: React.FC = () => {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
-      // 存在非空任务目录时，询问是否一并删除
+      // 存在非空工作区目录时，询问是否一并删除
       if (nonEmptyDirs.length > 0) {
         modal.confirm({
           title: t('workbench.deleteTaskDirManyTitle'),
@@ -666,13 +703,16 @@ const Tasks: React.FC = () => {
     setSelectedModels([])
     setInputModels([])
     clearNewTaskDraft()
-    await handleSend(content, images, models, options)
+    // 新建任务时把选定的工作区目录传给会话创建（null 表示默认工作区）
+    const workspacePath = newTaskWorkspacePath || undefined
+    setNewTaskWorkspacePath(null)
+    await handleSend(content, images, models, { ...options, workspacePath })
     // 发送后切换到对话模式；任务列表由 activeConversationId/taskMode 变化触发的
     // useEffect 刷新（此时 sendMessage 已完成持久化，listAll 一定能查到新任务）
     if (taskMode === 'new') {
       setTaskMode('chat')
     }
-  }, [handleSend, taskMode, clearNewTaskDraft, setInputModels])
+  }, [handleSend, taskMode, clearNewTaskDraft, setInputModels, newTaskWorkspacePath])
 
   // 从 chat 切回 new 时，用 localStorage 的草稿同步到 inputDraft（供 ChatInput 重新挂载时读取）
   // 切换员工时不再恢复草稿，保留当前编辑器内容
@@ -701,6 +741,34 @@ const Tasks: React.FC = () => {
     setCurrentEmployeeId(empId)
     prevEmployeeLoadedRef.current = false
   }, [])
+
+  // 新任务工作区选择器的「最近使用」列表：取用户手动指定过的目录（任务列表按活跃时间倒序）
+  const recentWorkspaces = useMemo(() => {
+    const map = new Map<string, { path: string; label: string }>()
+    for (const task of globalTasks) {
+      if (task.workspace_mode !== 'custom' || !task.workspace_path) continue
+      const path = task.workspace_path.replace(/[\\/]+$/, '')
+      if (!path) continue
+      // 路径大小写不敏感（Windows），统一小写去重
+      const key = path.toLowerCase()
+      if (!map.has(key)) map.set(key, { path, label: getDirName(path) })
+    }
+    return Array.from(map.values())
+  }, [globalTasks])
+
+  // 新任务：选择用户指定的工作区目录（选择后选择器切换到该目录，默认工作区不受影响）
+  const handlePickWorkspace = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.app.showOpenDialog({
+        title: t('tasks.chooseWorkspaceDir'),
+        properties: ['openDirectory'],
+      })
+      if (result.canceled || !result.filePaths.length) return
+      setNewTaskWorkspacePath(result.filePaths[0])
+    } catch {
+      message.error(t('tasks.selectWorkspaceFailed'))
+    }
+  }, [t, message])
 
   // 生成标题（适用于任意任务，不限于当前激活任务）
   const handleGenerateTitle = useCallback(async (taskId: string) => {
@@ -788,16 +856,15 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  // 打开当前员工的工作区目录
-  const handleOpenWorkspace = useCallback(() => {
-    openDirInExplorer(employee?.workspace_path)
-  }, [employee, openDirInExplorer])
-
   // 打开当前任务的工作区目录
   const handleOpenTaskWorkspace = useCallback(() => {
-    const activeTask = globalTasks.find(t => t.id === activeConversationId)
-    openDirInExplorer(activeTask?.workspace_path)
-  }, [globalTasks, activeConversationId, openDirInExplorer])
+    openDirInExplorer(panelRootPath || undefined)
+  }, [panelRootPath, openDirInExplorer])
+
+  // 状态栏工作区标签：点击直接在系统文件管理器中打开
+  const handleOpenStatusWorkspace = useCallback(() => {
+    openDirInExplorer(statusWorkspaceOpenPath)
+  }, [statusWorkspaceOpenPath, openDirInExplorer])
 
   // 打开执行当前任务的数字员工设置抽屉
   const handleOpenEmployeeSettings = useCallback(() => {
@@ -817,19 +884,13 @@ const Tasks: React.FC = () => {
         onClick: handleOpenTaskWorkspace,
       },
       {
-        key: 'openWorkspace',
-        icon: <FolderOpenOutlined />,
-        label: t('workbench.openWorkspace'),
-        onClick: handleOpenWorkspace,
-      },
-      {
         key: 'openEmployeeSettings',
         icon: <SettingOutlined />,
         label: t('workbench.openEmployeeSettings'),
         onClick: handleOpenEmployeeSettings,
       },
     ]
-  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace, handleOpenEmployeeSettings])
+  }, [t, handleOpenTaskWorkspace, handleOpenEmployeeSettings])
 
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }
@@ -886,6 +947,22 @@ const Tasks: React.FC = () => {
     return () => window.removeEventListener('conversation-title-updated', handler)
   }, [loadGlobalTasks])
 
+  // 其他窗口（小秘书 / 自动化）创建、改名或删除任务：实时刷新列表，避免要等任务完成才能看到
+  useEffect(() => {
+    let timer: number | null = null
+    const off = window.electronAPI.conversation.onChanged(() => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        loadGlobalTasksRef.current()
+      }, 200)
+    })
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      off?.()
+    }
+  }, [])
+
   if (!employeesLoaded) {
     return (
       <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -911,15 +988,14 @@ const Tasks: React.FC = () => {
       {/* 主体 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* 全屏预览模式下隐藏任务列表与对话栏，侧边栏占满 */}
-        {!panelExpanded && showSidePanel && (
+        {!panelFullscreen && showSidePanel && (
           <TaskSidebar
             tasks={filteredTasks}
             activeTaskId={taskMode === 'new' ? null : activeConversationId}
-            employees={employees}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            filterEmployeeId={filterEmployeeId}
-            onFilterChange={setFilterEmployeeId}
+            viewMode={viewMode}
+            onViewModeChange={handleViewModeChange}
             onSelect={handleSelectTask}
             onDelete={handleDeleteTask}
             onDeleteMany={handleDeleteMany}
@@ -936,12 +1012,12 @@ const Tasks: React.FC = () => {
           />
         )}
 
-        {!panelExpanded && (
+        {!panelFullscreen && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* 顶部状态栏：侧边栏展开/新建任务 + 任务标题/员工/时间 + 右侧操作区 */}
-          <div style={{
-            flexShrink: 0, height: 40, display: 'flex', alignItems: 'center', gap: 8,
-            padding: '0 12px',
+          <div className="wa-workbench-topbar" style={{
+            flexShrink: 0, height: 46, display: 'flex', alignItems: 'center', gap: 8,
+            padding: '0 14px',
           }}>
             {!showSidePanel && (
               <>
@@ -963,7 +1039,7 @@ const Tasks: React.FC = () => {
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
               <span title={statusConv?.title} style={{
-                fontSize: 13, fontWeight: 600, color: token.colorText,
+                fontSize: 13.5, fontWeight: 620, color: token.colorText, letterSpacing: '-0.01em',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
               }}>
                 {statusConv?.title || t('tasks.newTask')}
@@ -974,6 +1050,7 @@ const Tasks: React.FC = () => {
                     <EmployeeAvatar
                       avatarIcon={statusEmployee.avatar_icon}
                       avatarColor={statusEmployee.avatar_color}
+                      avatarImage={statusEmployee.avatar_image}
                       avatarType={statusEmployee.avatar_type}
                       employeeId={statusEmployee.id}
                       source={statusEmployee.source}
@@ -990,6 +1067,27 @@ const Tasks: React.FC = () => {
               )}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+              {/* 工作区目录：点击打开对应文件夹 */}
+              <Tooltip title={statusWorkspaceOpenPath || statusWorkspaceLabel}>
+                <span
+                  className={statusWorkspaceOpenPath ? 'wa-topbar-workspace' : undefined}
+                  onClick={handleOpenStatusWorkspace}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 200,
+                    height: 22, padding: '0 8px', borderRadius: 6, lineHeight: 1,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    color: token.colorTextSecondary, fontSize: 12,
+                    cursor: statusWorkspaceOpenPath ? 'pointer' : 'default',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {statusWorkspaceLabel}
+                  </span>
+                  <span style={{ width: 1, height: 12, background: token.colorBorderSecondary, flexShrink: 0 }} />
+                  <FolderOutlined style={{ fontSize: 12 }} />
+                </span>
+              </Tooltip>
               {/* 插件视图注入点：任务对话页头部操作区 */}
               {taskMode === 'chat' && <PluginViewSlot view="chat.header" />}
               {taskMode === 'chat' && (
@@ -1047,6 +1145,13 @@ const Tasks: React.FC = () => {
                 availableSkills={availableSkills}
                 centerMode={true}
                 showEmployeeSelector={true}
+                workspaceSelector={{
+                  path: newTaskWorkspacePath,
+                  recent: recentWorkspaces,
+                  onSelectDefault: () => setNewTaskWorkspacePath(null),
+                  onSelectPath: setNewTaskWorkspacePath,
+                  onPick: handlePickWorkspace,
+                }}
                 employees={employees}
                 selectedEmployeeId={newTaskEmployeeId || undefined}
                 onSelectEmployee={handleSelectEmployee}
@@ -1073,13 +1178,14 @@ const Tasks: React.FC = () => {
                 />
               ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
+                  className="wa-message-scroll"
                   style={{
                     flex: 1,
                     overflow: 'auto',
-                    padding: '16px 3%',
+                    padding: '18px 3% 8px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 16,
+                    gap: 20,
                   }}
                 >
                   <MessageList
@@ -1090,6 +1196,7 @@ const Tasks: React.FC = () => {
                     onCopy={handleCopy}
                     onDeleteMessage={handleDeleteMessage}
                     onRegenerate={handleRegenerate}
+                    onRetry={handleRetryMessage}
                     onSwitchModelRegenerate={handleSwitchModelRegenerate}
                     onEditAndResubmit={handleEditAndResubmit}
                     onToggleSegment={handleToggleSegment}
@@ -1103,7 +1210,6 @@ const Tasks: React.FC = () => {
                     onCompact={handleCompact}
                     assistantEmployee={employee}
                   />
-                  <div ref={messagesEndRef} />
                 </div>
               )}
               {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}

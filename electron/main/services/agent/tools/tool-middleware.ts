@@ -50,7 +50,7 @@ export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolM
     name: 'timeout',
     fn: async (toolName, _args, next) => {
       // 不删除 _timeoutMs：retry 的后续尝试会重新进入本中间件，
-      // 删除会导致自定义超时（如交互工具 305s）在第二次尝试时丢失、回退到默认 30s。
+      // 删除会导致可重试工具（如 shell_exec 310s）在第二次尝试时丢失自定义超时、回退到默认 30s。
       // 该字段仅存在于派发给中间件的参数副本上，不会传给工具 handler。
       const timeoutMs = _args._timeoutMs ?? defaultTimeoutMs
       // 中止信号（dispatcher 注入的 _signal）：用户停止生成时立即失败，不等 handler/超时

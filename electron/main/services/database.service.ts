@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import PathService from './path.service'
 import { createLogger } from './logger'
+import { startupMark } from './startup-timer'
 import { migrateMemorySchema } from './employee-memory-migrations'
 import {
   ensureConversationFts,
@@ -15,6 +16,7 @@ class DatabaseService {
   private db: Database.Database
   private static instance: DatabaseService
   private checkpointTimer: NodeJS.Timeout | null = null
+  private cleanupTimer: NodeJS.Timeout | null = null
 
   private constructor() {
     const pathService = PathService.getInstance()
@@ -34,8 +36,23 @@ class DatabaseService {
     this.db.pragma('wal_autocheckpoint = 1000')
 
     this.initializeSchema()
-    this.cleanupOldConversations()
+    startupMark('数据库 schema 初始化完成')
+    this.scheduleStartupCleanup()
     this.startPeriodicCheckpoint()
+  }
+
+  /**
+   * 启动清理延后执行：删除过期空对话 / 裁剪超大对话会同步扫描大表（实测约 270ms），
+   * 放在窗口显示之后做，避免阻塞首屏
+   */
+  private scheduleStartupCleanup(): void {
+    if (this.cleanupTimer) return
+    this.cleanupTimer = setTimeout(() => {
+      this.cleanupTimer = null
+      this.cleanupOldConversations()
+      startupMark('数据库启动清理完成（后台）')
+    }, 10_000)
+    if (this.cleanupTimer.unref) this.cleanupTimer.unref()
   }
 
   /** 定期手动 checkpoint，防止 WAL 文件无限增长 */
@@ -141,6 +158,8 @@ class DatabaseService {
         -- 自定义头像：图标 key（robot/user/... 空=按 avatar_type 预设或默认）与颜色 hex（空=按 id 自动配色）
         avatar_icon TEXT DEFAULT '',
         avatar_color TEXT DEFAULT '',
+        -- 上传头像图片（data URL，空=用图标+颜色）
+        avatar_image TEXT DEFAULT '',
         default_skill_id TEXT,
         profile_json TEXT DEFAULT '',
         arch_version INTEGER NOT NULL DEFAULT 1,
@@ -195,6 +214,8 @@ class DatabaseService {
         collection_ids_json TEXT DEFAULT '',
         -- 任务工作区目录（每个任务独立子目录）
         workspace_path TEXT DEFAULT '',
+        -- 工作区类型：default=自动创建的任务目录（归入"默认工作区"），custom=用户指定目录
+        workspace_mode TEXT DEFAULT 'default',
         -- 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤
         parent_conversation_id TEXT DEFAULT '',
         last_message_at INTEGER,
@@ -453,11 +474,19 @@ class DatabaseService {
     for (const [name, ddl] of [
       ['avatar_icon', "TEXT DEFAULT ''"],
       ['avatar_color', "TEXT DEFAULT ''"],
+      ['avatar_image', "TEXT DEFAULT ''"],
     ] as const) {
       if (employeeColumns.length > 0 && !employeeColumns.some(c => c.name === name)) {
         this.db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${ddl}`)
         logger.info(`迁移：employees 增加 ${name} 列`)
       }
+    }
+
+    // 任务工作区类型增量列（幂等）：default=自动任务目录，custom=用户指定目录
+    const conversationColumns = this.db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
+    if (conversationColumns.length > 0 && !conversationColumns.some(c => c.name === 'workspace_mode')) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN workspace_mode TEXT DEFAULT 'default'")
+      logger.info('迁移：conversations 增加 workspace_mode 列')
     }
 
     // 模板任务运行记录增量列：运行实际入参（幂等）

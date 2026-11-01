@@ -17,18 +17,30 @@ const AnswerSegmentInner: React.FC<{
   // 避免 2000 token 流式输出触发 2000 次完整 markdown+KaTeX 重解析
   const deferredContent = useDeferredValue(seg.content || '')
 
+  // 无数学标记时跳过 remark-math/rehype-katex：KaTeX 解析是 markdown 渲染的主要开销之一，
+  // 绝大多数回复并不含公式，按内容特征裁剪可显著降低每次重解析的成本
+  const hasMath = useMemo(() => /\$|\\\(|\\\[|\\begin\{/.test(deferredContent), [deferredContent])
+  const remarkPlugins = useMemo(
+    () => (hasMath ? [remarkGfm, remarkMath] : [remarkGfm]),
+    [hasMath]
+  )
+  const rehypePlugins = useMemo(
+    () => (hasMath ? [rehypeKatex] : []),
+    [hasMath]
+  )
+
   // 仅当内容真正变化时才重建 ReactMarkdown 子树
   const markdownNode = useMemo(
     () => (
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={markdownComponents}
       >
         {deferredContent}
       </ReactMarkdown>
     ),
-    [deferredContent]
+    [deferredContent, remarkPlugins, rehypePlugins]
   )
 
   return (

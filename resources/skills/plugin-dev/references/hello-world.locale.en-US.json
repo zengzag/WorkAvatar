@@ -87,5 +87,9 @@
   "helloWorld.tool.addDesc": "Write a memo into the Hello World plugin memo table",
   "helloWorld.tool.addParamContent": "Memo content",
   "helloWorld.tool.queryTitle": "Query memos",
-  "helloWorld.tool.queryDesc": "Query the most recent memos written by this plugin"
+  "helloWorld.tool.queryDesc": "Query the most recent memos written by this plugin",
+  "settings.greeting": "Greeting",
+  "settings.greetingDesc": "Greeting prefix used by greet (edit in Settings → Plugins → Settings)",
+  "settings.shout": "Uppercase output",
+  "settings.shoutDesc": "Uppercase the greeting returned by greet"
 }

@@ -26,7 +26,7 @@ export const launchAgentsTool: ToolDefinition = {
   id: 'launch_agents',
   name: 'launch_agents',
   title: '并行派发子任务',
-  summary: '拆解多个独立子任务并行派发，立即返回 runIds（可临时角色）',
+  summary: 'Fan out multiple independent sub-tasks in parallel and get their runIds immediately (ephemeral roles supported).',
   description: `Fan out several independent sub-tasks in one call and get their runIds back immediately. Use it whenever 2+ sub-tasks are genuinely independent: emit them all in a single call rather than one by one, then collect the results with await_agents. Use delegate_to_employee instead when sub-tasks depend on each other.
 
 Hard limits: never delegate to yourself; delegation depth is capped at ${MAX_DELEGATION_DEPTH} levels; tasks must not depend on each other.`,
@@ -85,7 +85,7 @@ export const awaitAgentsTool: ToolDefinition = {
   id: 'await_agents',
   name: 'await_agents',
   title: '等待子任务完成',
-  summary: '等待一组子任务（runIds）完成并聚合结果',
+  summary: 'Wait for a set of sub-task runIds and aggregate their results.',
   description: `Wait for runIds returned by launch_agents / delegate_to_employee and aggregate their results (summary + generated files + token usage).
 
 Each entry is ✓ completed, ⏳ still running, or ✗ failed. ⏳ is NOT a failure — those runs keep going in the background; call await_agents again or read the notice via read_run_notifications. A failed run does not block the others. Summarize from the returned results and file lists instead of replaying the sub-agents' traces to the user.

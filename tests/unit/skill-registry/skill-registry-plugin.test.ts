@@ -125,6 +125,14 @@ describe('SkillRegistryService 插件技能（source=plugin）', () => {
     expect(skill!.references[0].name).toBe('api.md')
   })
 
+  it('版本号解析：顶层 version 优先，回退 metadata.version，都没有则默认 1.0.0', () => {
+    expect(svc.parseSkillMd('---\nname: a\ndescription: 测试\nversion: 1.2.3\n---\n').version).toBe('1.2.3')
+    expect(
+      svc.parseSkillMd('---\nname: b\ndescription: 测试\nmetadata: {"hermes":{"tags":["x"]},"version":"3.4.3"}\n---\n').version
+    ).toBe('3.4.3')
+    expect(svc.parseSkillMd('---\nname: c\ndescription: 测试\n---\n').version).toBe('1.0.0')
+  })
+
   it('插件技能默认进入可用池，可分配给员工（getEmployeeSkills 可见）', () => {
     const skillsRoot = makePluginSkillDir('data-expert')
     svc.registerPluginSkills(pluginId, skillsRoot)

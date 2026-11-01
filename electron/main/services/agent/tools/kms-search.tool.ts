@@ -40,7 +40,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
 
   /**
    * 附加搜索知识卡片：在 kms_search 主结果后追加匹配的知识卡片摘要
-   * 让 LLM 一次拿到文档片段 + 已沉淀的卡片结论，无需单独调用 kms_knowledge_card
+   * 让 LLM 一次拿到文档片段 + 已沉淀的卡片结论
    */
   async function appendKnowledgeCards(query: string): Promise<string> {
     try {
@@ -69,7 +69,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
 
   /**
    * 附加搜索合集摘要：在 kms_search 主结果后追加匹配的合集摘要
-   * 让 LLM 一次拿到文档片段 + 合集整体结论，无需单独调用 kms_collection_overview
+   * 让 LLM 一次拿到文档片段 + 合集整体结论
    */
   function appendCollectionSummaries(query: string): string {
     try {
@@ -93,24 +93,24 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     id: 'kms_search',
     name: 'kms_search',
     title: '本地资料检索',
-    summary: '检索本地资料库内容（PDF/Word/Excel/PPT/Markdown等），结果自动附加相关知识卡片与合集摘要。需要查找资料库文档、获取文档片段时使用。',
-    description: '对本地资料库进行检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。支持关键词检索（keyword）与关键词+向量混合检索（hybrid，兼顾精确匹配与语义相似，概念性查询建议）。检索结果会自动附加匹配的知识卡片（已沉淀的高频主题摘要）与合集摘要，无需单独调用其他工具。',
+    summary: 'Search the local knowledge base (PDF/Word/Excel/PPT/Markdown) with keyword or hybrid retrieval; results include related knowledge cards and collection summaries.',
+    description: 'Search the local knowledge base. Supports PDF, Word, Excel, PowerPoint, Markdown, and TXT. Use keyword retrieval (keyword) for exact terms or hybrid retrieval (hybrid) for conceptual questions that need semantic similarity. Results include matching knowledge cards and collection summaries, so no separate tool call is needed.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: '检索查询语句或自然语言问题',
+          description: 'Search query or natural-language question',
         },
         search_mode: {
           type: 'string',
           enum: ['keyword', 'hybrid'],
-          description: '检索方式：keyword 关键词检索（默认） / hybrid 关键词+向量混合检索（兼顾精确匹配与语义相似，概念性查询建议）',
+          description: 'Retrieval mode: keyword (default) for exact terms; hybrid combines keywords with vector search for conceptual queries',
           default: 'keyword',
         },
         top_k: {
           type: 'number',
-          description: '返回结果数量（1-20，默认5）',
+          description: 'Number of results to return (1-20, default 5)',
           minimum: 1,
           maximum: 20,
           default: 5,
@@ -118,25 +118,25 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
         collection_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '限定检索的合集ID列表（可选）。传入后只在指定合集内的文件中检索。不传则按会话默认范围或全部索引文件。',
+          description: 'Optional collection ids to restrict the search to. Omit to use the conversation scope or all indexed files.',
         },
         dir_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '限定检索的索引目录ID列表（可选）',
+          description: 'Optional indexed directory ids to restrict the search to',
         },
         file_extensions: {
           type: 'array',
           items: { type: 'string' },
-          description: '限定文件扩展名（可选，如 ["pdf", "docx", "md"]）',
+          description: 'Optional file extensions to include (e.g. ["pdf", "docx", "md"])',
         },
         time_range_start: {
           type: 'number',
-          description: '文件修改时间范围起始（毫秒时间戳，可选）',
+          description: 'Optional file modification time lower bound (epoch milliseconds)',
         },
         time_range_end: {
           type: 'number',
-          description: '文件修改时间范围结束（毫秒时间戳，可选）',
+          description: 'Optional file modification time upper bound (epoch milliseconds)',
         },
       },
       required: ['query'],
@@ -236,45 +236,45 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     id: 'kms_get_content',
     name: 'kms_get_content',
     title: '获取本地文件内容',
-    summary: '读取资料库中文件的正文、目录或段落信息。需先用 kms_search 获取 file_id。',
-    description: '获取本地资料库中文件的内容。通过 view 参数切换不同视图：view=content（默认）获取文件正文片段，支持按段落ID、字符偏移、行号定位；view=toc 获取文件的层级目录结构（章节标题与段落ID）；view=paragraphs 获取文件所有段落的摘要与元信息。需先通过 kms_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
+    summary: 'Read a file\'s content, table of contents, or paragraph summaries from the knowledge base. Obtain file_id from kms_search first.',
+    description: 'Get a knowledge-base file\'s content. The view parameter selects the view: content (default) returns body text and supports targeting by paragraph id, character offset, or start_line (reads a fixed window from that line); toc returns the heading hierarchy with paragraph ids; paragraphs returns all paragraph summaries and metadata. Obtain file_id from kms_search first. file_id is a plain id such as "8170964a", without prefixes like "f:".',
     parameters: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: '文件ID，来自 kms_search 结果中的 "file_id" 字段（如 "8170964a"），不要带 "f:" 前缀',
+          description: 'File id from the "file_id" field of kms_search, e.g. "8170964a" (no "f:" prefix)',
         },
         view: {
           type: 'string',
           enum: ['content', 'toc', 'paragraphs'],
-          description: '视图模式：content 文件正文（默认） / toc 文件目录结构 / paragraphs 文件所有段落摘要',
+          description: 'View: content (default body text) / toc (heading hierarchy) / paragraphs (all paragraph summaries)',
           default: 'content',
         },
         paragraph_id: {
           type: 'string',
-          description: '段落ID（view=content 时可选，指定后返回该段落内容。来自结果中的 "paragraph_id" 字段，不要带 "p:" 前缀）',
+          description: 'Optional paragraph id for view=content, from the "paragraph_id" field (no "p:" prefix)',
         },
         paragraph_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '段落ID数组（view=content 时可选，批量获取多个段落的摘要与元信息，来自 kms_search 结果或 view=toc 的输出）',
+          description: 'Optional paragraph id array for view=content, to batch-read summaries and metadata',
         },
         start_offset: {
           type: 'number',
-          description: '起始字符偏移（view=content 时可选）',
+          description: 'Optional start character offset for view=content',
         },
         end_offset: {
           type: 'number',
-          description: '结束字符偏移（view=content 时可选）',
+          description: 'Optional end character offset for view=content',
         },
         start_line: {
           type: 'number',
-          description: '起始行号（view=content 时可选）',
+          description: 'Optional start line for view=content',
         },
         max_chars: {
           type: 'number',
-          description: '最大返回字符数（view=content 时生效，默认5000）',
+          description: 'Maximum characters to return for view=content (default 5000)',
           default: 5000,
         },
       },

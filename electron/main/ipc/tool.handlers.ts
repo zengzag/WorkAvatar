@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   ToolAssignParams,
@@ -271,7 +271,7 @@ export function registerToolHandlers(
 
   /**
    * 获取按分类聚合的员工工具列表
-   * 返回：每个分类包含总开关 + 分类包含的工具明细 + 模式聚合（on/on_demand/off/mixed）
+   * 返回：每个分类包含总开关 + 分类包含的工具明细 + 模式聚合（on/on_demand/off）
    */
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, (params: { employee_id: string }) => {
     const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as Array<{ tool_id: string; tool_mode: string }>
@@ -375,7 +375,7 @@ export function registerToolHandlers(
       mode: params.mode,
     }))
 
-    // 批量 SQL 写入：因为预编译语句最多支持 20 组 values，按批处理
+    // 分批写入，控制单条 SQL 的绑定参数数量与语句长度
     for (let offset = 0; offset < rows.length; offset += 20) {
       const batch = rows.slice(offset, offset + 20)
       const bindParams: any[] = []
@@ -396,14 +396,21 @@ export function registerToolHandlers(
     return skillRegistry.getInstalledSkills()
   })
 
+  /** 技能集合/员工技能开关变更后广播，渲染端据此即时刷新技能下拉（无需重启） */
+  const broadcastSkillRegistryChanged = () => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try { win.webContents.send(IPC_CHANNELS.SKILL_REGISTRY_CHANGED) } catch { /* 窗口销毁中忽略 */ }
+    }
+  }
+
   // 业务语义错误返回 { success: false, error }，保留原 try-catch
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_INSTALL, async (_, params: { source: 'directory' | 'zip'; path: string }) => {
     try {
-      if (params.source === 'directory') {
-        return await skillRegistry.installFromDirectory(params.path)
-      } else {
-        return await skillRegistry.installFromZip(params.path)
-      }
+      const result = params.source === 'directory'
+        ? await skillRegistry.installFromDirectory(params.path)
+        : await skillRegistry.installFromZip(params.path)
+      if (result.success) broadcastSkillRegistryChanged()
+      return result
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) }
     }
@@ -413,6 +420,7 @@ export function registerToolHandlers(
     const result = await skillRegistry.uninstallSkill(id)
     // 卸载可能影响多个员工，清空全部 agent 缓存（低频操作）
     EmployeeAgentService.getInstance().clearAgentCache()
+    if (result) broadcastSkillRegistryChanged()
     return { success: result }
   })
 
@@ -424,6 +432,7 @@ export function registerToolHandlers(
     if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) return { success: false, error: 'registered employee skill config is read-only' }
     skillRegistry.assignSkillToEmployee(params.skill_id, params.employee_id)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
+    broadcastSkillRegistryChanged()
     return { success: true }
   })
 
@@ -431,6 +440,7 @@ export function registerToolHandlers(
     if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) return { success: false, error: 'registered employee skill config is read-only' }
     skillRegistry.removeSkillFromEmployee(params.skill_id, params.employee_id)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
+    broadcastSkillRegistryChanged()
     return { success: true }
   })
 
@@ -438,6 +448,7 @@ export function registerToolHandlers(
     if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) return { success: false, error: 'registered employee skill config is read-only' }
     skillRegistry.toggleSkillForEmployee(params.skill_id, params.employee_id, params.enabled)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
+    broadcastSkillRegistryChanged()
     return { success: true }
   })
 

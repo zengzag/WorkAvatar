@@ -87,5 +87,9 @@
   "helloWorld.tool.addDesc": "向 Hello World 插件的留言表写入一条留言",
   "helloWorld.tool.addParamContent": "留言内容",
   "helloWorld.tool.queryTitle": "查询留言",
-  "helloWorld.tool.queryDesc": "查询本插件最近写入的留言列表"
+  "helloWorld.tool.queryDesc": "查询本插件最近写入的留言列表",
+  "settings.greeting": "问候语",
+  "settings.greetingDesc": "greet 调用时使用的问候前缀（在「设置 → 插件 → 插件设置」中修改）",
+  "settings.shout": "大写输出",
+  "settings.shoutDesc": "开启后 greet 返回的问候语转为大写"
 }

@@ -1,3 +1,5 @@
+import type { PluginSettingField } from '../../../plugin-sdk/src'
+
 /** 插件分发包自定义扩展名（不含点）：内部仍为 zip 归档，仅换后缀便于识别与文件关联 */
 export const PLUGIN_PACKAGE_EXT = 'wap'
 
@@ -24,6 +26,10 @@ export const PLUGIN_CHANNELS = {
   PLUGIN_LIST_COMMANDS: 'plugin-host:list-commands',
   /** 按文件扩展名解析应路由到的插件 id（无插件声明时返回 null） */
   PLUGIN_RESOLVE_FILE_OWNER: 'plugin-host:resolve-file-owner',
+  /** 读取插件设置（schema + 当前值，供设置页渲染插件参数表单） */
+  PLUGIN_GET_SETTINGS: 'plugin-host:get-settings',
+  /** 保存插件设置（校验后落库并通知插件热应用） */
+  PLUGIN_SET_SETTINGS: 'plugin-host:set-settings',
   /** 打开用户插件目录 */
   PLUGIN_OPEN_DIR: 'plugin-host:open-dir',
 } as const
@@ -56,6 +62,8 @@ export interface PluginInfo {
   dependencies?: Record<string, string>
   nav?: PluginNavItemInfo
   hasRenderer: boolean
+  /** 是否在 manifest 中声明了设置项（设置页展示「插件设置」入口） */
+  hasSettings: boolean
 }
 
 /** 渲染端加载动态路由所需的插件信息（仅 enabled 且激活成功） */
@@ -120,6 +128,22 @@ export interface PluginImportResult {
     count?: number
   }
   message?: string
+}
+
+/** 插件设置：schema（manifest.settings）与当前生效值（已合并默认值） */
+export interface PluginSettingsInfo {
+  fields: PluginSettingField[]
+  values: Record<string, unknown>
+}
+
+export interface PluginSettingsParams {
+  pluginId: string
+}
+
+export interface PluginSetSettingsParams {
+  pluginId: string
+  /** 只提交需要变更的键，宿主按 schema 校验后与存量合并 */
+  values: Record<string, unknown>
 }
 
 /** 插件贡献的对话消息快捷操作（前端据此渲染按钮） */

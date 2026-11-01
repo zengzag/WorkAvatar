@@ -10,8 +10,8 @@
 <plugin-root>/
 ├── manifest.json          # 唯一信任入口
 ├── dist/
-│   ├── main/index.cjs     # 主进程入口：export { migrations?, activate, deactivate? }
-│   └── renderer/index.js  # 渲染端入口：export default { routes, views?, navIcon?, init?, dispose? }
+│   ├── main/index.cjs     # 主进程入口：export { migrations?, activate, deactivate?, onSettingsChanged? }
+│   └── renderer/index.js  # 渲染端入口（无界面插件可省略）：export default { routes, views?, navIcon?, init?, dispose? }
 ├── resources/             # 自包含重资源（onnx 模型等），只读
 ├── locale/                # zh-CN.json / en-US.json
 └── src/ + package.json + tsconfig.json   # 开发源码（默认随 .wap 分发的构建输入，便于二次开发重建）
@@ -34,6 +34,7 @@
 | `ipc` | | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀 |
 | `capabilities` | | 能力域授权声明（见 §4） |
 | `nav` | | 导航项：`label`（文案或 i18n key）、`icon`（SVG 字符串）、`order`（默认 100）、`detachable` |
+| `settings` | | 插件参数表单（宿主「设置 → 插件 → 插件设置」渲染）：`key`/`type`/`label`/`default`/`options` 等，详见 API_REFERENCE §5.1 |
 | `dependencies` | | 插件依赖（pluginId → semver range）。缺失/未启用/无效/版本不满足都会标记 invalid 并提示，激活按拓扑顺序先激活依赖方 |
 
 ## 3. 生命周期
@@ -46,13 +47,15 @@
   → 逐插件执行未应用的 migrations（原子事务 + plugin_migrations 版本记录）
   → 逐插件 activate(ctx)（单插件失败不阻塞宿主，标记 error）
   → 贡献点落库（agent 工具 / MCP 工具 / 文件关联 / 快捷键 / 视图 / 命令 / 导航）
-渲染端启动
+渲染端启动（仅声明了 renderer 的插件）
   → 拉取已启用插件清单
   → import('plugin://<id>/index.js')
   → init(host) → 注册路由 / 视图 / 导航 / locale
 退出 / 禁用
   → deactivate()（插件释放资源：关定时器、关窗口、关 DB 连接）
 ```
+
+> **无界面插件**：省略 `renderer` 与 `nav` 后仍可完整注册 agent 工具、MCP 工具、技能（`<root>/skills/`）、命令、定时任务与数字员工；运行参数通过 manifest `settings` 声明，由宿主设置页渲染，插件经 `ctx.settings` 读取。
 
 插件变更（启停 / 导入 / 删除 / 升级）**即时生效，无需重启**：宿主只对受影响插件做增量激活/下线，渲染端经 `plugin:changed` 广播增量加载/卸载（免整页刷新，不打断正在进行的智能体生成）。升级已加载插件时渲染端动态 import 带版本参数防模块缓存。手动放入插件目录后可在插件管理页点击「刷新」触发重新扫描。
 

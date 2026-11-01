@@ -27,10 +27,10 @@ export const filesEditTool: ToolDefinition = {
   id: 'files_edit',
   name: 'files_edit',
   title: '修改文件',
-  summary: '精确修改一个或多个文件（替换或整文件写入），合并为一次确认，失败则整体不落盘。',
+  summary: 'Edit one or more files precisely (exact replacements or whole-file writes) under a single confirmation; a change that cannot be applied aborts the whole call.',
   description: `Edit existing files in place with exact text replacements, or write whole file contents, in one atomic call.
 
-Use this for targeted changes instead of rewriting a file with file_write. All changes are planned and shown as one combined diff behind a single confirmation; if any change cannot be applied, nothing is written.
+Use this for targeted changes instead of rewriting a file with file_write. All changes are planned and shown as one combined diff behind a single confirmation; if any change cannot be applied during planning, nothing is written.
 
 Each item in changes[] is one file:
 - { path, edits: [{ old_string, new_string, replace_all? }] }: exact replacements applied in order. old_string must match the file exactly (including indentation and newlines) and be unique unless replace_all=true. To insert, include an anchor line in old_string and repeat it plus the new content in new_string. To delete text, set new_string to "".

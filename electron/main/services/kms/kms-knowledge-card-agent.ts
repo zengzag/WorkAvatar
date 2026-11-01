@@ -15,20 +15,19 @@ const logger = createLogger('KMS-UnifiedAgent')
 const MAX_ITERATIONS = 30
 
 /** 稳定的系统提示词——search 和 card 模式共用，不随模式变化，利于 prompt cache 命中 */
-const UNIFIED_SYSTEM_PROMPT = `You are an intelligent retrieval and knowledge-synthesis assistant for a local knowledge base.
+const UNIFIED_SYSTEM_PROMPT = `You are a retrieval and knowledge-synthesis assistant for a local knowledge base.
 
-You can use the following tools to gather information:
-- kms_search: search the local knowledge base (supports keyword and semantic retrieval; results are automatically enriched with knowledge cards and collection summaries)
-- kms_get_content: read the full text of a file (obtain the file_id via kms_search first)
+Tools:
+- kms_search: search the local knowledge base by keyword or hybrid retrieval; results include matching knowledge cards and collection summaries.
+- kms_get_content: read a file's full text; obtain the file_id from kms_search first.
 
-Working principles:
-1. Start with a direct keyword search, then decide from the results whether to dig deeper.
-2. Selectively read the full text of important files to get more detail.
-3. Call kms_search multiple times to search from different angles when needed.
-4. When you have enough information, produce the final result in the required format.
-5. Cite sources with [n] markers in your conclusions/summaries.
-6. If the available information cannot fully answer the question, explicitly state what is missing; never fabricate.
-7. Always write the final output in the same language as the retrieved source material. If the sources are not in English, do not translate them into English — keep the original language.`
+Working rules:
+1. Search first, then read the full text of only the files that matter.
+2. When the question has several independent aspects, run several searches with different terms.
+3. Cite sources with [n] markers; number each file once, in order of first appearance.
+4. If the sources cannot fully answer the question, state exactly what is missing. Never fabricate.
+5. Write the final answer in the language of the retrieved sources; do not translate it.
+6. Stop searching once the answer is complete.`
 
 export type AgentMode = 'search' | 'card'
 
@@ -84,40 +83,41 @@ export interface UnifiedAgentOptions {
 function buildInitialUserMessage(query: string, mode: AgentMode, requirement?: string): string {
   if (mode === 'card') {
     const userRequirement = requirement && requirement.trim()
-      ? `\n\nAdditional user requirements:\n${requirement.trim()}\n\nOrganize the card content strictly according to the additional requirements above.`
+      ? `\n\nAdditional user requirements:\n${requirement.trim()}\n\nOrganize the card strictly according to these requirements.`
       : ''
-    return `Based on the retrieval results from the local knowledge base, generate a high-quality knowledge card for the keyword "${query}".
+    return `Build a knowledge card for the keyword "${query}" from the local knowledge base.
 
-Synthesize strictly from the real content retrieved via kms_search / kms_get_content; do not fabricate information that does not exist in the sources.${userRequirement}
+Base every statement on content retrieved via kms_search / kms_get_content; add nothing that is not in the sources.${userRequirement}
 
-Write the summary in the same language as the retrieved source material. If the sources are not in English, do not translate them into English — keep the original language.
+Write the summary in the language of the retrieved sources; do not translate it.
 
-Output format (plain JSON only, no other content, and do not wrap it in a markdown code block):
-{"summary": "a complete and well-structured synthesis"}
+Return only the JSON object below, with no extra text and no Markdown code fence:
+{"summary": "complete, well-structured synthesis"}
 
-The summary should be about 200-500 words and include:
-- Background and definition: what the topic is and which materials it covers
-- Key points: critical information, conclusions, and methods, organized into structured sections
-- Source citations: add [n] markers after the relevant sentences; number sources in the order they appear in the retrieval results starting from 1, counting each file only once
-- Completeness note: if the materials do not fully cover the topic, explicitly state what is missing
+Summary requirements:
+- 200-500 words.
+- Background and definition: what the topic is and which materials it covers.
+- Key points: critical information, conclusions, and methods, organized under short headings.
+- Source citations: add [n] markers after the relevant sentences; number each file once, in order of first appearance.
+- Completeness: if the materials do not cover part of the topic, state what is missing.
 
-Notes:
-- For the first search, use the keyword "${query}" directly; afterwards decide from the results whether to dig deeper or search from another angle.
-- The summary is a synthesis of the retrieved content, not an enumeration of the original text, and it must not open with phrases like "based on the retrieval results".
-- Do not output extra fields such as "key points"; summary is the single, sufficient field.`
+Process:
+- Start with the keyword "${query}"; then decide from the results whether to read deeper or search from another angle.
+- Synthesize instead of enumerating the original text; do not open with "based on the retrieval results".
+- Output only the summary field; no extra fields.`
   }
 
-  return `Retrieve information for the query below and produce the core conclusion.
+  return `Answer the query from the local knowledge base.
 
 Query: ${query}
 
-Output requirements:
-1. Output the conclusion directly and cite sources with [n] markers.
-2. Keep the conclusion concise and clear; do not pile up original text; no more than 500 words.
-3. If the information is insufficient to answer, clearly state what is missing.
-4. Do not add opening phrases like "based on the retrieval results".
-5. For the first search, use the keywords from the query directly; afterwards you may search deeper based on the results.
-6. Write the conclusion in the same language as the retrieved source material. If the sources are not in English, do not translate them into English — keep the original language.`
+Requirements:
+1. Return the conclusion directly, with [n] source markers.
+2. Be concise: no more than 500 words, and no raw text dumps.
+3. If the sources are insufficient, state exactly what is missing.
+4. Do not open with "based on the retrieval results".
+5. Start with the query's own keywords, then search further as needed.
+6. Write in the language of the retrieved sources; do not translate.`
 }
 
 /**
@@ -203,7 +203,7 @@ export async function runUnifiedAgentLoop(
     if (i === maxIters - 2) {
       messages.push({
         role: 'user',
-        content: '⚠️ This is your last chance to call tools. You will not be able to call tools in the next round, so make sure you can produce the final content after this call.',
+        content: 'This is your last chance to call tools. After this round tools are disabled, so make sure the next output is the final answer.',
       })
     }
 

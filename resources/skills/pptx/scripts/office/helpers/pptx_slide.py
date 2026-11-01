@@ -1,13 +1,19 @@
 """Pick the slide-XML schema errors PowerPoint refuses the file over.
+
 A denylist over lxml's messages, so an unrecognised error class is a miss rather
 than a false alarm.
 """
+
+
 from __future__ import annotations
+
 import re
+
 SLIDE_PART_RE = re.compile(
     r"ppt/(slides|slideLayouts|slideMasters|notesSlides|notesMasters|handoutMasters)"
     r"/[^/]+\.xml"
 )
+
 FATAL_SLIDE_ERRORS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"\}tableStyleId': This element is not expected"),
@@ -38,8 +44,12 @@ FATAL_SLIDE_ERRORS: tuple[tuple[re.Pattern[str], str], ...] = (
         "a <p:nvGrpSpPr> with no children",
     ),
 )
+
+
 def is_schema_verdict(error: str) -> bool:
     return error.startswith("Element ")
+
+
 def fatal_slide_errors(errors: set[str]) -> list[str]:
     out = []
     for error in sorted(errors):

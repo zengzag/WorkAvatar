@@ -58,7 +58,7 @@ export async function generateCollectionSummary(
     totalChars += line.length
   }
 
-  const prompt = `Based on the file summaries in the collection below, generate an overall summary and key topics for this collection.
+  const prompt = `Summarize the collection below and extract its key topics.
 
 Collection name: ${collection.name}
 Collection description: ${collection.description || '(none)'}
@@ -67,11 +67,11 @@ File count: ${files.length}
 File summaries:
 ${fileSummaries.join('\n')}
 
-Requirements:
-1. summary: describe the collection's core content, coverage, and value in 150-300 words. Do not list file names.
-2. keyTopics: extract 3-8 key topic phrases that capture the collection's themes.
+Fields:
+- summary: 150-300 words describing the core content, coverage, and value of the collection; do not list file names.
+- keyTopics: 3-8 short topic phrases covering the collection's themes.
 
-Write the summary and key topics in the same language as the source file summaries. If they are not in English, do not translate them into English — keep the original language.
+Write the summary and key topics in the same language as the source summaries; do not translate.
 
 Return only JSON: {"summary":"...","keyTopics":["..."]}`
 
@@ -80,7 +80,7 @@ Return only JSON: {"summary":"...","keyTopics":["..."]}`
       llmConfig.providerId,
       llmConfig.modelId,
       [
-        { role: 'system', content: 'You are a knowledge-base collection analysis assistant. Output only JSON, with no additional text.' },
+        { role: 'system', content: 'You are a knowledge-base collection analyst. Return only valid JSON.' },
         { role: 'user', content: prompt },
       ],
       { summary: '', keyTopics: [] },

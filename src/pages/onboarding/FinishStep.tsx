@@ -1,5 +1,5 @@
-import { Button, Typography, theme } from 'antd'
-import { CheckCircleFilled, MinusCircleFilled, DatabaseOutlined, RocketOutlined } from '@ant-design/icons'
+import { Button, Typography, theme, Space } from 'antd'
+import { CheckCircleFilled, MinusCircleFilled } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 
 const { Text, Title } = Typography
@@ -26,55 +26,43 @@ const FinishStep: React.FC<FinishStepProps> = ({ hasProvider, hasEmployee, onGoK
       title: hasEmployee ? t('onboarding.finish.employeeDone') : t('onboarding.finish.employeePending'),
       desc: hasEmployee ? '' : t('onboarding.finish.employeePendingHint'),
     },
-    {
-      done: false,
-      title: t('onboarding.finish.kmsPending'),
-      desc: t('onboarding.finish.kmsPendingHint'),
-      action: (
-        <Button size="small" icon={<DatabaseOutlined />} onClick={onGoKms}>
-          {t('onboarding.finish.goKms')}
-        </Button>
-      ),
-    },
   ]
 
   return (
-    <div style={{ textAlign: 'center', padding: '16px 0' }}>
-      <CheckCircleFilled style={{ fontSize: 56, color: token.colorSuccess, marginBottom: 20 }} />
-      <Title level={2} style={{ marginBottom: 10 }}>{t('onboarding.finish.title')}</Title>
-      <Text type="secondary" style={{ display: 'block', marginBottom: 32 }}>
+    <div>
+      <Title level={4} style={{ marginBottom: 8 }}>{t('onboarding.finish.title')}</Title>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>
         {t('onboarding.finish.desc')}
       </Text>
 
-      <div
-        style={{
-          maxWidth: 520, margin: '0 auto 32px', padding: '8px 20px', borderRadius: 12, textAlign: 'left',
-          background: token.colorBgContainer, border: `1px solid ${token.colorBorderSecondary}`,
-        }}
-      >
+      <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 8, padding: '4px 14px', marginBottom: 16 }}>
         {rows.map((r, i) => (
           <div
             key={r.title}
             style={{
-              display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0',
+              display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0',
               borderBottom: i < rows.length - 1 ? `1px solid ${token.colorBorderSecondary}` : 'none',
             }}
           >
             {r.done
-              ? <CheckCircleFilled style={{ fontSize: 18, color: token.colorSuccess, flexShrink: 0 }} />
-              : <MinusCircleFilled style={{ fontSize: 18, color: token.colorTextQuaternary, flexShrink: 0 }} />}
+              ? <CheckCircleFilled style={{ fontSize: 16, color: token.colorSuccess, marginTop: 2 }} />
+              : <MinusCircleFilled style={{ fontSize: 16, color: token.colorTextQuaternary, marginTop: 2 }} />}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Text strong={r.done} style={{ display: 'block', fontSize: 13 }}>{r.title}</Text>
+              <Text style={{ display: 'block' }}>{r.title}</Text>
               {r.desc && <Text type="secondary" style={{ fontSize: 12 }}>{r.desc}</Text>}
             </div>
-            {r.action}
           </div>
         ))}
       </div>
 
-      <Button type="primary" size="large" icon={<RocketOutlined />} onClick={onStart}>
-        {t('onboarding.finish.start')}
-      </Button>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 24 }}>
+        {t('onboarding.finish.kmsHint')}
+      </Text>
+
+      <Space size={12}>
+        <Button onClick={onGoKms}>{t('onboarding.finish.goKms')}</Button>
+        <Button type="primary" onClick={onStart}>{t('onboarding.finish.start')}</Button>
+      </Space>
     </div>
   )
 }

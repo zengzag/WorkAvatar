@@ -77,6 +77,9 @@ export type {
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
   KMSSetSettingsParams,
+  KMSFileSearchSettings,
+  KMSTestEverythingParams,
+  KMSTestEverythingResult,
   KMSAutoIndexConfig,
   KMSRecordSearchHistoryParams,
   KMSGetSearchHistoryParams,
@@ -120,6 +123,7 @@ export type {
   PluginImportParams,
   PluginImportResult,
   PluginMessageActionInfo,
+  PluginSettingsInfo,
 } from './channels/plugin'
 export type {
   NotifyPayload,

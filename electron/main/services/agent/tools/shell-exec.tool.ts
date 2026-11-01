@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
+import mainUiI18n from '../../ui-i18n.service'
 import { getWorkspacePath } from './fs-shared'
 import { ensureDir } from '../../common-utils'
 import BackgroundShellService from '../../background-shell.service'
@@ -20,6 +21,24 @@ import {
 
 /** 脚本内容扫描上限：超过则跳过（避免读取大文件拖慢执行） */
 const MAX_SCRIPT_SCAN_BYTES = 256 * 1024
+
+/**
+ * 执行前懒创建工作区内的 cwd 与工作区根目录，返回执行结束后的清理回调。
+ * 只清理「执行前不存在、执行后仍为空」的目录：命令没有产出文件时不留下空目录。
+ */
+function prepareExecDirs(cwd: string, workspaceRoot: string): () => void {
+  const created = [workspaceRoot, cwd]
+    .filter((dir, index, arr) => !!dir && arr.indexOf(dir) === index)
+    .filter((dir) => filePermission.isPathInWorkspace(dir) && !fs.existsSync(dir))
+  for (const dir of created) ensureDir(dir)
+  if (created.length === 0) return () => {}
+  return () => {
+    // 由深到浅：先删子目录，父目录才可能同样变空被清理
+    for (const dir of [...created].sort((a, b) => b.length - a.length)) {
+      try { fs.rmdirSync(dir) } catch { /* 非空或已被删除 */ }
+    }
+  }
+}
 
 /** 删除被拒绝时返回给模型的引导文案（工具名与 file_delete 保持一致） */
 export const DELETION_FORBIDDEN_HINT =
@@ -132,18 +151,19 @@ export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
-  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}），用于python/node/git/pip/npm/外部exe等系统级操作。`,
+  summary: `Run a system shell command (${IS_WINDOWS ? 'PowerShell' : 'bash'}) for interpreters, package managers, git, build tools, and external executables.`,
   description:
     `Run a shell command (${IS_WINDOWS ? 'PowerShell' : 'bash'}). Use it for system operations: interpreters, package managers, git, build tools, external executables.
 
 Rules:
 1. Never delete files or directories from a command or script (rm, del, Remove-Item, os.remove, shutil.rmtree, fs.unlink …) — such calls are rejected by policy. Use file_delete.
-2. File writes are sandboxed: only the task workspace and a private temp directory are writable. A write outside them is denied by the OS, so the command fails — do all work inside the workspace, then deliver finished files or folders with file_copy.
-3. Only when a command genuinely has to write outside the workspace (e.g. installing a shared library to a global location) set full_access=true; the user is asked to approve that single command and it then runs unrestricted. Never set it to work around a failure you can avoid.
-4. Do not append \`echo $LASTEXITCODE\` / \`echo EXIT=$?\`: the real exit code is already returned, and echoing it masks the original value.
-5. Put multi-line scripts in stdin_content and keep command as the interpreter only (e.g. \`python -\`), to avoid quoting problems.
-6. Commands that must not block the turn (dev server, watch, long build) set run_in_background=true; you get a task id immediately — read output with shell_output, stop with shell_kill.
-7. If a command depends on a file you just wrote, issue file_write and shell_exec as separate steps: sending both in one batch races.
+2. File writes are restricted to the task workspace and a private temporary directory; a write outside them is denied by the operating system. Perform all work inside the workspace, then deliver files or folders with file_copy.
+3. The sandbox also restricts process-level operations, including named pipes, inter-process communication, process handles, and GPU or device access. Multi-process programs (Chrome, headless Chrome, Electron applications) consequently fail at startup with an access-denied error even when every path they access is inside the workspace; redirecting their cache or profile directories does not resolve this. When a command requires writes outside the workspace or such capabilities, set full_access=true. The user approves or denies that single command; requesting approval is the expected course of action, and substituting a weaker workaround is not acceptable.
+4. When several commands in the same task require this, set task_full_access=true once instead of requesting approval repeatedly. Submit the request as soon as the task's need is evident; do not submit it again immediately after the user has denied it.
+5. Do not append \`echo $LASTEXITCODE\` / \`echo EXIT=$?\`: the real exit code is already returned, and echoing it masks the original value.
+6. Put multi-line scripts in stdin_content and keep command as the interpreter only (e.g. \`python -\`), to avoid quoting problems.
+7. Commands that must not block the turn (dev server, watch, long build) set run_in_background=true; a task id is returned immediately, and output is read with shell_output and the task stopped with shell_kill.
+8. If a command depends on a file you have just written, issue file_write and shell_exec as separate steps: sending both in one batch causes a race.
 
 On failure you get stdout, the full stderr, the exit code, the working directory and diagnostic hints. For a long task whose complete log matters, redirect the output to a file instead of relying on captured output.`,
   parameters: {
@@ -175,7 +195,11 @@ On failure you get stdout, the full stderr, the exit code, the working directory
       },
       full_access: {
         type: 'boolean',
-        description: 'Request one-time full filesystem access for this command. Only use it when the command must write outside the workspace (e.g. installing a shared library globally). The user is asked to approve; the grant covers this command only'
+        description: 'Request full access for this command only: permits writes outside the workspace and the process-level operations the sandbox restricts (Chrome/Electron applications, installers, inter-process communication). The user approves or denies the request; the grant covers this command only'
+      },
+      task_full_access: {
+        type: 'boolean',
+        description: 'Request full access for the remainder of this task when several commands require it. The user is asked once; after approval this task runs without the sandbox and without outside-workspace prompts. Denial means the command does not run'
       }
     },
     required: ['command']
@@ -194,16 +218,21 @@ On failure you get stdout, the full stderr, the exit code, the working directory
       const { command, stdinContent, cwd, timeoutSec, workspaceRoot, sandboxMode } = prep
       const timeoutMs = timeoutSec * 1000
 
-      // 工作区懒创建：cwd 位于工作区内时执行前确保目录存在（区外 cwd 不代为创建）
-      if (filePermission.isPathInWorkspace(cwd)) ensureDir(cwd)
+      // 工作区懒创建：cwd/工作区根目录不存在时临时创建供本次命令使用，执行后仍为空则清理
+      const cleanupExecDirs = prepareExecDirs(cwd, workspaceRoot)
 
-      const runResult = await runCommandPlatform(command, {
-        cwd,
-        timeoutMs,
-        stdinContent,
-        workspaceRoot,
-        sandboxMode,
-      })
+      let runResult: Awaited<ReturnType<typeof runCommandPlatform>>
+      try {
+        runResult = await runCommandPlatform(command, {
+          cwd,
+          timeoutMs,
+          stdinContent,
+          workspaceRoot,
+          sandboxMode,
+        })
+      } finally {
+        cleanupExecDirs()
+      }
 
       if (runResult.sandboxError) {
         return {
@@ -234,7 +263,7 @@ On failure you get stdout, the full stderr, the exit code, the working directory
         }
       }
 
-      // 沙箱拦截：直接拒绝（不提供一次性放行）。产物先落在工作区，再用 file_copy 交付到目标目录
+      // 沙箱拦截：直接拒绝，产物先落在工作区，再用 file_copy 交付到目标目录
       if (runResult.sandbox?.denied) {
         return {
           success: false,
@@ -398,6 +427,19 @@ async function prepareShellExecution(
     sandboxMode = 'danger-full-access'
   }
 
+  // 任务级提权：模型判断本轮任务无法在工作区内完成时主动申请，用户批准后整个任务不再套沙箱、
+  // 文件工具也不再弹区外确认（敏感文件与删除仍逐次确认）
+  if (args.task_full_access === true && sandboxMode !== 'danger-full-access') {
+    if (!ctx) {
+      return fail('本次申请本轮任务的完整访问权限，但当前无交互上下文（后台任务/自动化），无法征求确认，已拒绝执行')
+    }
+    const approved = await requestTaskFullAccess(command, cwd, workspaceRoot)
+    if (!approved) return fail('用户未授权本轮任务的完整访问权限，命令未执行')
+    // 渲染端确认时会回传 taskHighPermission 完成登记；此处兜底写入，保证非 UI 调用方同样生效
+    UnifiedInteractionService.getInstance().setTaskHighPermission(ctx.conversationId || ctx.sessionId, true)
+    sandboxMode = 'danger-full-access'
+  }
+
   const timeoutSec = Math.min(Math.max(Number(args.timeout) || 30, 1), 300)
   return {
     ok: true,
@@ -415,8 +457,8 @@ function startBackgroundTask(prep: ShellPrepareOk) {
   const ctx = interactionContext.getStore()
   // 属主键与授权缓存一致：优先 conversationId，无 DB 会话时降级 sessionId
   const ownerKey = ctx?.conversationId || ctx?.sessionId || 'unknown'
-  // 工作区懒创建与前台一致：cwd 在区内时先建目录，否则 spawn 会因 cwd 不存在失败
-  if (filePermission.isPathInWorkspace(prep.cwd)) ensureDir(prep.cwd)
+  // 工作区懒创建与前台一致：cwd 在区内时先建目录（否则 spawn 会因 cwd 不存在失败），退出后仍为空则清理
+  const cleanupExecDirs = prepareExecDirs(prep.cwd, prep.workspaceRoot)
   const started = BackgroundShellService.getInstance().start({
     command: prep.command,
     stdinContent: prep.stdinContent,
@@ -424,8 +466,12 @@ function startBackgroundTask(prep: ShellPrepareOk) {
     ownerKey,
     workspaceRoot: prep.workspaceRoot,
     sandboxMode: prep.sandboxMode,
+    onExit: cleanupExecDirs,
   })
-  if (!started.ok) return { success: false, error: started.error }
+  if (!started.ok) {
+    cleanupExecDirs()
+    return { success: false, error: started.error }
+  }
 
   const snapshot = started.snapshot
   const scope = prep.sandboxMode === 'danger-full-access'
@@ -481,6 +527,36 @@ async function requestFullAccess(
   }
 }
 
+/**
+ * 模型主动申请「本轮任务完整访问」：
+ * 批准后整个任务不再套文件沙箱、文件工具不再弹区外确认（敏感文件与删除仍逐次确认）。
+ * 拒绝则命令不执行，由模型回到工作区内完成或改用 file_copy 交付。
+ */
+async function requestTaskFullAccess(
+  command: string,
+  cwd: string,
+  workspaceRoot: string,
+): Promise<boolean> {
+  try {
+    const response = await UnifiedInteractionService.getInstance().request({
+      type: 'confirm',
+      title: mainUiI18n.t('sandboxTaskAccessTitle'),
+      message: mainUiI18n.t('sandboxTaskAccessMessage', {
+        workspace: workspaceRoot,
+        cwd,
+        command: truncateOutput(command, 1200),
+      }),
+      danger: true,
+      forced: true,
+      taskFullAccess: true,
+      source: 'security:task_full_access',
+    })
+    return response.confirmed === true && !response.cancelled
+  } catch {
+    return false
+  }
+}
+
 /** 被沙箱拦截时返回给模型的结构化说明 */
 function buildSandboxDeniedOutput(
   command: string,
@@ -505,7 +581,8 @@ function buildSandboxDeniedOutput(
     '### 处理方式',
     '- 在工作区内完成全部产出（下载、解压、生成、构建都落在工作区）',
     '- 需要交付到用户指定目录时，用 file_copy 复制文件或目录；目标在工作区外会弹一次授权',
+    '- 若本任务确实无法在工作区内完成（需在工作区外反复读写），可用 shell_exec(task_full_access=true) 申请本轮任务的完整访问权限，由用户决定是否授予',
     '- 不要改用其它写法绕开沙箱：越界写入由操作系统拒绝，无法绕过',
-    '- 若 stderr 显示的是读取受保护文件等其它权限问题（不是写入工作区外），按 stderr 定位即可',
+    '- 若 stderr 显示的是进程、句柄或命名管道层面的拒绝访问（如 Chrome、Electron 等多进程程序），说明该程序与沙箱不兼容，请加 full_access=true 重新执行；其它权限问题按 stderr 定位',
   ].join('\n')
 }

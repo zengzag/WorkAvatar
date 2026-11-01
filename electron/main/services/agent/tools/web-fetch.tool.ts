@@ -151,7 +151,7 @@ export const webFetchTool: ToolDefinition = {
   id: 'web_fetch',
   name: 'web_fetch',
   title: '网页获取',
-  description: 'Fetch a URL and return the page content as plain text.',
+  description: 'Fetch a URL and return its readable text (HTML converted to plain text, JSON pretty-printed). Use it after web_search when a result needs full-text detail. Private, loopback, and metadata endpoints are refused.',
   parameters: {
     type: 'object',
     properties: {

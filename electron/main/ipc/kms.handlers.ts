@@ -5,6 +5,7 @@ import type {
   KMSUpdateDirParams,
   KMSAddSearchDirParams,
   KMSUpdateSearchDirParams,
+  KMSTestEverythingParams,
   KMSSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
@@ -100,6 +101,10 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_REFRESH_SEARCH_DIR, async (id: string) => {
     return kmsService.refreshSearchDir(id)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_TEST_EVERYTHING, async (params?: KMSTestEverythingParams) => {
+    return kmsService.testEverythingConnection(params)
   })
 
   // 文件内容

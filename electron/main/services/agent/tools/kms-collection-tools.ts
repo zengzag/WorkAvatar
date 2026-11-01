@@ -6,7 +6,7 @@ import type { SearchScopeRef } from './kms-search.tool'
  * 合集相关工具集
  *
  * 设计原则：让智能体能使用的工具保持相对简单，避免太多工具混淆概念。
- * - kms_search 工具内部已自动附加搜索合集摘要，无需单独的 kms_collection_overview
+ * - kms_search 工具内部已自动附加搜索合集摘要
  * - kms_get_content 工具已合并原 kms_get_toc / kms_get_paragraphs 的功能（通过 view 参数）
  * - 这里仅保留 kms_list_collections，用于让 LLM 了解可用合集范围
  */
@@ -27,8 +27,8 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
     id: 'kms_list_collections',
     name: 'kms_list_collections',
     title: '资料库合集列表',
-    summary: '列出资料库合集（手动组织的文件分组）。了解可用资料范围时使用。',
-    description: '列出当前可访问的资料库合集（手动组织的文件分组）。每个合集包含若干文档，可用于了解可用资料范围。若会话已选定合集则只显示选定的，否则显示全部。',
+    summary: 'List knowledge-base collections (manually grouped files) to understand the available scope.',
+    description: 'List the knowledge-base collections available in this conversation (manually grouped files). Each collection contains documents. If the conversation has selected collections, only those are shown; otherwise all are listed.',
     parameters: {
       type: 'object',
       properties: {},

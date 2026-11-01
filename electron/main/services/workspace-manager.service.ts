@@ -17,8 +17,29 @@ import {
 } from './conversation-fts'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
+import { sanitizeAvatarImage } from '../../shared/avatar'
 
 const logger = createLogger('WorkspaceManager')
+
+/** 默认员工播种标记（settings KV）：只在首次安装时创建一次，用户删除后不再重建 */
+const DEFAULT_EMPLOYEE_SEEDED_KEY = 'bootstrap.default_employee_seeded'
+
+/** 新用户开箱即用的默认员工（普通员工，非内置注册员工，可编辑可删除） */
+const DEFAULT_EMPLOYEE = {
+  name: '通用专家',
+  description: '全能型数字员工：信息检索、文档写作、表格与演示、数据处理、代码脚本及日常事务，开箱即用。',
+  rules: [
+    'You are "General Expert", a general-purpose digital employee who takes everyday work requests from start to finish: research, writing, document processing, data analysis, spreadsheets and presentations, coding/scripting, and file management.',
+    'Working style:',
+    '- Clarify the goal first, then plan the steps and carry them out yourself instead of asking the user to do manual work.',
+    '- Choose the right tools: search the local knowledge base or the web for facts, use file and scripting tools for the actual work, and activate a skill when a task matches one.',
+    '- Prefer internal knowledge and existing files, then fall back to external sources.',
+    '- Keep every deliverable inside the task workspace. Anything outside it needs the user\'s confirmation.',
+    '- Ask the user only when the request is genuinely ambiguous or the decision is theirs to make; otherwise make a reasonable choice and state it.',
+    'Output:',
+    '- Report concisely what was done, where the result is (file path or URL), and what still needs the user\'s attention.',
+  ].join('\n'),
+}
 
 class WorkspaceManagerService {
   private db: DatabaseService
@@ -121,6 +142,34 @@ class WorkspaceManagerService {
     return this.getEmployee(employeeId)!
   }
 
+  /**
+   * 首次安装播种默认员工「通用专家」，让新用户开箱即用。
+   * 仅在从未播种且库中没有任何用户员工时创建（老用户升级不受影响）；
+   * 播种后写标记，用户删除后不再重建。
+   */
+  ensureDefaultEmployee(): void {
+    const db = this.db.getDb()
+    try {
+      const seeded = db.prepare('SELECT value FROM settings WHERE key = ?')
+        .get(DEFAULT_EMPLOYEE_SEEDED_KEY) as { value: string } | undefined
+      if (seeded?.value === '1') return
+      const hasUserEmployee = this.getEmployeeList().some(e => !e.is_registered)
+      if (!hasUserEmployee) {
+        this.createEmployee(
+          DEFAULT_EMPLOYEE.name,
+          DEFAULT_EMPLOYEE.description,
+          JSON.stringify({ roleName: DEFAULT_EMPLOYEE.name, roleDescription: DEFAULT_EMPLOYEE.rules }),
+          DEFAULT_EMPLOYEE.rules,
+        )
+        logger.info(`已创建默认员工：${DEFAULT_EMPLOYEE.name}`)
+      }
+      db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+        .run(DEFAULT_EMPLOYEE_SEEDED_KEY, '1')
+    } catch (err: any) {
+      logger.warn('默认员工播种失败:', err?.message || err)
+    }
+  }
+
   updateEmployee(id: string, data: {
     name?: string
     description?: string
@@ -132,6 +181,7 @@ class WorkspaceManagerService {
     avatar_type?: string
     avatar_icon?: string
     avatar_color?: string
+    avatar_image?: string
     delegation_json?: string
   }): Employee | null {
     const employee = this.getEmployee(id)
@@ -145,6 +195,7 @@ class WorkspaceManagerService {
       'default_skill_id',
       'memory_enabled', 'workspace_path', 'avatar_type',
       'avatar_icon', 'avatar_color',
+      'avatar_image',
       'delegation_json'
     ]
 
@@ -163,6 +214,15 @@ class WorkspaceManagerService {
         if (key === 'memory_enabled') {
           updates.push(`${key} = ?`)
           values.push(value ? 1 : 0)
+        } else if (key === 'avatar_image') {
+          // 兜底：只接受 data:image/ 且体积受限的头像，防止绕过渲染端压缩写入超大图片
+          const normalized = value === '' ? '' : sanitizeAvatarImage(value)
+          if (normalized === '' && value !== '') {
+            logger.warn('Rejected invalid or oversized employee avatar_image')
+            return
+          }
+          updates.push(`${key} = ?`)
+          values.push(normalized)
         } else {
           updates.push(`${key} = ?`)
           values.push(value)
@@ -268,14 +328,14 @@ class WorkspaceManagerService {
   getConversationList(employeeId?: string): Conversation[] {
     if (employeeId) {
       return this.db.getDb().prepare(
-        `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json, default_model_json, collection_ids_json
+        `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, workspace_mode, parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json, default_model_json, collection_ids_json
          FROM conversations
          WHERE employee_id = ? AND (parent_conversation_id = '' OR parent_conversation_id IS NULL)
          ORDER BY COALESCE(last_message_at, created_at) DESC`
       ).all(employeeId) as Conversation[]
     }
     return this.db.getDb().prepare(
-      `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json, default_model_json, collection_ids_json
+      `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, workspace_mode, parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json, default_model_json, collection_ids_json
        FROM conversations
        WHERE parent_conversation_id = '' OR parent_conversation_id IS NULL
        ORDER BY COALESCE(last_message_at, created_at) DESC`
@@ -284,7 +344,7 @@ class WorkspaceManagerService {
 
   /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的顶层对话，支持分页 */
   getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
-    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.workspace_path, c.parent_conversation_id, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json, c.default_model_json, c.collection_ids_json,
+    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.workspace_path, c.workspace_mode, c.parent_conversation_id, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json, c.default_model_json, c.collection_ids_json,
                 e.name as employee_name
          FROM conversations c
          LEFT JOIN employees e ON c.employee_id = e.id
@@ -317,7 +377,7 @@ class WorkspaceManagerService {
     return this.db.getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation || null
   }
 
-  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string, reuseWorkspacePath?: string): Conversation {
+  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string, reuseWorkspacePath?: string, customWorkspacePath?: string): Conversation {
     // 注册员工（内置/插件）提前同步影子记录到 employees 表，保证 conversations 外键引用有效（id 稳定不变）
     if (EmployeeRegistryService.getInstance().isRegistered(employeeId)) {
       EmployeeRegistryService.getInstance().ensureDbRecords()
@@ -334,30 +394,42 @@ class WorkspaceManagerService {
     const now = Math.floor(Date.now() / 1000)
 
     // 任务工作区目录策略：
+    // - 用户指定目录（customWorkspacePath）：直接使用该目录，归入自定义工作区分组
     // - 有 parentConversationId（委托子会话）：在主管会话的工作区目录下创建子目录
     // - 无 parentConversationId（顶层会话）：在员工工作区下创建独立目录
     let workspacePath = ''
+    let workspaceMode: 'default' | 'custom' = 'default'
     // 分支任务：直接复用原任务工作区路径，不新建目录（保证 KV cache 前缀一致）。
-    // 安全校验：路径必须位于数据目录 employees/ 下（该路径是 FilePermissionService
+    // 安全校验：路径必须位于 employees/ 下或已存在的自定义工作区内（该路径是 FilePermissionService
     // 的授权边界），非法路径直接忽略并回退正常创建，防止把授权根指到任意目录
-    const canReuseWorkspace = !!reuseWorkspacePath && this.isWithinEmployeesRoot(reuseWorkspacePath)
+    const canReuseWorkspace = !!reuseWorkspacePath && this.isWithinWorkspaceBoundary(reuseWorkspacePath)
     if (reuseWorkspacePath && !canReuseWorkspace) {
-      logger.warn(`Rejected reuseWorkspacePath outside employees root: ${reuseWorkspacePath}`)
+      logger.warn(`Rejected reuseWorkspacePath outside allowed workspace roots: ${reuseWorkspacePath}`)
     }
-    if (canReuseWorkspace) {
+    const customWorkspace = (customWorkspacePath || '').trim()
+    if (customWorkspace) {
+      workspacePath = path.resolve(customWorkspace)
+      workspaceMode = 'custom'
+    } else if (canReuseWorkspace) {
       workspacePath = reuseWorkspacePath!
+      // 分支任务沿用原任务的工作区类型，保证分组归属一致
+      const modeRow = this.db.getDb().prepare(
+        'SELECT workspace_mode FROM conversations WHERE workspace_path = ? LIMIT 1'
+      ).get(workspacePath) as { workspace_mode?: string } | undefined
+      workspaceMode = modeRow?.workspace_mode === 'custom' ? 'custom' : 'default'
     } else if (parentConversationId) {
-      const parent = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(parentConversationId) as { workspace_path?: string } | undefined
+      const parent = this.db.getDb().prepare('SELECT workspace_path, workspace_mode FROM conversations WHERE id = ?').get(parentConversationId) as { workspace_path?: string; workspace_mode?: string } | undefined
       const parentWs = parent?.workspace_path || ''
       workspacePath = parentWs ? this.createTaskWorkspace(parentWs) : ''
+      workspaceMode = parent?.workspace_mode === 'custom' ? 'custom' : 'default'
     } else {
       workspacePath = employeeWorkspace ? this.createTaskWorkspace(employeeWorkspace) : ''
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, workspace_path, parent_conversation_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?, ?, ?)
-    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, workspacePath, parentConversationId || '', now, now)
+      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, workspace_path, workspace_mode, parent_conversation_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?, ?, ?, ?)
+    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, workspacePath, workspaceMode, parentConversationId || '', now, now)
 
     // 子会话（有 parentConversationId）不写入 FTS 索引，避免污染检索结果
     if (!parentConversationId) {
@@ -399,13 +471,15 @@ class WorkspaceManagerService {
     }
   }
 
-  /** 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变） */
+  /**
+   * 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变）。
+   * 只计算路径不落盘——员工列表/会话创建都会调用它，提前建目录会让从未工作的员工留下空目录；
+   * 真正的写入与打开工作区时再按需创建。
+   */
   getRegistryWorkspaceRoot(employeeId: string): string {
     // 注册员工 id 含 ':' 等路径非法字符，用稳定哈希派生目录名（sha1 前 8 hex，与 generateShortId 同构、可复现）
     const dirName = crypto.createHash('sha1').update(employeeId).digest('hex').slice(0, 8)
-    const root = path.join(PathService.getInstance().getDataDir(), 'employees', dirName)
-    fs.mkdirSync(root, { recursive: true })
-    return root
+    return path.join(PathService.getInstance().getDataDir(), 'employees', dirName)
   }
 
   /** 获取对话的任务工作区目录（未分配返回空字符串） */
@@ -421,6 +495,27 @@ class WorkspaceManagerService {
     const target = path.resolve(p)
     const relative = path.relative(employeesRoot, target)
     return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+  }
+
+  /** 路径是否位于某个用户指定工作区目录内（custom 目录不受 employees/ 边界限制） */
+  isWithinCustomWorkspaceRoot(p: string): boolean {
+    const target = path.resolve(p)
+    try {
+      const rows = this.db.getDb().prepare(
+        "SELECT DISTINCT workspace_path FROM conversations WHERE workspace_mode = 'custom' AND workspace_path != ''"
+      ).all() as Array<{ workspace_path: string }>
+      return rows.some(row => {
+        const relative = path.relative(path.resolve(row.workspace_path), target)
+        return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+      })
+    } catch {
+      return false
+    }
+  }
+
+  /** 工作区可访问边界：employees/ 下的任务目录，或用户指定工作区目录内 */
+  isWithinWorkspaceBoundary(p: string): boolean {
+    return this.isWithinEmployeesRoot(p) || this.isWithinCustomWorkspaceRoot(p)
   }
 
   private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messagesJson: string): void {
@@ -521,7 +616,7 @@ class WorkspaceManagerService {
     }
     collectChildren(id)
 
-    const conv = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(id) as { workspace_path?: string } | undefined
+    const conv = this.db.getDb().prepare('SELECT workspace_path, workspace_mode FROM conversations WHERE id = ?').get(id) as { workspace_path?: string; workspace_mode?: string } | undefined
 
     // 以实际删除行数为准：传入不存在的 id 不再误报成功（避免调用方误清缓存并通知插件）
     let deletedCount = 0
@@ -550,9 +645,10 @@ class WorkspaceManagerService {
 
     // 任务目录处理：空目录直接删除；非空目录保留并上报，由前端决定是否删除
     // 子会话的工作区目录位于主会话目录下，删除主会话目录时会一并清理子目录
+    // 用户指定目录（custom）不属于应用数据，绝不自动清理或提示删除
     let taskDir: string | undefined
     let taskDirNonEmpty: boolean | undefined
-    if (ok && conv?.workspace_path && fs.existsSync(conv.workspace_path)) {
+    if (ok && conv?.workspace_mode !== 'custom' && conv?.workspace_path && fs.existsSync(conv.workspace_path)) {
       try {
         const entries = fs.readdirSync(conv.workspace_path)
         if (entries.length === 0) {

@@ -26,7 +26,7 @@ export interface ParagraphSlice {
   content: string
 }
 
-// 段落处理常量（对齐旧知识库 KnowledgeProcessorService）
+// 段落处理常量
 export const MAX_PARAGRAPH_CHARS = 5000
 export const PARAGRAPH_OVERLAP_CHARS = 500
 export const MAX_HEADING_LINE_RATIO = 0.25
@@ -135,7 +135,7 @@ function detectHeading(line: string): { level: number; title: string } | null {
 }
 
 /**
- * 段落识别（对齐旧知识库 KnowledgeProcessorService.identifyParagraphs）
+ * 段落识别
  * - 通过 detectHeading 识别 Markdown + 中文标题（第X章/节、数字编号等）
  * - 标题比例过高（>25% 非空行）则降级为固定大小分块
  * - 首个标题前的正文作为"前言"段落
@@ -429,7 +429,7 @@ export function buildTocContext(entries: LLMTocEntry[]): string {
 }
 
 /**
- * 基于 LLM 还原的 TOC 重新切分段落（对齐旧知识库 identifyParagraphsFromLLMToc）
+ * 基于 LLM 还原的 TOC 重新切分段落
  */
 export function identifyParagraphsFromLLMToc(
   text: string,

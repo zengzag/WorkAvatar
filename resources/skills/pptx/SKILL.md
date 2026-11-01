@@ -55,11 +55,11 @@ Pick layouts first: `python scripts/thumbnail.py template.pptx template-thumbs` 
 
 ```bash
 python3 -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall('unpacked')" deck.pptx
-python scripts/add_slide.py unpacked/ slide2.xml --after slide2.xml # duplicate a slide (or slideLayoutN.xml); prints the new slide's path
+python scripts/add_slide.py unpacked/ slide2.xml --after slide2.xml   # duplicate a slide (or slideLayoutN.xml); prints the new slide's path
 # reorder / delete slides = edit <p:sldIdLst> in ppt/presentation.xml
-python scripts/clean.py unpacked/ # after deletions: removes orphaned slides, media, rels
+python scripts/clean.py unpacked/                                     # after deletions: removes orphaned slides, media, rels
 # edit slide content in ppt/slides/slideN.xml
-(cd unpacked && rm -f ../out.pptx && zip -Xr ../out.pptx .) # zip from INSIDE the dir; rm first or deleted parts survive
+(cd unpacked && rm -f ../out.pptx && zip -Xr ../out.pptx .)           # zip from INSIDE the dir; rm first or deleted parts survive
 python scripts/office/validate.py out.pptx --original deck.pptx
 ```
 
@@ -159,3 +159,80 @@ Choose colors that match your topic — don't default to generic blue. Use these
 - **Don't forget text box padding** — when aligning lines or shapes with text edges, set `margin: 0` on the text box or offset the shape to account for padding
 - **Don't use low-contrast elements** — icons AND text need strong contrast against the background; avoid light text on light backgrounds or dark text on dark backgrounds
 - **NEVER use accent lines under titles** — these are a hallmark of AI-generated slides; use whitespace or background color instead
+- **NEVER add decorative color bars or accent stripes** — this includes: header/footer bars spanning the slide width, vertical sidebar stripes down one edge of the slide, thin accent stripes along one edge of a card or content block, and "single-side borders" on rectangles. These read as AI-generated filler. If you want to set a card apart, use a subtle background tint, a drop shadow, or an icon — not an edge stripe.
+- **Don't default to cream/beige backgrounds** — when no background is specified, use white (`FFFFFF`) or the user's brand palette; avoid warm-neutral defaults like `F5F5DC`, `FAF0E6`, `FAEBD7`, `FFF8E1`
+- **Don't ship text that overflows its shape** — if text doesn't fit, reduce font size, split across slides, or enlarge the container; never leave content cut off or spilling past bounds
+
+## QA (Required)
+
+Your first render usually has a few real issues — overlaps, overflow, misalignment. Find and fix those, re-render only the slides you changed, and stop.
+
+### Content QA
+
+```bash
+markitdown output.pptx
+```
+
+Check for missing content, typos, wrong order.
+
+**When using templates, check for leftover placeholder text:**
+
+```bash
+markitdown output.pptx | grep -iE "\bx{3,}\b|lorem|ipsum|\bTODO|\[insert|this.*(page|slide).*layout"
+```
+
+If grep returns results, fix them before declaring success.
+
+### File QA (required)
+
+```bash
+python scripts/office/validate.py output.pptx                      # built from scratch
+python scripts/office/validate.py output.pptx --original src.pptx  # built from a template
+```
+
+**If the deck came from a template, always pass `--original`.** A template may itself
+contain parts the XSD rejects, so a bare run can report failures you never caused — and
+a genuine regression can hide among them. `--original` baselines
+the schema and slide checks against the template, suppressing errors it already had.
+The structural checks — relationships, content types, charts — ignore `--original` and
+report template-inherited problems either way, so read those on their own merits.
+
+pptxgenjs emits chart XML PowerPoint refuses to open, and every other tool
+accepts: python-pptx opens those decks, LibreOffice renders them, the XSD
+passes them. Every failure names its fix. Fix it in the generator and rebuild.
+
+### Visual QA
+
+Convert the slides to images (see [Converting to Images](#converting-to-images)) and inspect every one. After staring at the generating code you tend to see what you expect rather than what rendered, so look at the images fresh (a subagent works well for this if you have one). User-visible defects to look for:
+
+- **Text overflow or text cut off at a box or slide boundary — check this first.** It is the most common defect and always user-visible. (For a font the previewer renders unreliably per Typography, the preview is approximate: trust the ~10% slack you left, not its apparent fit.)
+- Overlapping elements (text through shapes, lines through words, stacked elements)
+- Source citations or footers colliding with content above
+- Elements too close (< 0.3" gaps) or cards/sections nearly touching
+- Uneven gaps (large empty area in one place, cramped in another)
+- Insufficient margin from slide edges (< 0.5")
+- Columns or similar elements not aligned consistently
+- Low-contrast text (e.g., light gray text on cream-colored background)
+- Template decoration mispositioned after text replacement — e.g., a title underline positioned for one line, but the replaced title wrapped to two
+- Low-contrast icons (e.g., dark icons on dark backgrounds without a contrasting circle)
+- Text boxes too narrow causing excessive wrapping
+- Leftover placeholder content
+
+## Converting to Images
+
+Convert presentations to individual slide images for visual inspection:
+
+```bash
+python scripts/office/soffice.py --headless --convert-to pdf output.pptx
+rm -f slide-*.jpg
+pdftoppm -jpeg -r 150 output.pdf slide
+ls -1 "$PWD"/slide-*.jpg
+```
+
+**Pass the absolute paths printed above directly to the view tool.** The `rm` clears stale images from prior runs. `pdftoppm` zero-pads based on page count: `slide-1.jpg` for decks under 10 pages, `slide-01.jpg` for 10-99, `slide-001.jpg` for 100+.
+
+**After fixes, rerun all four commands above** — the PDF must be regenerated from the edited `.pptx` before `pdftoppm` can reflect your changes.
+
+## Dependencies
+
+`pptxgenjs` (npm, preinstalled — install only if `require('pptxgenjs')` fails) · `markitdown[pptx]`, `Pillow`, `defusedxml`, `lxml` (pip — text dump, thumbnail, clean, validate) · LibreOffice (`soffice`, auto-configured for sandboxed environments via `scripts/office/soffice.py`) · `pdftoppm` (Poppler)

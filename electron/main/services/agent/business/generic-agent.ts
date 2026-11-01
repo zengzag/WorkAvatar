@@ -24,7 +24,7 @@ import {
 export interface GenericAgentConfig extends AgentConfig {
   /** 直接使用的系统提示词（提供时优先，忽略 instructions 拼装） */
   systemPrompt?: string
-  /** 允许的技能安装路径（undefined 表示不启用技能） */
+  /** 允许的技能安装路径（undefined 表示不按路径过滤，启用所有已安装技能；空数组表示一个都不启用） */
   allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
   /** 环境上下文（稳定不变的路径/权限信息） */
@@ -254,7 +254,7 @@ export class GenericAgent extends BaseAgent {
    *    首次构建后字节冻结，构成可复用的 KV cache 前缀；
    * 2) requestTail 任务上下文：记忆 / 知识库范围 —— 作为「本次 run 首次请求末尾追加的文本」
    *    注入，既不在 history 里，也不写入 pi 上下文。跨 run 重建 history 时前缀不会因它错位；
-   *    同一 run 的后续工具轮次不再重复注入，避免每轮多出一段未缓存 token。
+   *    同一 run 的后续工具轮次不再重复注入（ask_user 返回后的请求会再次注入），避免每轮多出一段未缓存 token。
    * 真实 query 始终独占末尾 user 消息，语义边界清晰。
    */
   private patchOptionsWithDynamicContext(options: AgentRunOptions): AgentRunOptions {
@@ -303,8 +303,8 @@ export class GenericAgent extends BaseAgent {
     const activateSkill: ToolDefinition = {
       id: 'activate_skill',
       name: 'activate_skill',
-      title: 'Activate Skill',
-      description: 'Activate a skill by name to get its full instructions',
+      title: '激活技能',
+      description: 'Activate a named skill and return its full instructions. Call it when the task matches a skill listed in <skills>, then follow the returned instructions.',
       parameters: {
         type: 'object',
         properties: {
@@ -331,8 +331,8 @@ export class GenericAgent extends BaseAgent {
     const readReference: ToolDefinition = {
       id: 'read_reference',
       name: 'read_reference',
-      title: 'Read Reference',
-      description: 'Read a reference file from a skill',
+      title: '读取技能参考文件',
+      description: 'Read a reference file of an activated skill. Pass the skill name and the reference_path exactly as listed in the skill instructions.',
       parameters: {
         type: 'object',
         properties: {

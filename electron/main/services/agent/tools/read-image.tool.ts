@@ -17,7 +17,7 @@ export const readImageTool: ToolDefinition = {
   id: 'read_image',
   name: 'read_image',
   title: '读取图片',
-  summary: '读取本地图片供视觉模型直接查看图片内容。',
+  summary: 'Read a local image so a vision-capable model can inspect its content directly.',
   description: 'Read a local image and hand its visual content to the model (requires an image-capable model). Use it for layout, charts and colours; if you only need the text in the image, prefer ocr_image. Supports png/jpg/jpeg/bmp/tiff/webp/gif, up to 6MB.',
   parameters: {
     type: 'object',

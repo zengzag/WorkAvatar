@@ -25,6 +25,8 @@ export const TOOL_CHANNELS = {
   SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE: 'skill-registry:assign-to-employee',
   SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE: 'skill-registry:remove-from-employee',
   SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE: 'skill-registry:toggle-for-employee',
+  /** 技能安装/卸载/员工技能启停变更广播（主进程 → 渲染进程） */
+  SKILL_REGISTRY_CHANGED: 'skill-registry:changed',
 } as const
 
 export interface ToolAssignParams {

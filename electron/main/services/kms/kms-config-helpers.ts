@@ -15,6 +15,12 @@ export interface KmsEmbeddingConfig {
   modelName: string
 }
 
+/** 文件搜索使用的检索引擎：内置 SQLite 元数据检索 / Everything HTTP 服务 */
+export interface KmsFileSearchSettings {
+  engine: 'builtin' | 'everything'
+  everything: { host: string; port: number }
+}
+
 export interface KmsSettings {
   embeddingModel: any
   summaryModel: any
@@ -26,6 +32,7 @@ export interface KmsSettings {
     autoRefreshStaleCards?: boolean
   }
   autoIndex: { enabled: boolean; intervalMinutes: number; stableThresholdMinutes: number }
+  fileSearch: KmsFileSearchSettings
 }
 
 const DEFAULT_SEARCH_PARAMS = {
@@ -36,6 +43,10 @@ const DEFAULT_SEARCH_PARAMS = {
   autoRefreshStaleCards: true,
 }
 const DEFAULT_AUTO_INDEX = { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 }
+const DEFAULT_FILE_SEARCH: KmsFileSearchSettings = {
+  engine: 'builtin',
+  everything: { host: '127.0.0.1', port: 80 },
+}
 
 /** 读取主库 settings 表中的 JSON 配置 */
 function readSettingJson(key: string): any | null {
@@ -118,11 +129,16 @@ export function getKmsEmbeddingConfig(): KmsEmbeddingConfig | null {
 
 /** 读取全部 KMS 设置 */
 export function getKmsSettings(): KmsSettings {
+  const rawFileSearch = readSettingJson('kms_file_search') || {}
   return {
     embeddingModel: readSettingJson('kms_embedding_model'),
     summaryModel: readSettingJson('kms_summary_model'),
     searchParams: { ...DEFAULT_SEARCH_PARAMS, ...(readSettingJson('kms_search_params') || {}) },
     autoIndex: { ...DEFAULT_AUTO_INDEX, ...(readSettingJson('kms_auto_index') || {}) },
+    fileSearch: {
+      engine: rawFileSearch.engine === 'everything' ? 'everything' : 'builtin',
+      everything: { ...DEFAULT_FILE_SEARCH.everything, ...(rawFileSearch.everything || {}) },
+    },
   }
 }
 
@@ -144,4 +160,5 @@ export function setKmsSettings(params: any): void {
   if (params.summaryModel !== undefined) writeSetting('kms_summary_model', params.summaryModel)
   if (params.searchParams !== undefined) writeSetting('kms_search_params', params.searchParams)
   if (params.autoIndex !== undefined) writeSetting('kms_auto_index', params.autoIndex)
+  if (params.fileSearch !== undefined) writeSetting('kms_file_search', params.fileSearch)
 }

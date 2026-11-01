@@ -431,6 +431,39 @@ describe('runPiAgentLoop / 事件转换与 token 累计', () => {
     await expect(runPiAgentLoop(harness.params)).resolves.toBeTruthy()
   })
 
+  it('LLM 请求失败：上报续跑句柄，resume 用同一上下文重新发起该次请求', async () => {
+    const harness = makeHarness()
+    const onChunk = vi.fn()
+    harness.params.callbacks = { onChunk }
+    const failed = assistantMessage({ stopReason: 'error', errorMessage: '请求超时' })
+    h.loopImpl = () => eventStream([
+      { type: 'message_end', message: { role: 'user', content: 'hi' } },
+      { type: 'message_end', message: failed },
+      { type: 'turn_end', message: failed },
+    ])
+
+    let handle: any
+    await expect(runPiAgentLoop({
+      ...harness.params,
+      onResumable: (h2: any) => { handle = h2 },
+    })).rejects.toThrow('LLM 请求失败: 请求超时')
+    expect(handle).toBeTruthy()
+    // 首轮失败不应创建续跑会话，续跑必须由调用方显式触发
+    expect(h.agentLoopContinueCalls).toHaveLength(0)
+
+    h.continueImpl = () => eventStream([
+      { type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '续' } },
+      { type: 'turn_end', message: assistantMessage({ usage: usage({ input: 1, output: 1, totalTokens: 2 }) }) },
+    ])
+    const result = await handle.resume()
+
+    // 失败响应（stopReason=error）被丢弃，其余上下文原样续用
+    const resumeContext = h.agentLoopContinueCalls[0][0]
+    expect(resumeContext.messages.map((m: any) => m.role)).toEqual(['system', 'user'])
+    expect(onChunk).toHaveBeenCalledWith('续')
+    expect(result.tokenUsage).toEqual({ promptTokens: 1, completionTokens: 1, totalTokens: 2 })
+  })
+
   it('message_update：text / thinking / toolcall delta 转回调，未知类型忽略', async () => {
     const harness = makeHarness()
     const onChunk = vi.fn()

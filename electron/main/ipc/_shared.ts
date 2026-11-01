@@ -1,7 +1,28 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { createLogger } from '../services/logger'
 
 const logger = createLogger('IPC')
+
+/** 广播到所有渲染窗口（含发起窗口）：会话变更等需要多窗口同步的状态 */
+export function broadcastToRenderers(channel: string, payload?: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+    try {
+      win.webContents.send(channel, payload)
+    } catch { /* 窗口正在销毁，忽略 */ }
+  }
+}
+
+/** 广播到除发送方以外的渲染窗口（发起方已自行维护状态，避免自触发同步） */
+export function broadcastToOtherRenderers(sender: Electron.WebContents, channel: string, payload?: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+    if (win.webContents === sender) continue
+    try {
+      win.webContents.send(channel, payload)
+    } catch { /* 窗口正在销毁，忽略 */ }
+  }
+}
 
 /**
  * 安全执行 IPC handler，捕获错误并返回可序列化的结果。

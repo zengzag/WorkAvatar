@@ -50,16 +50,16 @@ const ARTIFACT_EXT_WHITELIST = new Set([
 /** 子会话强制委托契约（拼入子会话指令）：成品文件声明 + 结构化任务回执 */
 const SUBAGENT_CONTRACT = [
   'Delegation contract (mandatory):',
-  '1. If this task produces user-facing deliverable files (documents, spreadsheets, presentations, PDFs, images, code projects, and similar), you MUST call report_generated_files and declare every file by its absolute path before your final reply, even if the files are not mentioned in the summary. Temporary files do not need to be declared.',
-  '2. Your final reply must be a self-contained report: lead with the outcome in one or two sentences, then list key results and any produced deliverables. The parent agent cannot see your intermediate steps.',
-  '3. End the final reply with the following receipt block, filled in exactly:',
+  '1. Deliverables: if this task produces user-facing files (documents, spreadsheets, presentations, PDFs, images, code projects), call report_generated_files with every file\'s absolute path before your final reply. Temporary files need not be declared.',
+  '2. Final reply: a self-contained report. Lead with the outcome in one or two sentences, then the key results and deliverables. The parent agent cannot see your intermediate steps.',
+  '3. Receipt: end the final reply with this block, filled in exactly:',
   '---',
   'Delegation Receipt',
   'Status: Completed | Partially completed | Failed',
   'Deliverables: <absolute paths, one per line; or "None">',
   'Blockers: <reason and what is needed to proceed; or "None">',
   '---',
-  '4. Do not ask the end user questions. If additional input from the parent agent is required, state it in Blockers and finish with status "Partially completed".',
+  '4. Never question the end user. If the parent must supply something, put it in Blockers and finish with status "Partially completed".',
 ].join('\n')
 
 /** liveness 停滞阈值：运行中 run 最近一次事件超过该窗口判定为 stalled（无事件即无进展） */
@@ -152,7 +152,7 @@ export function formatRunOutput(run: AgentRun, extras?: { structured?: unknown; 
  * - launchSubAgent 异步派发（立即返回 runId），内部创建子 conversation + 执行子 chatStream
  * - awaitRuns 阻塞聚合一组 run 的结构化结果（支持部分成功/超时）
  * - cancelRun/cancelTree 中止 run 子树
- * - 事件双写广播：旧 AGENT_DELEGATION_EVENT + 新 AGENT_RUN_EVENT（ring buffer 支持重载恢复）
+ * - 事件广播：统一发送 AGENT_RUN_EVENT（ring buffer 支持重载恢复）
  * - 产物 L1 采集 report_generated_files、L2 工作区目录 diff 自动检测
  * - 并发上限与排队
  */
@@ -224,7 +224,7 @@ class SubAgentRuntime {
   }
 
   private async buildSubMessages(instruction: string, contextFiles: string[], suffix?: string): Promise<Array<{ role: string; content: string }>> {
-    let content = `${instruction.trim()}\n\n${SUBAGENT_CONTRACT}${suffix ? `\n\n${suffix}` : ''}\n\nIf the parent sent additional instructions through send_message, call read_messages to check for the latest requirements before finishing.`
+    let content = `${instruction.trim()}\n\n${SUBAGENT_CONTRACT}${suffix ? `\n\n${suffix}` : ''}\n\nBefore finishing, call read_messages to check for any instructions the parent sent via send_message.`
     if (contextFiles.length > 0) {
       const parts: string[] = [content, '', '--- Context files ---']
       for (const fp of contextFiles) {
@@ -392,7 +392,7 @@ class SubAgentRuntime {
 
   // ====== 任务台账（阶段四）+ 结构化交付物 + 主管通知 ======
 
-  /** 创建任务项（launch_tools 的 task_item_create 调用；绑定 delegationId 即当前 run） */
+  /** 创建任务项（task_item_create 调用；绑定 delegationId 即当前 run） */
   createTask(runId: string, title: string): { success: boolean; taskId?: string; error?: string } {
     const entry = this.entries.get(runId)
     if (!entry) return { success: false, error: 'run 不存在或已结束，无法登记任务' }
@@ -974,7 +974,7 @@ class SubAgentRuntime {
     return result
   }
 
-  /** 历史 run（含活动记录与最近完成，按时间倒序） */
+  /** 历史 run（基础元信息与结果，按开始时间倒序；不含事件日志） */
   listRecentRuns(limit = 100): Array<AgentRun & { eventLog: AgentRunEventEntry[] }> {
     try {
       const db = DatabaseService.getInstance().getDb()
@@ -1261,7 +1261,7 @@ class SubAgentRuntime {
       return [
         'Completion gate: your task ledger still has unfinished items.',
         ...open.map(t => `- [${t.id}] (${t.status}) ${t.title}`),
-        'Open task items until none remain (use task_item_update to mark each completed or blocked), then submit your final Delegation Receipt.',
+        'Close every item with task_item_update (completed or blocked), then submit the final Delegation Receipt.',
       ].join('\n')
     }
 
@@ -1324,7 +1324,7 @@ class SubAgentRuntime {
 
         await streamOnce(subMessages, providerId, modelId)
 
-        // 完成门（MiMo 语义）：台账仍有未收尾项时注入纠偏轮，最多 MAX_GATE_ROUNDS 次
+        // 完成门：台账仍有未收尾项时注入纠偏轮，最多 MAX_GATE_ROUNDS 次
         // 第一轮的回答与关键工具产出固化为一条 assistant 上下文置于 gatePrompt 前，纠偏轮才能"续聊"而非失忆
         const buildGateContext = (): Array<{ role: string; content: string }> => {
           const parts: string[] = []

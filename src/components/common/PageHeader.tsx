@@ -36,7 +36,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subTitle, onBack, extra,
             />
           )}
           <div>
-            <Title level={5} style={{ margin: 0, fontSize: 15 }}>
+            <Title level={5} style={{ margin: 0, fontSize: 16, letterSpacing: '-0.01em' }}>
               {title}
             </Title>
             {subTitle && (

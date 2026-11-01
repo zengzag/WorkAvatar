@@ -8,13 +8,13 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-Crawler')
 
-const SUPPORTED_EXTENSIONS = new Set([
+export const SUPPORTED_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
   'txt', 'md', 'html', 'htm',
   'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'
 ])
 
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg',
   '__pycache__', '.DS_Store', 'Thumbs.db',
   '.vscode', '.idea', '.trae',
@@ -449,7 +449,7 @@ class KMSCrawlerService {
     if (fileIds.length === 0) return result
     const since = Math.floor(Date.now() / 1000) - days * 86400
 
-    // 分批查询，每批最多 500 个 fileId（加上 2 个 since 参数 = 502，远低于 999 上限）
+    // 分批查询，每批最多 500 个 fileId（加上 6 个 since 参数 = 506，远低于 999 上限）
     const BATCH = 500
     for (let i = 0; i < fileIds.length; i += BATCH) {
       const batch = fileIds.slice(i, i + BATCH)
@@ -602,7 +602,7 @@ class KMSCrawlerService {
 
   /**
    * 注册新文件到数据库（使用预计算的哈希，避免重复读取文件内容）
-   * - 如果 file_path 已存在（重叠目录场景），直接跳过
+   * - 如果 file_path 已存在（重叠目录场景）：位于虚拟手动目录时迁移到当前目录，否则直接跳过
    * - 如果相同 hash 的文件已存在（不同位置的同内容文件），复用索引数据
    */
   private registerFileWithHash(dirId: string, diskFile: DiskFile, hash: string): void {

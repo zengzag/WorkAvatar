@@ -12,7 +12,7 @@ const logger = createLogger('EmployeeProfiling')
 export interface EmployeeProfile {
   roleName: string
   roleDescription: string
-  /** 简短描述（≤150字）：供用户和其他数字员工了解该员工能做什么 */
+  /** 简短描述：目标 ≤150 字；生成接口最多截断到 300 字符，analyze 结果原样返回 */
   description: string
   suggestedSkills: SuggestedSkill[]
   suggestedTools: string[]
@@ -61,12 +61,11 @@ export interface ContextFile {
 }
 
 class EmployeeProfilingService {
-  private kmsDb: KMSDatabaseService
   private db: DatabaseService
   private static instance: EmployeeProfilingService
 
   private constructor() {
-    this.kmsDb = KMSDatabaseService.getInstance()
+    // KMS 库（1GB+）按需打开：启动时打开会额外耗时数百 ms
     this.db = DatabaseService.getInstance()
   }
 
@@ -139,24 +138,26 @@ class EmployeeProfilingService {
         suggestedTools: previousProfile.suggestedTools,
       }, null, 2)
 
-      const refinePrompt = `基于以下分析结果和用户反馈进行调整，JSON格式输出。
+      const refinePrompt = `Revise the digital-employee profile below using the user's feedback. Return JSON only.
 
-当前结果：
+Current result:
 \`\`\`json
 ${profileJson}
 \`\`\`
 
-用户反馈：
+User feedback:
 ${feedback}
 
-可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
-${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
+Available system tools (suggestedTools may only use a name from this list):
+${this.getSystemToolsList().map(t => `- ${t.name} (${t.title})`).join('\n')}
 
-输出字段（只输出JSON）：
-- roleName: 角色名称
-- roleDescription: 角色规则（包含职责、注意事项和工作流程等完整规则，作为系统提示词使用）
-- description: 简短描述（不超过150字，说明该员工能做什么，供其他数字员工了解其能力）
-- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取`
+Output fields:
+- roleName: concise role name
+- roleDescription: complete role rules (duties, cautions, workflow); used as the system prompt
+- description: capability summary of at most 150 characters, explaining what this employee can do so users and other employees can decide whether to delegate
+- suggestedTools: tool names to enable, taken only from the list above
+
+Write every field in the language of the user's feedback.`
 
       onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 优化分析结果...' })
 
@@ -203,7 +204,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
 
   private loadCollectionContents(collectionIds: string[]): CollectionContent[] {
     const results: CollectionContent[] = []
-    const db = this.kmsDb.getDb()
+    const db = KMSDatabaseService.getInstance().getDb()
 
     for (const collectionId of collectionIds) {
       const collection = db.prepare('SELECT * FROM kms_collections WHERE id = ?').get(collectionId) as any
@@ -291,56 +292,62 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     const combinedText = hasCollection ? this.buildCombinedCollectionDocument(collectionContents) : ''
     const maxLength = 12000
     const truncatedText = combinedText.length > maxLength
-      ? combinedText.substring(0, maxLength) + '\n...[内容已截断，共' + combinedText.length + '字符]'
+      ? combinedText.substring(0, maxLength) + '\n...[truncated; total ' + combinedText.length + ' characters]'
       : combinedText
 
     const userGuidance = additionalContext
-      ? `\n\n## 用户补充说明\n${additionalContext}\n\n请在设计数字员工角色时，优先考虑以上用户的补充说明和期望。`
+      ? `\n\n## Additional user context\n${additionalContext}\n\nPrioritize this context when designing the role.`
       : ''
 
     const allTools = this.getSystemToolsList()
-    const toolsListText = allTools.map(t => `- ${t.name}：${t.title}（${t.description}）`).join('\n')
+    const toolsListText = allTools.map(t => `- ${t.name} (${t.title}): ${t.description}`).join('\n')
 
     let prompt: string
-    const toolsSection = `\n可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：\n${toolsListText}\n\n输出字段（只输出JSON）：\n- roleName: 角色名称（简洁明了）\n- roleDescription: 角色规则（需融合职责说明、注意事项和工作流程，作为系统提示词使用）\n- description: 简短描述（不超过150字，客观说明该员工能做什么、擅长什么，供用户和其他数字员工快速了解其能力，不要使用列表格式）\n- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"file"、"date_time"等）`
+    const toolsSection = `\nAvailable system tools (suggestedTools may only use a name from this list):\n${toolsListText}\n\nOutput fields (JSON only):\n- roleName: concise role name\n- roleDescription: complete role rules (duties, cautions, workflow); used as the system prompt\n- description: capability summary of at most 150 characters, explaining what this employee can do and is good at so users and other employees can decide whether to delegate; plain text, not a list\n- suggestedTools: tool names to enable, taken only from the list above (e.g. "file", "date_time")`
     if (hasFile && contextFile) {
       const fileMaxLength = 20000
       const fileContent = contextFile.content.length > fileMaxLength
-        ? contextFile.content.substring(0, fileMaxLength) + '\n...[内容已截断，共' + contextFile.content.length + '字符]'
+        ? contextFile.content.substring(0, fileMaxLength) + '\n...[truncated; total ' + contextFile.content.length + ' characters]'
         : contextFile.content
-      prompt = `根据提供的提示词文件内容，设计数字员工角色，JSON格式输出。
+      prompt = `Design a digital-employee role from the provided prompt file. Return JSON only.
 
-提示词文件（${contextFile.name}）内容：
+Prompt file (${contextFile.name}):
 ${fileContent}${userGuidance}
 
-分析要求：
-1. 该文件是已经编写好的数字员工提示词/规则说明（例如 AGENTS.md、CLAUDE.md 等）
-2. 请直接、完整地将文件中的规则、职责、工作流程、注意事项、约束等内容提炼到 roleDescription 中，尽量不丢失任何内容。roleDescription 应尽可能详尽地保留原文件中的规则与要求
-3. 根据文件内容确定数字员工的角色名称（根据实际内容给出恰当的员工角色名称）
-4. 文件中的工具使用要求、输出格式、交互规范等内容也应一并保留到 roleDescription
+Requirements:
+1. The file is a prepared role prompt or rule set (for example AGENTS.md or CLAUDE.md).
+2. Preserve its duties, workflow, cautions, constraints, tool-usage rules, output format, and interaction rules in roleDescription; do not drop rules.
+3. Choose an appropriate roleName from the content.
+
+Write every field in the language of the prompt file.
 ${toolsSection}`
     } else if (hasCollection) {
-      prompt = `分析资料库合集内容，设计数字员工角色，JSON格式输出。
+      prompt = `Design a digital-employee role from the knowledge-base collection below. Return JSON only.
 
-资料库合集资料：
+Collection material:
 ${truncatedText}${userGuidance}
 
-分析要求：
-1. 分析合集中的业务领域、文档类型和核心主题，确定该合集的业务场景
-2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
-3. 基于合集内容推导员工应承担的职责（如解答相关咨询、处理对应业务请求等）
-4. 根据业务特性确定工作流程和注意事项
+Requirements:
+1. Determine the business domain from the collection's subject matter, document types, and key topics.
+2. Choose roleName and the role's position from that domain.
+3. Derive the duties the employee should own (answering related questions, handling corresponding business requests).
+4. Define the workflow and cautions from the business characteristics.
+
+Write every field in the language of the collection material.
 ${toolsSection}`
     } else {
-      prompt = `根据业务描述设计数字员工角色，JSON格式输出。
+      prompt = `Design a digital-employee role from the business description below. Return JSON only.
 
+Business description:
 ${userGuidance}
 
-分析要求：
-1. 分析业务描述中的领域信息、业务类型和工作内容，确定业务场景
-2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
-3. 基于业务描述推导员工应承担的职责
-4. 根据业务特性确定工作流程和注意事项
+Requirements:
+1. Determine the business domain, request types, and work content from the description.
+2. Choose roleName and the role's position from that domain.
+3. Derive the duties the employee should own.
+4. Define the workflow and cautions from the business characteristics.
+
+Write every field in the language of the business description.
 ${toolsSection}`
     }
 
@@ -350,8 +357,8 @@ ${toolsSection}`
       {
         role: 'system',
         content: hasFile
-          ? '根据提示词文件内容设计数字员工角色，输出JSON格式结果。roleDescription 需完整保留文件中的规则与要求，尽量不丢失内容；description 为不超过150字的简短能力描述。suggestedTools 必须从提供的工具列表中选取。'
-          : '根据资料库合集内容或业务描述分析设计数字员工角色，输出JSON格式结果。roleDescription 为完整角色规则；description 为不超过150字的简短能力描述。suggestedTools 必须从提供的工具列表中选取。'
+          ? 'Design a digital-employee role from the provided prompt file. Return JSON only. Preserve every rule from the file in roleDescription; description at most 150 characters; suggestedTools only from the provided list.'
+          : 'Design a digital-employee role from the knowledge-base collection or business description. Return JSON only. roleDescription is the complete role rule set; description at most 150 characters; suggestedTools only from the provided list.'
       },
       { role: 'user', content: prompt },
     ]
@@ -431,30 +438,30 @@ ${toolsSection}`
     const parts: string[] = []
 
     for (const col of collectionContents) {
-      parts.push(`\n=== 合集: ${col.collectionName} ===`)
+      parts.push(`\n=== Collection: ${col.collectionName} ===`)
       if (col.collectionDescription) {
-        parts.push(`描述: ${col.collectionDescription}`)
+        parts.push(`Description: ${col.collectionDescription}`)
       }
 
       if (col.globalSummary) {
-        parts.push(`\n[全局摘要]\n${col.globalSummary}`)
+        parts.push(`\n[Global Summary]\n${col.globalSummary}`)
       }
 
       if (col.keyTopics.length > 0) {
-        parts.push(`\n[核心主题] ${col.keyTopics.join(', ')}`)
+        parts.push(`\n[Key Topics] ${col.keyTopics.join(', ')}`)
       }
 
       if (col.documentSummaries.length > 0) {
-        parts.push('\n[文档摘要]')
+        parts.push('\n[Document Summaries]')
         for (const doc of col.documentSummaries) {
-          parts.push(`\n--- 文档: ${doc.docName} ---`)
+          parts.push(`\n--- Document: ${doc.docName} ---`)
           if (doc.summary) parts.push(doc.summary)
-          if (doc.mainTopics.length > 0) parts.push(`主题: ${doc.mainTopics.join(', ')}`)
+          if (doc.mainTopics.length > 0) parts.push(`Topics: ${doc.mainTopics.join(', ')}`)
         }
       }
 
       if (col.paragraphSamples.length > 0) {
-        parts.push('\n[段落内容示例]')
+        parts.push('\n[Paragraph Samples]')
         for (const p of col.paragraphSamples.slice(0, 10)) {
           parts.push(`\n--- ${p.docName} / ${p.titlePath || p.title} ---`)
           parts.push(p.content)
@@ -476,16 +483,16 @@ ${toolsSection}`
         type: 'extraction',
         name: '合同审核',
         description: '审核合同条款，识别风险点和缺失项',
-        promptTemplate: `你是合同审核专员。
+        promptTemplate: `You are a contract review specialist. Review contract clauses, identify risks, and flag missing terms.
 
-审核要点：
-1. 主体信息完整性
-2. 付款条款合理性
-3. 违约责任和争议解决
-4. 保密条款和知识产权
-5. 风险等级标注（高/中/低）
+Review points:
+1. Completeness of the parties' information
+2. Payment amount, schedule, and method are explicit
+3. Liability for breach is balanced between both parties
+4. Dispute resolution
+5. Confidentiality and intellectual property
 
-输出：基本信息摘要、风险点列表（含等级和建议）、缺失条款提醒、总体评估。`,
+Output: a summary of basic information, a risk list (with severity and suggested revision), missing-clause reminders, and an overall assessment.`,
         rules: [
           { description: '付款条款必须明确金额、时间和方式', condition: '遇到付款相关条款', action: '详细审核并标注风险' },
           { description: '违约责任必须对等', condition: '遇到违约责任条款', action: '检查双方责任是否平衡' },
@@ -503,13 +510,13 @@ ${toolsSection}`
         type: 'qa',
         name: '知识问答',
         description: '基于资料库合集回答用户问题',
-        promptTemplate: `你是知识顾问，基于资料库合集回答问题。
+        promptTemplate: `You are a knowledge advisor. Answer strictly from the knowledge-base collection.
 
-原则：
-1. 只基于资料库回答，不编造
-2. 无相关信息时明确说明
-3. 引用来源文件和段落
-4. 专业、简洁、准确`,
+Rules:
+1. Never invent answers outside the collection.
+2. State clearly when no relevant information exists.
+3. Cite the source file and paragraph.
+Keep answers professional, concise, and accurate.`,
         rules: [
           { description: '必须引用知识来源', condition: '回答问题时', action: '标注信息来源文件' },
           { description: '不确定时明确告知', condition: '资料库中无相关信息', action: '说明无法回答，不编造' },
@@ -527,15 +534,11 @@ ${toolsSection}`
         type: 'query',
         name: '数据分析',
         description: '查询和分析数据，生成统计结果',
-        promptTemplate: `你是数据分析师。
+        promptTemplate: `You are a data analyst.
 
-步骤：
-1. 理解分析需求
-2. 确定数据维度
-3. 汇总计算
-4. 生成分析结果
+Steps: understand the request → define dimensions → aggregate and compute → draw conclusions.
 
-输出：查询条件、统计结果、关键发现和建议。`,
+Output: query conditions, statistics, key findings, and recommendations.`,
         rules: [
           { description: '数据必须准确', condition: '涉及数值计算', action: '仔细核对计算过程' },
         ],
@@ -552,13 +555,9 @@ ${toolsSection}`
         type: 'qa',
         name: '通用问答',
         description: '基于资料库合集回答各类问题',
-        promptTemplate: `基于资料库合集回答用户问题。
+        promptTemplate: `Answer user questions from the knowledge-base collection.
 
-原则：
-1. 基于资料库内容
-2. 专业、准确
-3. 引用来源
-4. 不确定时明确说明`,
+Rules: use only collection content; state clearly when evidence is missing; cite sources.`,
         rules: [],
         testCases: [
           { input: '请介绍一下相关内容', expectedOutput: '基于资料库的概括性回答' },
@@ -586,7 +585,7 @@ ${toolsSection}`
         type: 'qa',
         name: '通用问答',
         description: '回答用户的各类问题',
-        promptTemplate: '专业、准确地回答用户问题。',
+        promptTemplate: 'Answer user questions professionally and accurately.',
         rules: [],
         testCases: [],
         sourceFiles: [],
@@ -694,22 +693,24 @@ ${toolsSection}`
           .enabled.map(s => s.name)
       } catch { /* ignore */ }
 
-      const prompt = `请为以下数字员工生成一段简短的能力描述。
+      const prompt = `Generate a capability description for the digital employee below.
 
-数字员工名称：${name}
-${promptText ? `规则/系统提示词：\n${truncatedPrompt}` : '（暂无规则，按通用数字员工理解）'}
-可用工具：${enabledTools.join('、') || '（无）'}
-可用技能：${enabledSkills.join('、') || '（无）'}
+Name: ${name}
+${promptText ? `Rules / system prompt:\n${truncatedPrompt}` : '(no rules yet; treat as a general digital employee)'}
+Enabled tools: ${enabledTools.join(', ') || '(none)'}
+Enabled skills: ${enabledSkills.join(', ') || '(none)'}
 
-要求：
-1. 描述用于让用户和其他数字员工快速了解该员工能做什么、擅长什么，便于判断是否委托任务给他
-2. 不超过150字，一段纯文本，不要使用列表、标题或 Markdown 格式
-3. 直接输出描述内容本身，不要任何前缀、引号或解释`
+Requirements:
+1. Explain what this employee can do and is good at, so users and other employees can decide whether to delegate.
+2. At most 150 characters, one plain-text paragraph, no list, heading, or Markdown.
+3. Output only the description, with no prefix, quotes, or explanation.
+
+Write in the same language as the employee name and rules.`
 
       const fullResponse = await this.streamLLMWithProgress(
         providerId,
         [
-          { role: 'system', content: '你是数字员工描述生成器，根据员工信息生成简短、客观、准确的能力描述。' },
+          { role: 'system', content: 'You write concise, objective capability descriptions for digital employees.' },
           { role: 'user', content: prompt },
         ],
         modelId,

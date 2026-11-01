@@ -9,6 +9,7 @@ const logger = createLogger('Sandbox')
  * 文件沙箱：默认「可读全部 + 只可写工作区」。
  * - Windows：受限令牌（WRITE_RESTRICTED）+ 能力 SID 的目录 ACL + Low 完整性标签，由独立 runner 进程执行
  * - macOS：/usr/bin/sandbox-exec 载入 Seatbelt profile
+ * - Linux：bubblewrap（只读根 + 工作区/私有临时目录可写）
  * 判定发生在内核的文件访问检查里，不依赖对命令文本的静态分析。
  */
 

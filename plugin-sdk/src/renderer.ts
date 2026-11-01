@@ -9,7 +9,7 @@ export interface PluginRouteDefinition {
   /** 相对路径，挂载到 /plugin/<id>/ 命名空间下；'' 或 '/' 为插件首页 */
   path: string
   component: ComponentType
-  /** 路由级 keepAlive（对应宿主 KeepAliveOutlet），默认 true */
+  /** 路由级 keepAlive（预留字段；当前宿主对所有插件路由统一走 KeepAliveOutlet 缓存） */
   keepAlive?: boolean
 }
 

@@ -31,7 +31,7 @@ export const LOOP_DETECT_CONSTANTS = {
   MIN_SPAN: 1024,
   /** 周期上限，超过不判定（交给 maxTokens 兜底） */
   MAX_PERIOD: 1024,
-  /** 保留的最近出现位置数（环形缓冲） */
+  /** 保留的最近出现位置数（收集全部命中后截取末尾） */
   MAX_POSITIONS: 64,
   /** 回溯跨度上限，约束逐字符验证开销（须 ≥ MIN_INTERVALS×MAX_PERIOD+TAIL_LEN） */
   MAX_BACKTRACK_SPAN: 8192,

@@ -51,7 +51,7 @@ const SubTaskDrawer: React.FC<SubTaskDrawerProps> = ({ open, segments, getToolDi
                 ...seg,
                 collapsed: expandedIds.has(seg.id) ? false : (seg.collapsed ?? true),
                 // 子段（工具调用/思考）折叠状态同样由抽屉内 expandedIds 驱动，
-                // 键格式与 DelegationSegment 内部 ""<segId>__sub__<subSegId>" 保持一致，
+                // 键格式与 DelegationSegment 内部的 "<segId>__sub__<subSegId>" 保持一致，
                 // 修复抽屉内无法展开子任务里的工具/思考的 bug
                 subSegments: (seg.subSegments || []).map(ss => {
                   const subKey = `${seg.id}__sub__${ss.id}`

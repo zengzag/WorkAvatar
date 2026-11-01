@@ -1,5 +1,4 @@
-import { Jieba } from '@node-rs/jieba'
-import { dict } from '@node-rs/jieba/dict'
+import type { Jieba } from '@node-rs/jieba'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMSTokenizer')
@@ -25,17 +24,19 @@ const STOP_WORDS = new Set<string>([
  *
  * 选型理由：
  * - 基于 Rust 的 jieba-rs，预编译 N-API 二进制，无需 node-gyp 构建
- * - 性能比 nodejieba 快约 33%，dict 文件内置于包内无需额外管理
+ * - 预编译二进制性能优于 node-gyp 版本，dict 文件内置于包内无需额外管理
  * - 支持精确模式（cut）与搜索引擎模式（cutForSearch）
  */
 class KMSTokenizerService {
   private jieba: Jieba | null = null
 
   /**
-   * 懒加载 Jieba 实例（首次调用时加载字典，约 50ms）
+   * 懒加载 Jieba 实例（首次调用时加载原生模块与字典，约 50ms）
    */
   private getInstance(): Jieba {
     if (this.jieba === null) {
+      const { Jieba } = require('@node-rs/jieba') as typeof import('@node-rs/jieba')
+      const { dict } = require('@node-rs/jieba/dict') as typeof import('@node-rs/jieba/dict')
       this.jieba = Jieba.withDict(dict)
       logger.info('jieba 分词器初始化完成')
     }

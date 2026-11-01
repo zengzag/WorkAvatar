@@ -5,6 +5,7 @@ import path from 'path'
 import fs from 'fs'
 import Database from 'better-sqlite3'
 import { createLogger } from '../logger'
+import { startupMark } from '../startup-timer'
 import DatabaseService from '../database.service'
 import mainUiI18n from '../ui-i18n.service'
 import { IPC_CHANNELS } from '../../../shared/ipc-channels'
@@ -15,6 +16,7 @@ import type {
   PluginImportResult,
   PluginNavItemInfo,
   PluginRendererInfo,
+  PluginSettingsInfo,
 } from '../../../shared/channels/plugin'
 import type {
   PluginContext,
@@ -22,6 +24,7 @@ import type {
   PluginManifest,
   PluginMigration,
   PluginServices,
+  PluginSettingField,
   PluginWindowOptions,
   PluginWindowHandle,
   PluginNotificationPayload,
@@ -53,6 +56,11 @@ import {
 import { createDataAccessService } from './plugin-data-access'
 import { createExecuteService } from './plugin-execute'
 import { createEventBus } from './plugin-events'
+import {
+  applySettingUpdate,
+  resolveSettingValues,
+  validatePluginSettingsSchema,
+} from './plugin-settings'
 
 const logger = createLogger('PluginHost')
 
@@ -130,8 +138,11 @@ interface PluginRecord {
   /** active: activate 成功；error: 激活抛错；invalid: manifest/engine 校验失败；pending: 已安装未重启激活 */
   status: 'active' | 'disabled' | 'invalid' | 'error' | 'pending'
   statusMessage?: string
-  /** activate 成功后的主进程模块（含 deactivate） */
-  module?: { deactivate?: () => void | Promise<void> }
+  /** activate 成功后的主进程模块（含 deactivate / onSettingsChanged） */
+  module?: {
+    deactivate?: () => void | Promise<void>
+    onSettingsChanged?: (values: Record<string, unknown>) => void
+  }
   /** 激活期间注册的 ctx 级资源清理函数（事件订阅取消等），下线时统一调用 */
   disposers?: Set<() => void>
 }
@@ -187,6 +198,8 @@ class PluginHostService {
   private viewContributions = new Map<string, PluginViewContribution>()
   /** 插件注册的命令（pluginId:commandId → command） */
   private commands = new Map<string, PluginCommand>()
+  /** 插件设置变更监听（ctx.settings.onChanged 注册；插件下线时清空） */
+  private pluginSettingsListeners = new Map<string, Set<(values: Record<string, unknown>) => void>>()
   private dataDir = ''
   private initialized = false
   /** 导入序号：保证用户每次手动导入都产生新的 rev（同一包重复导入也刷新渲染端） */
@@ -254,6 +267,7 @@ class PluginHostService {
 
     const disabled = this.readDisabledList()
     this.scanAndActivate(disabled)
+    startupMark(`插件激活完成（共 ${this.records.size} 个，已启用 ${Array.from(this.records.values()).filter(r => r.enabled).length} 个）`)
   }
 
   /** 扫描目录 → 校验 → 激活。init 与 reload 复用（全量重建 records） */
@@ -409,6 +423,7 @@ class PluginHostService {
     }
     this.contributions.delete(id)
     this.messageActions.delete(id)
+    this.pluginSettingsListeners.delete(id)
     for (const key of [...this.viewContributions.keys()]) {
       if (key.startsWith(`${id}:`)) this.viewContributions.delete(key)
     }
@@ -564,6 +579,8 @@ class PluginHostService {
     if (!engineOk) return fail(manifest.id, `engine 不兼容: 需要 ${manifest.engine}，宿主协议 ${PLUGIN_PROTOCOL_VERSION}`)
     const capCheck = validateCapabilities(manifest.capabilities)
     if (!capCheck.ok) return fail(manifest.id, `capabilities 非法: ${capCheck.reason}`)
+    const settingsCheck = validatePluginSettingsSchema(manifest.settings)
+    if (!settingsCheck.ok) return fail(manifest.id, `settings 非法: ${settingsCheck.reason}`)
     if (records.has(manifest.id)) {
       logger.warn(`插件 id 冲突，忽略后发现的: ${manifest.id} (${rootDir})`)
       return
@@ -594,26 +611,28 @@ class PluginHostService {
 
   private activateRecord(record: PluginRecord): void {
     const { manifest, rootDir } = record
+    const startedAt = performance.now()
     try {
       const req = createRequire(__filename)
       const mod = req(path.join(rootDir, manifest.main)) as {
         migrations?: PluginMigration[]
         activate: (ctx: PluginContext) => void | Promise<void>
         deactivate?: () => void | Promise<void>
+        onSettingsChanged?: (values: Record<string, unknown>) => void
       }
       if (typeof mod.activate !== 'function') throw new Error('主进程入口缺少 activate 导出')
 
       const ctx = this.buildContext(record)
       this.runMigrations(record, mod.migrations ?? [], ctx)
       mod.activate(ctx)
-      record.module = { deactivate: mod.deactivate }
+      record.module = { deactivate: mod.deactivate, onSettingsChanged: mod.onSettingsChanged }
       record.status = 'active'
       record.statusMessage = undefined
       // 插件激活成功后注册其 manifest 声明的数字员工（异常隔离：单员工声明非法只跳过，不影响插件运行）
       this.registerManifestEmployees(record)
       // 插件激活成功后注册其内置 skills（<插件根>/skills/，source='plugin'，异常隔离单技能跳过）
       this.registerPluginSkills(record)
-      logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})`)
+      logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})，耗时 ${(performance.now() - startedAt).toFixed(0)}ms`)
     } catch (err: any) {
       record.status = 'error'
       record.statusMessage = err?.message || String(err)
@@ -742,6 +761,41 @@ class PluginHostService {
     return db
   }
 
+  /** 设置项在内核 settings 表中的存储键 */
+  private settingsStorageKey(pluginId: string): string {
+    return `plugin.settings:${pluginId}`
+  }
+
+  private readStoredSettings(pluginId: string): Record<string, unknown> {
+    try {
+      const row = DatabaseService.getInstance().getDb()
+        .prepare('SELECT value FROM settings WHERE key = ?').get(this.settingsStorageKey(pluginId)) as { value: string } | undefined
+      const parsed = row?.value ? JSON.parse(row.value) : null
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** 当前生效的设置值（schema 默认值 + 已保存值，非法值回退默认） */
+  private resolvePluginSettings(record: PluginRecord): Record<string, unknown> {
+    return resolveSettingValues(record.manifest.settings, this.readStoredSettings(record.manifest.id))
+  }
+
+  /** 设置变更通知：插件监听器 → 模块热应用回调 → 插件渲染端广播 */
+  private notifyPluginSettingsChanged(record: PluginRecord, values: Record<string, unknown>): void {
+    const id = record.manifest.id
+    for (const listener of this.pluginSettingsListeners.get(id) ?? []) {
+      try { listener(values) } catch (err: any) {
+        logger.warn(`插件设置监听执行失败: ${id}`, err?.message || err)
+      }
+    }
+    try { record.module?.onSettingsChanged?.(values) } catch (err: any) {
+      logger.warn(`插件 onSettingsChanged 执行失败: ${id}`, err?.message || err)
+    }
+    this.broadcast(id, 'settings:changed', values)
+  }
+
   /** 关闭某插件的 KV 专用连接（插件分库 plugin-data/<id>/index.db，下线时释放 fd；下次使用重新惰性打开） */
   private closePluginKvDb(id: string): void {
     for (const key of [...this.kvDbs.keys()]) {
@@ -822,6 +876,8 @@ class PluginHostService {
     const lookup = (lng: string): unknown => {
       const bundle = locales[lng]
       if (!bundle) return undefined
+      // 插件 locale 普遍使用扁平 key（如 "settings.greeting"）；优先直取，兼容嵌套结构
+      if (Object.prototype.hasOwnProperty.call(bundle, key)) return bundle[key]
       return key.split('.').reduce<unknown>(
         (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
         bundle,
@@ -1499,6 +1555,23 @@ class PluginHostService {
           return (this.getKvDb(manifest.id).prepare('SELECT key FROM plugin_kv').all() as { key: string }[]).map(r => r.key)
         },
       },
+      settings: {
+        getAll: () => this.resolvePluginSettings(record_),
+        get: <T,>(key: string) => this.resolvePluginSettings(record_)[key] as T | undefined,
+        onChanged: (callback) => {
+          let listeners = this.pluginSettingsListeners.get(manifest.id)
+          if (!listeners) {
+            listeners = new Set()
+            this.pluginSettingsListeners.set(manifest.id, listeners)
+          }
+          listeners.add(callback)
+          return () => {
+            const current = this.pluginSettingsListeners.get(manifest.id)
+            current?.delete(callback)
+            if (current && current.size === 0) this.pluginSettingsListeners.delete(manifest.id)
+          }
+        },
+      },
       services,
       webview: {
         allowOrigins: (hosts) => {
@@ -1639,7 +1712,45 @@ class PluginHostService {
         detachable: r.manifest.nav.detachable ?? false,
       } : undefined,
       hasRenderer: !!r.manifest.renderer,
+      hasSettings: (r.manifest.settings?.length ?? 0) > 0,
     })).sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  /** 设置表单展示文案按插件 locale 解析（无界面插件不会注册渲染端 locale，必须在宿主侧解析） */
+  private localizeSettingFields(record: PluginRecord, fields: PluginSettingField[]): PluginSettingField[] {
+    return fields.map(field => ({
+      ...field,
+      label: this.translatePluginText(record, field.label),
+      description: field.description ? this.translatePluginText(record, field.description) : undefined,
+      placeholder: field.placeholder ? this.translatePluginText(record, field.placeholder) : undefined,
+      options: field.options?.map(option => ({
+        ...option,
+        label: this.translatePluginText(record, option.label),
+      })),
+    }))
+  }
+
+  /** 读取插件设置（schema + 当前生效值），供宿主设置页渲染表单 */
+  getPluginSettings(pluginId: string): PluginSettingsInfo {
+    const record = this.records.get(pluginId)
+    if (!record) throw new Error(`插件不存在: ${pluginId}`)
+    return {
+      fields: this.localizeSettingFields(record, record.manifest.settings ?? []),
+      values: this.resolvePluginSettings(record),
+    }
+  }
+
+  /** 保存插件设置（校验 + 落库 + 通知插件热应用），返回保存后的完整值 */
+  setPluginSettings(pluginId: string, values: Record<string, unknown>): PluginSettingsInfo {
+    const record = this.records.get(pluginId)
+    if (!record) throw new Error(`插件不存在: ${pluginId}`)
+    const fields = record.manifest.settings ?? []
+    const next = applySettingUpdate(fields, this.resolvePluginSettings(record), values)
+    DatabaseService.getInstance().getDb()
+      .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run(this.settingsStorageKey(pluginId), JSON.stringify(next))
+    this.notifyPluginSettingsChanged(record, next)
+    return { fields: this.localizeSettingFields(record, fields), values: next }
   }
 
   /** 渲染端动态加载所需的插件信息（仅激活成功且有渲染端入口） */

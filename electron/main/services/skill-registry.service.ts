@@ -13,9 +13,9 @@ const logger = createLogger('SkillRegistry')
 // Skill 来源：global（用户安装 skillsDir）、project（员工工作区 .workavatar/skills/）、bundled（内置）、plugin（插件内置）
 export type SkillSource = 'global' | 'project' | 'bundled' | 'plugin'
 
-// 对齐 agentskills.io 开放标准 + Claude Code/CodeBuddy 扩展字段
+// SKILL.md frontmatter：通用字段 + 本项目的扩展字段
 export interface ClaudeSkillManifest {
-  // 开放标准必填
+  // 通用必填
   name: string
   description: string
   // 开放标准可选
@@ -24,7 +24,7 @@ export interface ClaudeSkillManifest {
   license?: string
   compatibility?: string
   metadata?: Record<string, any>
-  // Claude Code / CodeBuddy 扩展
+  // 本项目扩展
   tags?: string[]
   tools?: string[] // 旧字段，兼容保留（等同于 allowed-tools）
   allowedTools?: string[] // 空格/逗号分隔的工具白名单
@@ -156,7 +156,7 @@ class SkillRegistryService {
       try {
         const skillMdContent = fs.readFileSync(skillMdPath, 'utf-8')
         const manifest = this.parseSkillMd(skillMdContent)
-        // 插件技能强制要求 SKILL.md 的 name 与目录名一致（对齐 agentskills 约定）
+        // 插件技能强制要求 SKILL.md 的 name 与目录名一致
         this.validateManifest(manifest, entry.name)
         const skillId = `plugin:${pluginId}:${manifest.name}`
         this.finalizeSkillRecord({
@@ -176,7 +176,7 @@ class SkillRegistryService {
     this.activePluginSkills.set(pluginId, skillsDir)
   }
 
-  /** 插件下线（禁用/删除/热重载）时调用：技能从可用集合移除，DB 记录保留（员工分配不丢失） */
+  /** 插件禁用/热重载时调用：技能从可用集合移除，DB 记录保留（员工分配不丢失）；插件删除由 removePluginSkills 物理清除 */
   markPluginSkillsInactive(pluginId: string): void {
     this.activePluginSkills.delete(pluginId)
   }
@@ -347,6 +347,17 @@ class SkillRegistryService {
     }
   }
 
+  // 版本号解析：顶层 version 优先；第三方 skill（openclaw/hermes 生态）常把 version 放在 metadata 下
+  private resolveVersion(frontMatter: Record<string, any>): string {
+    const candidates = [frontMatter.version, frontMatter.metadata?.version]
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null) continue
+      const version = String(candidate).trim()
+      if (version) return version
+    }
+    return '1.0.0'
+  }
+
   // 把字段值统一转为字符串数组（兼容 "a, b, c"、"a b c"、YAML 列表三种写法）
   private toStringArray(value: any): string[] {
     if (!value) return []
@@ -385,7 +396,7 @@ class SkillRegistryService {
       const tools = this.toStringArray(frontMatter.tools)
       manifest.name = String(frontMatter.name ?? '').trim()
       manifest.description = String(frontMatter.description ?? '').trim()
-      manifest.version = frontMatter.version ? String(frontMatter.version).trim() : '1.0.0'
+      manifest.version = this.resolveVersion(frontMatter)
       manifest.author = frontMatter.author ? String(frontMatter.author).trim() : ''
       manifest.license = frontMatter.license ? String(frontMatter.license).trim() : ''
       manifest.compatibility = frontMatter.compatibility ? String(frontMatter.compatibility).trim() : ''
@@ -718,7 +729,7 @@ class SkillRegistryService {
   }
 
   // 旧接口保留兼容：返回 name + 全文 + references 拼接
-  // 推荐新代码使用 getSkillBody（Phase 2 渐进披露）
+  // 推荐新代码使用 renderSkillBody（含参数替换与 references 路径提示）
   getSkillPrompt(skillId: string): string {
     const skill = this.getSkillById(skillId)
     if (!skill) return ''

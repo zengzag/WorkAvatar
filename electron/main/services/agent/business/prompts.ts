@@ -9,7 +9,7 @@
  */
 
 /** 系统提示词格式标记：用于识别并丢弃旧版本缓存的 conversations.system_prompt */
-export const PROMPT_FORMAT_MARKER = '<workavatar-prompt format="2"/>'
+export const PROMPT_FORMAT_MARKER = '<workavatar-prompt format="5"/>'
 
 const SHORT_INSTRUCTION_LIMIT = 100
 
@@ -38,33 +38,31 @@ function normalizeInstructions(instructions: string): string {
 function buildOperatingRules(options: Pick<SystemPromptOptions, 'hasReportGeneratedFiles' | 'hasFileDelete'>): string {
   const lines: string[] = [
     '# Operating Rules',
-    '- Analyze the request and iterate with tools until the task is complete; handle trivial requests directly.',
-    '- Treat tool results as the source of truth. Never invent file contents, command output, URLs or identifiers.',
-    '- Reply in Markdown, lead with the outcome, stay concise; skip greetings and preamble.',
-    '- Use the shell and path conventions of the platform named in the environment below: PowerShell with backslash paths on Windows, bash with forward slashes elsewhere.',
-    '- Tool calls run behind user-controlled permissions: a denied or cancelled call is intentional — adjust your approach instead of repeating it.',
-    '- Tool results may be truncated; re-read the file or re-run the command instead of guessing the missing part.',
+    '- Work autonomously until the request is complete. Ask the user only when a decision, missing input, or permission genuinely blocks progress; otherwise proceed with a reasonable assumption and state it.',
+    '- Treat tool results as ground truth. Never invent file contents, command output, URLs, identifiers, numbers, or citations.',
+    '- Verify before reporting: confirm each deliverable exists at the stated path and matches the requested format. Never claim success you have not observed.',
+    '- A denied or cancelled tool call is final. Change the approach or report the blocker; never repeat the same call.',
+    '- Truncated tool output is a partial result: re-read a narrower range or re-run the command instead of inferring the missing part.',
+    '- Reply in the language of the user\'s latest message. Lead with the outcome, then the supporting detail; use Markdown only where structure helps. Omit greetings, filler, and restatements.',
+    '- Follow the platform conventions in Environment: PowerShell with backslash paths on Windows; bash with forward slashes elsewhere.',
   ]
   if (options.hasReportGeneratedFiles) {
     lines.push(
-      '- Before your final reply, call report_generated_files once with the absolute path of every user-facing deliverable you created or modified (documents, spreadsheets, presentations, PDFs, images). Never declare temporary files, configuration files or scripts.'
+      '- Call report_generated_files only when you produced user-facing files, passing their absolute paths; skip it when there are none. Exclude temporary files, configuration files, and scripts.'
     )
   }
   if (options.hasFileDelete) {
     lines.push(
-      '- Delete files and directories only through file_delete; deletion via shell commands or scripts is rejected by policy.'
+      '- Delete files and directories only with file_delete; deletion through shell commands or scripts is blocked by policy.'
     )
   }
-  lines.push(
-    '- Always reply in the same primary language as the user\'s latest message.'
-  )
   return lines.join('\n')
 }
 
 function buildCustomInstructionsSection(instructions: string): string {
   return [
     '# Custom Instructions',
-    'The following instructions are provided by the user and are authoritative for this role. Follow them exactly whenever they apply:',
+    'The user-provided instructions below define this role\'s duties, standards, and workflow. Follow them exactly whenever they apply; an explicit instruction in the current conversation overrides them for that turn.',
     '',
     instructions,
   ].join('\n')
@@ -73,10 +71,6 @@ function buildCustomInstructionsSection(instructions: string): string {
 function buildEnvironmentSection(workspaceGuidance: string): string {
   return ['# Environment', workspaceGuidance].join('\n')
 }
-
-const CLOSING_PRINCIPLES =
-  '# Key Principles\n' +
-  'Trust verified tool results over assumptions, keep every response concise and actionable, and always write in the user\'s language.'
 
 /** 数字员工系统提示词（完整模式） */
 export function buildEmployeeSystemPrompt(options: EmployeeSystemPromptOptions): string {
@@ -92,7 +86,7 @@ export function buildEmployeeSystemPrompt(options: EmployeeSystemPromptOptions):
   }
 
   const sections: string[] = []
-  sections.push(`You are a digital employee named "${options.name}" — an autonomous AI work assistant operating inside WorkAvatar.`)
+  sections.push(`You are a digital employee named "${options.name}" — an autonomous work assistant operating inside WorkAvatar.`)
   if (options.role) sections.push(`Role: ${options.role}`)
   if (instructions && instructions.length < SHORT_INSTRUCTION_LIMIT) {
     sections.push(`Profile: ${instructions}`)
@@ -108,7 +102,6 @@ export function buildEmployeeSystemPrompt(options: EmployeeSystemPromptOptions):
     sections.push(buildEnvironmentSection(options.workspaceGuidance))
   }
 
-  sections.push(CLOSING_PRINCIPLES)
   sections.push(PROMPT_FORMAT_MARKER)
   return sections.join('\n\n')
 }
@@ -141,7 +134,6 @@ export function buildAssistantSystemPrompt(options: SystemPromptOptions): string
     sections.push(buildEnvironmentSection(options.workspaceGuidance))
   }
 
-  sections.push(CLOSING_PRINCIPLES)
   sections.push(PROMPT_FORMAT_MARKER)
   return sections.join('\n\n')
 }
@@ -154,11 +146,11 @@ export function buildCapabilitiesPrompt(params: {
   const lines: string[] = ['Capabilities:']
   if (params.onDemandToolList) {
     lines.push(
-      `- On-demand tools: ${params.onDemandToolList} — call list_available_tools for a tool's full schema, then invoke_tool to run it.`
+      `- On-demand tools: ${params.onDemandToolList} — call list_available_tools for the full parameter schema of the tools you need, then invoke_tool to run them.`
     )
   }
   if (params.hasSkills) {
-    lines.push('- Skills: when a task matches one of the listed skills, call activate_skill to load its full instructions and then follow them.')
+    lines.push('- Skills: when a task matches one of the listed skills, call activate_skill to load its full instructions and follow them.')
   }
   if (lines.length === 1) return undefined
   return lines.join('\n')
@@ -193,42 +185,42 @@ export function buildDelegationPrompt(
     : []
   return [
     'Delegation (multi-employee collaboration):',
-    'Proactively delegate whenever a sub-task is independent, research-heavy, or needs a specialty other than your own. A sub-agent works in its own isolated context and returns only a self-contained result, so delegating keeps your context clean and lets independent work run in parallel. Do not do everything yourself when delegation clearly fits.',
+    'Delegate when a sub-task is independent, research-heavy, or needs a specialty you lack. A sub-agent runs in an isolated context and returns one self-contained result, which keeps this conversation clean and lets independent work run in parallel.',
     ...targetsText,
     ...profilesText,
-    'Delegation tools:',
-    '- delegate_to_employee: delegate a single sub-task and wait synchronously for its result (or run_in_background for async).',
-    '- launch_agents + await_agents: dispatch multiple independent sub-tasks in parallel, then await and aggregate their results.',
-    '- followup_delegation: ask follow-up questions or request revisions on a completed delegation; the sub-agent retains the original task context and supports multi-turn collaboration.',
-    'When to delegate (act on these signals):',
+    'Tools:',
+    '- delegate_to_employee: one sub-task with a synchronous result; run_in_background=true returns a runId immediately.',
+    '- launch_agents + await_agents: dispatch independent sub-tasks in parallel, then aggregate their results.',
+    '- followup_delegation: revise or question a completed delegation; the sub-agent keeps its original task context.',
+    'Delegate when:',
     '- The task has two or more independent parts that can be researched, produced, or verified in parallel.',
-    '- Answering requires sweeping many files, sources, or naming conventions (roughly 3+ queries or 10+ file reads) and you only need the conclusion, not the raw dumps.',
-    '- A self-contained unit of work needs a different specialty, a narrower toolset, or an isolated context to avoid polluting this conversation.',
-    '- You need an unbiased review or verification of work, separate from the agent that produced it.',
-    'When NOT to delegate (do it yourself):',
-    '- A single fact, file, symbol, or value you already know how to locate directly.',
-    '- Anything already answered by this conversation or by a tool result in hand.',
-    '- Work that depends on partial output you have not received yet — that is sequential; use delegate_to_employee and wait instead of splitting it.',
-    '- Trivial or single-step requests; do not delegate merely to look structured.',
-    'Choosing the executor (reuse-first):',
-    '1. Prefer an available delegatee whose capabilities match; only create an ephemeral sub-agent (ephemeral_role) when none fits.',
-    '2. Ephemeral sub-agents are one-off workers created on demand: give a concise duty name and a fully self-contained system_prompt (identity, responsibilities, output requirements, constraints). They never see this conversation and disappear when the task ends.',
-    '3. Reuse a persisted sub-agent profile (subagent_profile_id, query via list_subagent_profiles) instead of re-declaring the same ephemeral role repeatedly.',
-    '4. Narrow the ephemeral tool allowlist (tools) only when the task truly needs a restricted capability (e.g. read-only research).',
-    'Workflow for complex tasks:',
+    '- The answer requires sweeping many files, sources, or naming conventions (about 3+ queries or 10+ file reads) and only the conclusion is needed, not the raw dumps.',
+    '- The work needs a different specialty, a narrower toolset, or an isolated context that should not pollute this conversation.',
+    '- You need an unbiased review independent of the agent that produced the work.',
+    'Do not delegate when:',
+    '- The answer is a single fact, file, symbol, or value you can locate directly.',
+    '- This conversation or a tool result already answers it.',
+    '- The work depends on output you have not received yet; run it sequentially with delegate_to_employee instead of splitting it.',
+    '- The request is trivial or single-step.',
+    'Executor selection (reuse first):',
+    '1. Prefer a delegatee whose capabilities match. Create an ephemeral sub-agent only when none fits.',
+    '2. Ephemeral sub-agents are one-off workers: give a concise duty name and a fully self-contained system_prompt (identity, duties, output requirements, constraints). They never see this conversation and disappear when the run ends.',
+    '3. Reuse a persisted sub-agent profile (subagent_profile_id; list via list_subagent_profiles) instead of re-authoring the same role.',
+    '4. Narrow the ephemeral tool allowlist only when the task truly needs a restricted capability (e.g. read-only research).',
+    'Execution:',
     '1. Plan: split the task into independent, clearly bounded sub-tasks.',
-    '2. Parallelize: dispatch every independent sub-task in a single launch_agents call rather than one by one.',
-    '3. Aggregate: use await_agents to collect each result (summary, generated-file list, and token usage).',
-    '4. Verify: review each result. When a result is wrong, incomplete, or misses an acceptance criterion, first use followup_delegation against the original sub-agent so its context is preserved; re-delegate only when the issue cannot be repaired.',
-    '5. Report: deliver the conclusion to the user from the results and files; do not replay the sub-agents\' full execution trace.',
-    'Fan-out then fan-in:',
-    '- Emit all independent delegations together in one step, then collect them; never serialize work that has no dependency. Sequence only when a later instruction genuinely needs an earlier result.',
-    '- Every instruction must be self-contained — the sub-agent has not seen this conversation. Include background, objective, expected output form, and acceptance criteria.',
+    '2. Fan out: send every independent sub-task in one launch_agents call, not one by one.',
+    '3. Aggregate: collect each result with await_agents (summary, generated files, token usage).',
+    '4. Verify: check each result against its acceptance criteria. Repair a wrong or incomplete result with followup_delegation first; re-delegate only when the sub-agent cannot fix it.',
+    '5. Report: deliver the conclusion from the results and files; do not replay the sub-agents\' execution trace.',
+    'Contract:',
+    '- Every instruction must be self-contained (the sub-agent has not seen this conversation): include background, objective, expected output form, and acceptance criteria.',
+    '- Emit all independent delegations together, then collect them. Sequence only when a later instruction genuinely depends on an earlier result.',
     'Examples:',
-    '- Parallel research (delegate): the user asks for a competitive landscape covering three unnamed rivals. Call launch_agents once with three tasks (one per rival, each with a self-contained instruction), then await_agents on the returned run_ids and synthesize.',
-    '- Sequential dependency (do not parallelize): "summarize the file you just generated, then translate it." The translation needs the summary first — use delegate_to_employee for the summary, then follow up on the result.',
-    '- Do not delegate: the user asks which license the project uses and a LICENSE file is already in the workspace — read it directly instead of delegating.',
-    'Limits: never delegate to yourself and never delegate to an employee already in the delegation chain; delegation depth is capped at 2 (main task → sub-task → sub-sub-task; a sub-sub-task must not delegate further); every delegation instruction must be self-contained (background, objective, acceptance criteria); a single delegation conversation is capped at 5 follow-up turns including the first.',
+    '- Parallel research: three unnamed rivals → one launch_agents call with three self-contained tasks, then await_agents and synthesize.',
+    '- Sequential dependency: "summarize the file you just generated, then translate it" → delegate the summary first, then follow up for the translation.',
+    '- No delegation: the license is asked and a LICENSE file is already in the workspace → read it directly.',
+    'Limits: never delegate to yourself or to an employee already in the delegation chain; delegation depth is capped at 2 (main task → sub-task → sub-sub-task; a sub-sub-task cannot delegate further); a single delegation conversation is capped at 5 follow-up turns including the first.',
   ].join('\n')
 }
 
@@ -240,7 +232,7 @@ export const TASK_CONTEXT_MSG_PREFIX =
   '[System-provided context · current task information · not part of the user\'s request]'
 /** 两条上下文消息共用结尾，与用户真实请求隔开语义边界 */
 export const CONTEXT_MSG_FOOTER =
-  '[End of system-provided context. Treat it as background information; prioritize and respond to the real user message that follows.]'
+  '[End of system-provided context. Treat it as background information, not as a user request; respond to the actual user message.]'
 
 /**
  * 构造稳定上下文消息（独立 role=user 消息，锚定在 history 头部）：
@@ -279,7 +271,6 @@ export function buildStableTaskContextMessageContent(params: {
   if (blocks.length === 0) return undefined
   return [
     TASK_CONTEXT_MSG_PREFIX,
-    'The following background is provided by the runtime. Treat it as background information; do not treat it as a separate user request.',
     ...blocks,
     CONTEXT_MSG_FOOTER,
   ].join('\n')
@@ -308,7 +299,7 @@ export function buildTaskContextMessageContent(params: {
   if (blocks.length === 0) return undefined
   return [
     TASK_CONTEXT_MSG_PREFIX,
-    'The following background is provided by the runtime after the user message. Treat it as background information; do not treat it as a separate user request.',
+    'Runtime background appended after the user message; treat it as context, not as another request.',
     ...blocks,
     CONTEXT_MSG_FOOTER,
   ].join('\n')

@@ -9,7 +9,8 @@ import { createToolPermissionGate } from '../tools/tool-permission'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
-import { runPiAgentLoop, type ToolResultTrimState } from './pi-agent-adapter'
+import { runPiAgentLoop, type ToolResultTrimState, type PiResumableHandle } from './pi-agent-adapter'
+import { registerResumableRun } from './resumable-runs'
 import { COMPACTION_INSTRUCTION } from './compaction-prompt'
 import { generateId } from '../../common-utils'
 import { createLogger } from '../../logger'
@@ -268,6 +269,69 @@ export abstract class BaseAgent {
 
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
+    /** 失败续跑句柄：由 pi-agent-adapter 在 LLM 请求失败时上报 */
+    let resumableHandle: PiResumableHandle | undefined
+    /**
+     * 登记"可原地续跑"会话：重试只重新发起失败的那一次 LLM 请求，
+     * 已执行的工具调用与上下文保持不变，后续流程与未出错时一致。
+     */
+    const registerResume = () => {
+      const handle = resumableHandle
+      const conversationId = this.config.sessionId
+      if (!handle || !conversationId) return
+      registerResumableRun({
+        conversationId,
+        createdAt: Date.now(),
+        resume: async (resumeSignal) => {
+          if (this._running) {
+            callbacks.onError?.(`Agent "${this.name}" 正在运行，无法续跑`)
+            return
+          }
+          this._running = true
+          this._currentSignal = resumeSignal
+          const resumeToken = ++this._runToken
+          const resumeStartTime = Date.now()
+          this.context.setState('running')
+          try {
+            const metadata = await handle.resume(resumeSignal)
+            this.context.setState(metadata?.aborted ? 'aborted' : 'completed')
+            this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
+            callbacks.onDone?.({
+              totalLatencyMs: Date.now() - resumeStartTime,
+              iterations: this.context.getIterationCount(),
+              aborted: !!metadata?.aborted,
+              abortReason: metadata?.abortReason,
+              tokenUsage: metadata?.tokenUsage,
+              contextStats: this.memoryManager.getStats() ?? undefined,
+            })
+          } catch (error: any) {
+            if (resumeSignal.aborted) {
+              this.context.setState('aborted')
+              callbacks.onDone?.({
+                totalLatencyMs: Date.now() - resumeStartTime,
+                iterations: this.context.getIterationCount(),
+                aborted: true,
+                abortReason: error?.message || String(error),
+                contextStats: this.memoryManager.getStats() ?? undefined,
+              })
+              return
+            }
+            this.context.setState('error')
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            this.eventEmitter.emit('run:error', { error: errorMessage })
+            // 再次失败：adapter 已上报新的续跑句柄，重新登记以便继续重试
+            registerResume()
+            callbacks.onError?.(errorMessage)
+          } finally {
+            if (this._runToken === resumeToken) {
+              this._running = false
+              this._currentSignal = undefined
+            }
+          }
+        },
+      })
+    }
+
     try {
       // 每次 runStream 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
       this._lastKnownPromptTokens = undefined
@@ -300,7 +364,9 @@ export abstract class BaseAgent {
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
-      const streamMetadata = await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal, options.requestTail)
+      const streamMetadata = await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal, options.requestTail, (handle) => {
+        resumableHandle = handle
+      })
 
       // aborted 走正常返回路径（pi-agent-adapter 已捕获 AbortError），仍透传 tokenUsage/contextStats
       this.context.setState(streamMetadata?.aborted ? 'aborted' : 'completed')
@@ -336,6 +402,8 @@ export abstract class BaseAgent {
       this.context.setState('error')
       // 非 Error 抛出物（如字符串/对象）兜底为 String，避免 message 为 undefined
       const errorMessage = error instanceof Error ? error.message : String(error)
+      // 先登记可续跑状态再上报错误：IPC 层据此把窗口/交互上下文附加到该次运行
+      registerResume()
       this.eventEmitter.emit('run:error', { error: errorMessage })
       callbacks.onError?.(errorMessage)
     } finally {
@@ -499,7 +567,8 @@ export abstract class BaseAgent {
     maxIterations: number,
     callbacks: AgentRunStreamCallbacks,
     signal?: AbortSignal,
-    requestTail?: string
+    requestTail?: string,
+    onResumable?: (handle: PiResumableHandle) => void,
   ): Promise<AgentResponseMetadata & { aborted?: boolean; abortReason?: string }> {
     const { tokenUsage, aborted, abortReason } = await runPiAgentLoop({
       config: this.config,
@@ -514,6 +583,7 @@ export abstract class BaseAgent {
       sessionId: this.config.sessionId,
       requestTail,
       trimState: this.toolResultTrimState,
+      onResumable,
       getLoopReminder: (turn: number) => this.buildLoopReminder(turn, maxIterations),
       onToolCallExecuted: this.onToolCallExecuted.bind(this),
       onPromptTokens: (tokens) => {

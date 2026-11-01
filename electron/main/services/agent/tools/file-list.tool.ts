@@ -2,7 +2,7 @@ import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import { expandGlobPattern, isGlobPattern, isIgnoredDirName } from './glob-engine'
-import { getWorkspacePath, resolveToolPath } from './fs-shared'
+import { getWorkspacePath, isUncreatedWorkspaceRoot, resolveToolPath } from './fs-shared'
 import { formatFileSize, relativeDisplayPath } from './utils'
 
 const DEFAULT_MAX_ITEMS = 200
@@ -19,20 +19,20 @@ export const fileListTool: ToolDefinition = {
   id: 'file_list',
   name: 'file_list',
   title: '列出文件',
-  summary: '按目录或通配模式列出文件与子目录，用于掌握项目结构、定位文件。',
-  description: `列出目录内容，或按通配模式查找文件。用于了解项目结构与定位文件位置——目录浏览与文件查找请用本工具，不要用 shell 的 ls / find / dir 代替。
+  summary: 'List files and directories by path or glob to understand project structure and locate files.',
+  description: `List a directory's contents, or find files by glob pattern. Use this tool instead of shell ls / find / dir for directory browsing and file lookup.
 
-- path：要列出的目录，默认当前工作目录。传入文件时直接返回该文件信息。
-- pattern：可选通配模式，支持 * ? [abc] 与 ** 跨段匹配（如 "**/*.ts"、"src/**/*.test.ts"），相对 path 解析。不传则列出 path 的直接子项。
-- 遍历时自动跳过 node_modules / .git / dist / build 等重目录；默认隐藏以 . 开头的项，show_hidden=true 时显示。
-- 返回路径相对 path，目录以 / 结尾、文件附体积；最多 max_items 项，超限会在末尾提示。`,
+- path: directory to list (default: current workspace). A file path returns that file's details.
+- pattern: optional glob relative to path (* ? [abc] and ** across segments, e.g. "**/*.ts"). Without it, direct children are listed.
+- Heavy directories (node_modules, .git, dist, build) are skipped; dot-entries are hidden unless show_hidden=true.
+- Returned paths are relative to path; directories end with "/". At most max_items entries are returned, with a truncation notice.`,
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '要列出的目录或文件路径（绝对路径，或相对当前工作目录）。默认当前工作目录' },
-      pattern: { type: 'string', description: '可选通配模式（支持 * ? [abc] 与 **），相对 path 解析；不传则列出直接子项' },
-      max_items: { type: 'number', description: `最多返回项数（默认${DEFAULT_MAX_ITEMS}，上限${MAX_ITEMS_LIMIT}）`, minimum: 1, maximum: MAX_ITEMS_LIMIT },
-      show_hidden: { type: 'boolean', description: '是否显示以 . 开头的隐藏项（默认false）' },
+      path: { type: 'string', description: 'Directory or file path (absolute, or relative to the workspace). Default: current workspace' },
+      pattern: { type: 'string', description: 'Optional glob (* ? [abc], **), resolved relative to path; omit to list direct children' },
+      max_items: { type: 'number', description: `Maximum entries to return (default ${DEFAULT_MAX_ITEMS}, max ${MAX_ITEMS_LIMIT})`, minimum: 1, maximum: MAX_ITEMS_LIMIT },
+      show_hidden: { type: 'boolean', description: 'Include dot-entries (default false)' },
     },
     required: [],
   },
@@ -63,6 +63,15 @@ async function listFiles(args: any) {
   try {
     stat = fs.statSync(base)
   } catch {
+    // 工作区懒创建：任务还没写过文件时目录不存在，按空目录返回，避免误导模型去"修路径"
+    if (isUncreatedWorkspaceRoot(base)) {
+      return {
+        success: true,
+        output: pattern
+          ? `${base}\n匹配 "${pattern}"：共 0 项（工作区尚未创建，首次写入文件时自动创建）`
+          : `${base}\n直接子项：共 0 项（工作区尚未创建，首次写入文件时自动创建）`,
+      }
+    }
     return { success: false, error: `路径不存在: ${base}` }
   }
   if (stat.isFile()) {

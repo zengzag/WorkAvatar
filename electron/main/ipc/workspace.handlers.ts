@@ -24,7 +24,8 @@ export function registerWorkspaceHandlers() {
   // 列出任务工作区内某个目录的直接子项（工作区侧边栏文件树）
   safeHandle(IPC_CHANNELS.WORKSPACE_LIST_FILES, async (params: WorkspaceListFilesParams): Promise<WorkspaceListFilesResult> => {
     const target = path.resolve(String(params?.dirPath || ''))
-    if (!WorkspaceManagerService.getInstance().isWithinEmployeesRoot(target)) {
+    // 允许 employees/ 下的任务目录，以及用户指定的自定义工作区目录
+    if (!WorkspaceManagerService.getInstance().isWithinWorkspaceBoundary(target)) {
       return { success: false, entries: [], error: 'outside' }
     }
     let dirents: fs.Dirent[]

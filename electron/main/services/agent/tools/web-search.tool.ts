@@ -113,8 +113,9 @@ export const webSearchTool: ToolDefinition = {
   id: 'web_search',
   name: 'web_search',
   title: '网络搜索',
+  summary: 'Search the web and return titles, links, and snippets for external or real-time information.',
   description:
-    'Search the web and return titles, links and content snippets. The backend is configured in settings: either a local browser engine (google, bing, baidu, duckduckgo) or a search API (DeepSeek, Tavily, Brave).',
+    'Search the web and return titles, links, and snippets. Use it for external or real-time information; follow up with web_fetch when a result needs full text. The backend is configured in settings: a local browser engine (google, bing, baidu, duckduckgo) or a search API (DeepSeek, Tavily, Brave).',
   parameters: {
     type: 'object',
     properties: {

@@ -233,7 +233,9 @@ async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
 
     // cache-bust：ESM 动态 import 按 URL 缓存模块，插件升级/同版本覆盖重装后必须换 URL 防加载旧模块
     const cacheBust = `?v=${encodeURIComponent(info.version)}${info.rev ? `&r=${encodeURIComponent(info.rev)}` : ''}`
+    const importStartedAt = performance.now()
     const entry = await rendererModuleLoader.load(`plugin://${info.id}/${info.entry}${cacheBust}`)
+    const importMs = performance.now() - importStartedAt
     const def = entry.default
     if (!def || !Array.isArray(def.routes)) {
       fail(new Error('renderer 入口缺少 routes'))
@@ -292,6 +294,7 @@ async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
       hostCapabilities,
     }
     await def.init?.(host)
+    console.info(`[Startup] 插件渲染端加载 ${info.id}: import=${importMs.toFixed(0)}ms init=${(performance.now() - importStartedAt - importMs).toFixed(0)}ms`)
 
     // 原子替换：新版本就绪后覆盖 registry / 图标 / 视图（不预删旧项，页面升级不闪断）
     // 覆盖升级场景对旧实例调用 dispose（清理其订阅），再由新入口 init 重建
@@ -356,9 +359,8 @@ async function syncPluginsNow(rendererPlugins: PluginRendererInfo[], installedId
   for (const id of Array.from(loadedPlugins.keys())) {
     if (!target.has(id)) unloadPluginById(id)
   }
-  for (const info of rendererPlugins) {
-    await loadSinglePlugin(info)
-  }
+  // 各插件入口相互独立，并行 import 避免总耗时随插件数量线性累加
+  await Promise.all(rendererPlugins.map(info => loadSinglePlugin(info)))
   // 整轮加载/卸载结束后统一刷新导航：此处插件集合才是完整的，避免中途把未加载插件当成已卸载
   syncNav(installedIds)
 }
@@ -373,7 +375,10 @@ function installedPluginIds(plugins?: PluginInfo[]): string[] | undefined {
  * 拉清单 → 逐个加载/卸载（locale/路由/导航/视图）→ 注入 nav store。
  */
 export async function loadPlugins(): Promise<LoadedPlugin[]> {
+  const startedAt = performance.now()
   const { plugins, rendererPlugins } = await window.electronAPI.plugin.list()
+  const listMs = performance.now() - startedAt
   await syncPlugins(rendererPlugins, installedPluginIds(plugins))
+  console.info(`[Startup] loadPlugins: ${rendererPlugins.length} 个插件，list=${listMs.toFixed(0)}ms 总耗时=${(performance.now() - startedAt).toFixed(0)}ms`)
   return getLoadedPlugins()
 }

@@ -103,7 +103,13 @@ export interface KMSAutoIndexStatus {
   lastResult: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null
 }
 
-/** KMS 设置（模型 + 检索参数 + 自动索引） */
+/** 文件搜索引擎设置 */
+export interface KMSFileSearchSettings {
+  engine: 'builtin' | 'everything'
+  everything: { host: string; port: number }
+}
+
+/** KMS 设置（模型 + 检索参数 + 自动索引 + 文件搜索） */
 export interface KMSSettings {
   embeddingModel: KMSModelConfig | null
   summaryModel: KMSModelConfig | null
@@ -115,6 +121,7 @@ export interface KMSSettings {
     autoRefreshStaleCards?: boolean
   }
   autoIndex: KMSAutoIndexConfig
+  fileSearch: KMSFileSearchSettings
 }
 
 /** 文件摘要项 */
@@ -172,6 +179,7 @@ export function useKMS() {
     summaryModel: null,
     searchParams: { resultLimit: 100, autoReparseHotData: true, enableKnowledgeCards: true, knowledgeCardThreshold: 5, autoRefreshStaleCards: true },
     autoIndex: { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 },
+    fileSearch: { engine: 'builtin', everything: { host: '127.0.0.1', port: 80 } },
   })
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
   const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
@@ -463,6 +471,13 @@ export function useKMS() {
             intervalMinutes: result.autoIndex?.intervalMinutes ?? 1,
             stableThresholdMinutes: result.autoIndex?.stableThresholdMinutes ?? 5,
           },
+          fileSearch: {
+            engine: result.fileSearch?.engine === 'everything' ? 'everything' : 'builtin',
+            everything: {
+              host: result.fileSearch?.everything?.host || '127.0.0.1',
+              port: result.fileSearch?.everything?.port ?? 80,
+            },
+          },
         })
       }
     } catch (err) {
@@ -475,6 +490,7 @@ export function useKMS() {
     summaryModel?: KMSModelConfig | null
     searchParams?: { resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
     autoIndex?: KMSAutoIndexConfig
+    fileSearch?: KMSFileSearchSettings
   }) => {
     try {
       const result = await window.electronAPI.kms.setSettings(params)

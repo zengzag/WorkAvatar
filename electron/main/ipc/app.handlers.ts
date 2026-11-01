@@ -171,22 +171,58 @@ function buildStorageUsage(): StorageUsageResult {
   }
 }
 
-// 清空日志：先释放被占用的文件句柄，再删除日志目录并重建新的日志流
-function clearLogsInternal(): { success: boolean; error?: string } {
+// 递归列出目录下的所有文件，不存在或不可读的目录返回空
+function listFilesRecursive(dir: string): string[] {
+  const files: string[] = []
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        files.push(...listFilesRecursive(full))
+      } else {
+        files.push(full)
+      }
+    }
+  } catch {}
+  return files
+}
+
+// 清空日志：先暂停主进程日志写入并等待句柄释放，再删除日志目录。
+// 日志文件可能正被其它进程（OCR 子进程 / 索引 Worker）写入而无法删除，
+// 此时逐个截断为 0，避免因单个正在使用的文件导致整个清理失败。
+async function clearLogsInternal(): Promise<{ success: boolean; error?: string }> {
   const logDir = path.join(PathService.getInstance().getDataDir(), '.log')
-  LoggerBackend.getInstance().closeStream()
-  LLMLoggerService.getInstance().closeStreams()
+  const activeLogPath = LoggerBackend.getInstance().getLogFilePath()
+  await LoggerBackend.getInstance().closeStream()
+  await LLMLoggerService.getInstance().closeStreams()
+
+  let failed = 0
   try {
     if (fs.existsSync(logDir)) {
       // Windows 下句柄释放存在延迟，重试以提高删除成功率
       fs.rmSync(logDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     }
-  } catch (e) {
-    LoggerBackend.getInstance().reopen()
-    return { success: false, error: (e as Error)?.message || String(e) }
+  } catch {
+    // 整体删除失败：逐文件清理，正在使用的文件保留为空文件（不影响后续写入）
+    for (const file of listFilesRecursive(logDir)) {
+      let cleared = false
+      try {
+        fs.truncateSync(file, 0)
+        cleared = true
+      } catch {}
+      try {
+        fs.rmSync(file, { force: true, maxRetries: 2, retryDelay: 50 })
+        cleared = true
+      } catch {}
+      if (!cleared) failed++
+    }
   }
-  LoggerBackend.getInstance().reopen()
-  return { success: true }
+
+  // 当前日志文件仍存在说明有其它进程占用，续写同一文件，避免日志被拆成多个文件
+  const reusePath = activeLogPath && fs.existsSync(activeLogPath) ? activeLogPath : null
+  LoggerBackend.getInstance().reopen(reusePath)
+  LLMLoggerService.getInstance().resume()
+  return failed > 0 ? { success: false, error: `${failed} 个日志文件正被占用，未能清理` } : { success: true }
 }
 
 export function registerAppHandlers(

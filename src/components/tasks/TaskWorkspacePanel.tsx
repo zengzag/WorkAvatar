@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, theme, Tooltip, Typography } from 'antd'
 import type { GlobalToken } from 'antd'
 import {
@@ -15,8 +15,10 @@ import type { WorkspaceFileEntry } from '../../../electron/shared/ipc-channels'
 import type { GeneratedFileInfo } from '../../types'
 import { useTaskPanelStore, type TaskPanelTab } from '../../stores/task-panel.store'
 import WorkspaceFileTree from './WorkspaceFileTree'
+import WorkspaceEntryMenu from './WorkspaceEntryMenu'
 import TaskTerminal from './TaskTerminal'
 import FilePreview, { getFileColor, getFileIcon } from '../workbench/FilePreview'
+import { pathToAppFileUrl } from '../../utils/file-url'
 
 const { Text } = Typography
 
@@ -26,7 +28,7 @@ const MAX_WIDTH = 860
 const DEFAULT_WIDTH = 420
 
 interface TaskWorkspacePanelProps {
-  /** 当前任务/员工工作区根目录；为空表示尚不可用 */
+  /** 当前任务的工作区根目录；为空表示尚不可用 */
   rootPath: string | null
   /** 终端会话标识（随任务切换变化） */
   terminalId: string
@@ -176,6 +178,30 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   const [refreshKey, setRefreshKey] = useState(0)
   const refresh = useCallback(() => setRefreshKey((value) => value + 1), [])
   const [artifactsCollapsed, setArtifactsCollapsed] = useState(false)
+  const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
+
+  // 产物可能已被 agent / 用户移除：探测后仍展示，但加删除线并禁止打开
+  useEffect(() => {
+    if (artifacts.length === 0) {
+      setMissingPaths((prev) => (prev.size === 0 ? prev : new Set()))
+      return
+    }
+    let cancelled = false
+    Promise.all(artifacts.map(async (file): Promise<[string, boolean]> => {
+      try {
+        const res = await fetch(pathToAppFileUrl(file.path), { method: 'HEAD' })
+        return [file.path, res.ok]
+      } catch {
+        return [file.path, false]
+      }
+    })).then((results) => {
+      if (cancelled) return
+      const missing = new Set<string>()
+      for (const [path, ok] of results) if (!ok) missing.add(path)
+      setMissingPaths(missing)
+    })
+    return () => { cancelled = true }
+  }, [artifacts, refreshKey])
 
   // 每次切到文件标签时自动刷新，保证看到 agent / 终端刚写入的产物
   const prevActiveRef = useRef<string | null>(null)
@@ -307,37 +333,62 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
               }}>
                 {artifacts.map(file => {
                   const IconComp = getFileIcon(file.ext)
+                  const isMissing = missingPaths.has(file.path)
                   return (
-                    <div
+                    <WorkspaceEntryMenu
                       key={file.path}
-                      title={file.path}
-                      onClick={() => openPreview(file)}
-                      onMouseEnter={(event) => { event.currentTarget.style.background = token.colorBgTextHover }}
-                      onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent' }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '5px 6px',
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        minWidth: 0,
-                        transition: 'background 0.15s',
-                      }}
+                      path={file.path}
+                      missing={isMissing}
+                      onPreview={() => openPreview(file)}
                     >
-                      <IconComp style={{ color: getFileColor(file.ext), fontSize: 16, flexShrink: 0 }} />
-                      <span style={{
-                        flex: 1,
-                        minWidth: 0,
-                        fontSize: 13,
-                        color: token.colorText,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {file.name}
-                      </span>
-                    </div>
+                      <div
+                        title={file.path}
+                        onClick={isMissing ? undefined : () => openPreview(file)}
+                        onMouseEnter={(event) => { event.currentTarget.style.background = token.colorBgTextHover }}
+                        onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent' }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '5px 6px',
+                          borderRadius: 6,
+                          cursor: isMissing ? 'not-allowed' : 'pointer',
+                          minWidth: 0,
+                          opacity: isMissing ? 0.75 : 1,
+                          transition: 'background 0.15s',
+                        }}
+                      >
+                        <IconComp style={{
+                          color: getFileColor(file.ext),
+                          fontSize: 16,
+                          flexShrink: 0,
+                          opacity: isMissing ? 0.5 : 1,
+                        }} />
+                        <span style={{
+                          flex: 1,
+                          minWidth: 0,
+                          fontSize: 13,
+                          color: isMissing ? token.colorTextTertiary : token.colorText,
+                          textDecoration: isMissing ? 'line-through' : undefined,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {file.name}
+                        </span>
+                        {isMissing && (
+                          <span style={{
+                            fontSize: 11,
+                            fontWeight: 500,
+                            color: token.colorError,
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {t('workbench.fileDeleted')}
+                          </span>
+                        )}
+                      </div>
+                    </WorkspaceEntryMenu>
                   )
                 })}
               </div>
@@ -367,6 +418,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   return (
     <div
       ref={panelRef}
+      className="wa-workspace-panel"
       style={{
         width: expanded ? undefined : width,
         flex: expanded ? 1 : undefined,
@@ -375,7 +427,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
         flexDirection: 'column',
         minHeight: 0,
         borderLeft: expanded ? 'none' : `1px solid ${token.colorBorderSecondary}`,
-        background: token.colorBgContainer,
+        background: 'transparent',
         position: 'relative',
       }}
     >
@@ -496,4 +548,20 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   )
 }
 
-export default TaskWorkspacePanel
+/** 产物列表按内容比较：流式期间父组件每次刷新都会生成新数组，引用比较会失效 */
+const sameArtifacts = (a?: GeneratedFileInfo[], b?: GeneratedFileInfo[]): boolean => {
+  if (a === b) return true
+  if (!a || !b || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].path !== b[i].path || a[i].name !== b[i].name) return false
+  }
+  return true
+}
+
+// 流式输出期间聊天区高频更新，面板与文件树/终端无需跟着重渲染
+export default memo(TaskWorkspacePanel, (prev, next) =>
+  prev.rootPath === next.rootPath &&
+  prev.terminalId === next.terminalId &&
+  prev.onClose === next.onClose &&
+  sameArtifacts(prev.artifacts, next.artifacts)
+)

@@ -49,6 +49,7 @@ function pluginDirs(): string[] {
 }
 
 function readJson(file: string): Record<string, any> {
+  if (!fs.existsSync(file)) return {}
   return JSON.parse(fs.readFileSync(file, 'utf-8'))
 }
 
@@ -93,34 +94,41 @@ describe('插件 manifest 基础契约', () => {
     expect(violations, violations.join('\n')).toEqual([])
   })
 
-  it('主进程/渲染端入口与 locale 目录真实存在', () => {
+  it('主进程入口必填，渲染端入口与 locale 目录声明后须真实存在', () => {
     const violations: string[] = []
     for (const p of plugins) {
       const dir = path.join(ROOT, p.relDir)
-      for (const field of ['main', 'renderer'] as const) {
-        const value = p.manifest[field]
-        if (!value) violations.push(`${p.relDir}: manifest 缺少 ${field}`)
-        else if (!fs.existsSync(path.join(dir, value))) violations.push(`${p.relDir}: ${field} 指向的文件不存在 (${value})`)
+      if (!p.manifest.main) violations.push(`${p.relDir}: manifest 缺少 main`)
+      else if (!fs.existsSync(path.join(dir, p.manifest.main))) {
+        violations.push(`${p.relDir}: main 指向的文件不存在 (${p.manifest.main})`)
       }
-      if (!p.manifest.locale) violations.push(`${p.relDir}: manifest 缺少 locale`)
-      else if (!fs.existsSync(path.join(dir, p.manifest.locale))) {
-        violations.push(`${p.relDir}: locale 目录不存在 (${p.manifest.locale})`)
+      for (const field of ['renderer', 'locale'] as const) {
+        const value = p.manifest[field]
+        // 无界面插件（纯后台）可省略 renderer / locale
+        if (value && !fs.existsSync(path.join(dir, value))) {
+          violations.push(`${p.relDir}: ${field} 指向的路径不存在 (${value})`)
+        }
       }
     }
     expect(violations, violations.join('\n')).toEqual([])
   })
 
-  it('nav.label（i18n key）在插件中英 locale 中都存在', () => {
+  it('nav.label（i18n key）在插件中英 locale 中都存在（无界面插件跳过）', () => {
     const violations: string[] = []
     for (const p of plugins) {
-      const label = p.manifest.nav?.label
+      if (!p.manifest.nav) continue
+      const label = p.manifest.nav.label
       if (!label) {
         violations.push(`${p.relDir}: manifest.nav.label 缺失`)
         continue
       }
+      if (typeof p.manifest.nav.order !== 'number') violations.push(`${p.relDir}: manifest.nav.order 非数字`)
+      if (!p.manifest.locale) {
+        violations.push(`${p.relDir}: 声明 nav 时必须提供 locale`)
+        continue
+      }
       if (typeof p.zh[label] !== 'string') violations.push(`${p.relDir}: zh-CN.json 缺少 nav.label 键 "${label}"`)
       if (typeof p.en[label] !== 'string') violations.push(`${p.relDir}: en-US.json 缺少 nav.label 键 "${label}"`)
-      if (typeof p.manifest.nav?.order !== 'number') violations.push(`${p.relDir}: manifest.nav.order 非数字`)
     }
     expect(violations, violations.join('\n')).toEqual([])
   })

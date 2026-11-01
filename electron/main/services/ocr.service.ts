@@ -143,7 +143,7 @@ class OCRService {
   }
 
   /**
-   * 初始化 PaddleOCR 引擎（在 Worker 线程中）。多次调用只初始化一次。
+   * 初始化 PaddleOCR 引擎（在独立子进程中）。多次调用只初始化一次。
    * 失败时记录日志、弹窗报错并抛出。
    */
   async initialize(): Promise<void> {
@@ -484,7 +484,7 @@ class OCRService {
   // ── 错误提示 ────────────────────────────────────────────────
 
   private showError(title: string, content: string): void {
-    // 同步非阻塞弹窗，不会卡住主进程
+    // 同步模态弹窗；仅错误路径使用，不参与正常流程
     try {
       // Lazy require：避免打包器把 require('electron') 提升到模块加载时机。
       // KMS 索引 Worker 会间接引用 OCRService，而 worker_threads 中无法解析

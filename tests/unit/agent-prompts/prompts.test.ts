@@ -17,13 +17,12 @@ describe('agent/business/prompts / buildEmployeeSystemPrompt', () => {
     const p = buildEmployeeSystemPrompt({ name: '小王', instructions: '' })
     expect(p).toContain('digital employee named "小王"')
     expect(p).toContain('# Operating Rules')
-    expect(p).toContain('# Key Principles')
     expect(p.trimEnd().endsWith(PROMPT_FORMAT_MARKER)).toBe(true)
   })
 
   it('完整模式声明与用户语言一致地回复', () => {
     const p = buildEmployeeSystemPrompt({ name: 'A', instructions: '' })
-    expect(p).toMatch(/same primary language as the user's latest message/)
+    expect(p).toMatch(/Reply in the language of the user's latest message/)
   })
 
   it('minimalMode 仅保留身份/角色/指令，不含规则段与格式标记', () => {
@@ -61,7 +60,7 @@ describe('agent/business/prompts / buildEmployeeSystemPrompt', () => {
     const withFlag = buildEmployeeSystemPrompt({ name: 'A', instructions: '', hasFileDelete: true })
     const without = buildEmployeeSystemPrompt({ name: 'A', instructions: '' })
     expect(withFlag).toContain('file_delete')
-    expect(withFlag).toMatch(/Delete files and directories only through file_delete/)
+    expect(withFlag).toMatch(/Delete files and directories only with file_delete/)
     expect(without).not.toContain('file_delete')
   })
 

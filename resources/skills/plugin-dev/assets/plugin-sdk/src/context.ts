@@ -38,6 +38,19 @@ export interface PluginWebviewApi {
   allowOrigins(hosts: string[]): void
 }
 
+/**
+ * 插件设置访问（manifest.settings 声明，宿主设置页渲染表单并落库）。
+ * 无界面插件的主要配置入口；未声明 settings 时返回空对象。
+ */
+export interface PluginSettingsApi {
+  /** 全部设置项当前值（已合并默认值） */
+  getAll(): Record<string, unknown>
+  /** 读取单个设置项（不存在时返回 undefined） */
+  get<T = unknown>(key: string): T | undefined
+  /** 订阅设置变更（用户在宿主设置页修改后触发），返回取消订阅函数 */
+  onChanged(callback: (values: Record<string, unknown>) => void): () => void
+}
+
 export interface PluginContext {
   manifest: PluginManifest
   /** 宿主应用版本 */
@@ -45,6 +58,7 @@ export interface PluginContext {
   paths: PluginPaths
   ipc: PluginIpc
   storage: PluginStorage
+  settings: PluginSettingsApi
   services: PluginServices
   contributions: PluginContributionsApi
   webview: PluginWebviewApi
@@ -56,4 +70,6 @@ export interface PluginMainModule {
   migrations?: PluginMigration[]
   activate(ctx: PluginContext): void | Promise<void>
   deactivate?(): void | Promise<void>
+  /** 宿主设置页保存后回调（可选）：在此热应用新配置，无需重启插件 */
+  onSettingsChanged?(values: Record<string, unknown>): void
 }

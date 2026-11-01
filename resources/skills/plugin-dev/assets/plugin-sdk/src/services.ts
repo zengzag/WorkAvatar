@@ -464,7 +464,7 @@ export interface PluginWorkflowDeleteRunResult {
 
 /** 模板任务运行服务（需 capabilities.workflow 授权） */
 export interface PluginWorkflowService {
-  /** 启动一次模板任务运行，立即返回 runId（后台执行） */
+  /** 启动一次模板任务运行，立即返回运行对象（含 runId，后台执行） */
   run(params: PluginWorkflowRunParams): Promise<PluginWorkflowRun>
   /** 查询运行详情 */
   getRun(runId: string): Promise<PluginWorkflowRun | null>

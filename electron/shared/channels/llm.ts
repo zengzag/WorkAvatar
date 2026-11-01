@@ -8,12 +8,22 @@ export const LLM_CHANNELS = {
   LLM_TEST_CONNECTION: 'llm:test-connection',
   LLM_CHAT: 'llm:chat',
   EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
+  /** LLM 调用失败后原地续跑：重新发起失败的那一次请求（不新增消息） */
+  EMPLOYEE_CHAT_RESUME: 'employee:chat-resume',
   LLM_ABORT_CHAT: 'llm:abort-chat',
   LLM_LIST_ACTIVE_SESSIONS: 'llm:list-active-sessions',
+  /** 其他窗口接入正在运行的会话（如任务页打开小秘书发起的任务，需要同步接收流式事件） */
+  LLM_ATTACH_SESSION: 'llm:attach-session',
+  /** 查询运行中会话是否被其他窗口接入（小秘书据此决定收尾落库是否让位给任务页） */
+  LLM_SESSION_ATTACHED: 'llm:session-attached',
+  /** 主进程 → 其他窗口：某会话开始运行（让已打开该任务的窗口接入并实时同步） */
+  LLM_SESSION_STARTED: 'llm:session-started',
   LLM_CHAT_CHUNK: 'llm:chat-chunk',
   LLM_CHAT_DONE: 'llm:chat-done',
   LLM_CHAT_ERROR: 'llm:chat-error',
   LLM_THOUGHT: 'llm:thought',
+  /** 每次模型请求开始（渲染端据此记录失败重试的回滚边界） */
+  AGENT_ITERATION_START: 'agent:iteration-start',
   AGENT_TOOL_CALL: 'agent:tool-call',
   AGENT_TOOL_CALL_DELTA: 'agent:tool-call-delta',
   AGENT_TOOL_RESULT: 'agent:tool-result',

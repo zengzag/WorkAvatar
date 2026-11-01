@@ -56,14 +56,13 @@ describe('buildEmployeeSystemPrompt 边界', () => {
     expect(buildEmployeeSystemPrompt({ name: 'A', instructions: '', workspaceGuidance: '' })).not.toContain('# Environment')
   })
 
-  it('长指令 + workspaceGuidance 时段落顺序为 Rules → Custom → Environment → Key Principles → marker', () => {
+  it('长指令 + workspaceGuidance 时段落顺序为 Rules → Custom → Environment → marker', () => {
     const p = buildEmployeeSystemPrompt({
       name: 'A', instructions: 'z'.repeat(120), workspaceGuidance: 'W',
     })
     expect(p.indexOf('# Operating Rules')).toBeLessThan(p.indexOf('# Custom Instructions'))
     expect(p.indexOf('# Custom Instructions')).toBeLessThan(p.indexOf('# Environment'))
-    expect(p.indexOf('# Environment')).toBeLessThan(p.indexOf('# Key Principles'))
-    expect(p.indexOf('# Key Principles')).toBeLessThan(p.indexOf(PROMPT_FORMAT_MARKER))
+    expect(p.indexOf('# Environment')).toBeLessThan(p.indexOf(PROMPT_FORMAT_MARKER))
   })
 
   it('员工名含 Unicode/特殊字符时原样锚定', () => {

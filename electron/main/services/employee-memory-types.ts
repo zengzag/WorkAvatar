@@ -54,6 +54,7 @@ export interface ConsolidationResult {
 
 export interface MemoryStats {
   count: number
+  /** 记忆库容量（字符当量：CJK 计 1，其余计 0.5），见 measureMemoryChars */
   totalChars: number
   pinnedCount: number
   autoCount: number
@@ -69,12 +70,16 @@ export interface MemoryBucket {
   employeeId?: string
 }
 
-/** 记忆库总字符上限：仅用于触发整理（不再约束注入，注入上限见 MEMORY_ALWAYS_ON_MAX_CHARS） */
-export const MEMORY_MAX_CHARS = 8000
-/** 记忆库条数上限：仅用于触发整理；常驻注入另有 MEMORY_ALWAYS_ON_MAX_COUNT */
-export const MEMORY_MAX_COUNT = 100
-/** 单条 content 字符上限（LLM 偶尔会写长句，需在服务层兜底截断） */
-export const MEMORY_CONTENT_MAX_CHARS = 160
+export {
+  MEMORY_MAX_CHARS,
+  MEMORY_MAX_COUNT,
+  MEMORY_CONTENT_MAX_CHARS,
+  MEMORY_ALWAYS_ON_MAX_COUNT,
+  MEMORY_ALWAYS_ON_MAX_CHARS,
+} from '../../shared/memory-metrics'
+
+/** 手动新增且未指定主题时的默认分类（与 LLM 提取使用的主题取值保持一致） */
+export const MEMORY_DEFAULT_TOPIC = '事实知识'
 /** 整理触发阈值：总字符达到上限的 60% 即触发，更早整理以保留缓冲 */
 export const MEMORY_CONSOLIDATION_THRESHOLD = 0.6
 /**
@@ -82,19 +87,14 @@ export const MEMORY_CONSOLIDATION_THRESHOLD = 0.6
  * 避免"整理后仍高于触发阈值 → 立即再次触发整理"的抖动。
  */
 export const MEMORY_CONSOLIDATION_TARGET_COUNT = 30
-export const MEMORY_CONSOLIDATION_TARGET_CHARS = 3000
+export const MEMORY_CONSOLIDATION_TARGET_CHARS = 2000
 export const STALE_MEMORY_DAYS = 90
 export const CONSOLIDATION_COOLDOWN_SECONDS = 3600
-/** 现有记忆减少，提示 LLM 更聚焦精炼而非穷举 */
+/** 限制注入的现有记忆条数，促使 LLM 聚焦精炼而非穷举 */
 export const EXTRACTION_MAX_EXISTING_MEMORIES = 12
 export const CONSOLIDATION_CANDIDATE_MAX = 15
 /** 单次提取连续失败多少次后放弃并推进指针，避免永久重试同一对话 */
 export const EXTRACTION_MAX_ATTEMPTS = 3
-
-/** 常驻注入的记忆条数上限（pinned + critical） */
-export const MEMORY_ALWAYS_ON_MAX_COUNT = 12
-/** 常驻注入的记忆字符上限（pinned 不受该上限约束） */
-export const MEMORY_ALWAYS_ON_MAX_CHARS = 1500
 
 /** 每轮按语义相关度召回的条数上限 */
 export const MEMORY_RECALL_TOP_N = 5

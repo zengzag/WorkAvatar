@@ -79,7 +79,7 @@ export function createListAvailableToolsTool(
       type: 'object',
       properties: {
         tool_name: {
-          description: '工具名（字符串）或工具名列表（字符串数组）。传入时返回这些工具的完整参数说明（详情模式）；不传则返回所有工具摘要（摘要模式）',
+          description: 'Tool name (string) or a list of tool names (string array). With names, returns their full parameter reference; without, returns a one-line summary of every on-demand tool',
         },
       },
     },
@@ -241,11 +241,11 @@ export function createInvokeToolTool(
       properties: {
         tool_name: {
           type: 'string',
-          description: '要调用的工具名（来自 list_available_tools 返回）',
+          description: 'Name of the on-demand tool to call (from list_available_tools)',
         },
         args: {
           type: 'object',
-          description: '工具参数对象，结构由 list_available_tools 返回的参数说明决定',
+          description: 'Tool arguments object; its shape is defined by the parameter reference returned by list_available_tools',
           additionalProperties: true,
         },
       },

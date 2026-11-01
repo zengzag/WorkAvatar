@@ -854,8 +854,8 @@ export interface RunPiAgentLoopParams {
    */
   getLoopReminder?: (turn: number, maxIterations: number) => string | undefined
   /**
-   * 易变任务上下文（记忆/知识库范围）：仅在本次 run 的首次请求追加在末尾，
-   * 不写入 pi 上下文。后续工具轮次不重复注入，避免每次请求都多出一段未缓存 token；
+   * 易变任务上下文（记忆/知识库范围）：在本次 run 首次请求及 ask_user 返回后的请求追加在末尾，
+   * 不写入 pi 上下文。其余工具轮次不重复注入，避免每次请求都多出一段未缓存 token；
    * 工作区/任务时间已由稳定头承载，仍全程可见。
    */
   requestTail?: string
@@ -865,6 +865,16 @@ export interface RunPiAgentLoopParams {
   trimLowWaterTokens?: number
   /** 跨 run 复用的裁剪切点（由 BaseAgent 持有，避免每个新 user turn 重置切点） */
   trimState?: ToolResultTrimState
+  /**
+   * LLM 请求失败时上报可续跑句柄：调用 resume() 会用同一上下文重新发起失败的那一次请求，
+   * 之后的工具调用/多轮循环与未出错时完全一致。
+   */
+  onResumable?: (handle: PiResumableHandle) => void
+}
+
+/** 失败续跑句柄：恢复 agent 循环（重新发起失败的那次 LLM 请求） */
+export interface PiResumableHandle {
+  resume: (signal?: AbortSignal) => Promise<RunPiAgentLoopResult>
 }
 
 /**
@@ -899,6 +909,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
     trimHighWaterTokens,
     trimLowWaterTokens,
     trimState: sharedTrimState,
+    onResumable,
   } = params
 
   const { systemPrompt, piMessages } = toPiMessages(messages, config.providerType, config.model, config.apiFormat)
@@ -997,8 +1008,8 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
       return turnCount >= maxIterations ? { action: 'end' as const } : undefined
     },
     toolExecution: 'sequential',
-    // pi-agent-core 通过 config.reasoning 传给 streamFn 的 options.reasoning
-    // createStreamFn 将其映射为 pi-ai 的 reasoningEffort，驱动 deepseek/qwen thinkingFormat 开关
+    // pi-agent-core 不解析思考强度；createStreamFn 经 buildPiStreamOptions
+    // 按 provider/model/enableThinking 计算 reasoningEffort，驱动 deepseek/qwen thinkingFormat 开关
     ...(config.enableThinking ? { reasoning: config.enableThinking } : {}),
     // sessionId 传递给 streamFn → pi-ai，启用 prompt cache（openai/deepseek/xiaomi 等支持）
     ...(sessionId ? { sessionId } : {}),
@@ -1006,64 +1017,108 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
 
   const streamFn = createStreamFn(config)
 
-  // 启动 agentLoop，获取事件流
-  const eventStream = prompts.length > 0
-    ? agentLoop(prompts, piAgentContext, loopConfig, signal, streamFn)
-    : agentLoopContinue(piAgentContext, loopConfig, signal, streamFn)
-
   // 订阅事件并转换
   // 注意：run:start/run:end 由 base-agent 统一 emit，这里不重复
   // 中止时（signal.aborted 或底层 fetch 抛 AbortError）不抛出，保留已累计的 tokenUsage 返回，
   // 让 base-agent 走 aborted 分支并把 tokenUsage/contextStats 透传给前端
   let aborted = false
   let abortReason: string | undefined
-  try {
-    for await (const event of eventStream) {
-      if (signal?.aborted) {
-        aborted = true
-        abortReason = '用户主动停止（signal 已中止）'
-        break
-      }
-      await handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage, generationMs) => {
-        const prevGenerationMs = totalTokenUsage.generationMs
-        totalTokenUsage = {
-          promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
-          completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
-          totalTokens: (totalTokenUsage.totalTokens || 0) + (usage.totalTokens || 0),
-          ...(totalTokenUsage.cachedTokens || usage.cachedTokens
-            ? { cachedTokens: (totalTokenUsage.cachedTokens || 0) + (usage.cachedTokens || 0) }
-            : {}),
-          ...(prevGenerationMs !== undefined || generationMs !== undefined
-            ? { generationMs: (prevGenerationMs || 0) + (generationMs || 0) }
-            : {}),
+
+  /**
+   * 本次 run 内新增的消息（不含初始上下文）：失败续跑时用它重建 pi 上下文，
+   * 保证续跑请求看到的历史与中断瞬间完全一致（已执行的工具调用/结果都在）。
+   */
+  const appendedMessages: AgentMessage[] = []
+
+  const buildResult = (): RunPiAgentLoopResult => {
+    // 若未累计到任何 token（abort 过早或 LLM 未返回 usage），返回 undefined 让前端回退到字符数
+    const hasUsage = totalTokenUsage.promptTokens !== undefined
+      || totalTokenUsage.completionTokens !== undefined
+      || totalTokenUsage.totalTokens !== undefined
+      || totalTokenUsage.cachedTokens !== undefined
+    return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted, abortReason }
+  }
+
+  /** 消费一次循环的事件流；aborted/abortReason 为 run 级共享状态 */
+  const consumeStream = async (
+    eventStream: AsyncIterable<AgentEvent>,
+    runSignal?: AbortSignal,
+  ): Promise<void> => {
+    try {
+      for await (const event of eventStream) {
+        if (runSignal?.aborted) {
+          aborted = true
+          abortReason = '用户主动停止（signal 已中止）'
+          break
         }
-      }, streamTiming)
-    }
-  } catch (err: any) {
-    // signal.aborted 视为正常中止，保留 tokenUsage 返回；其他异常继续上抛
-    if (signal?.aborted) {
-      aborted = true
-      // 区分用户主动停止 vs 底层异常（如网络中断）：若底层抛的是非 AbortError 错误，
-      // 说明 signal 虽被中止但底层同时发生了异常，记录具体错误便于排查
-      const isAbortError = err?.name === 'AbortError' || /abort/i.test(err?.message || '')
-      abortReason = isAbortError
-        ? '用户主动停止（signal 已中止，底层请求被中止）'
-        : `signal 已中止，但底层抛出异常: ${err?.message || String(err)}`
-    } else {
+        if (event.type === 'message_end') appendedMessages.push(event.message)
+        await handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage, generationMs) => {
+          const prevGenerationMs = totalTokenUsage.generationMs
+          totalTokenUsage = {
+            promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
+            completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
+            totalTokens: (totalTokenUsage.totalTokens || 0) + (usage.totalTokens || 0),
+            ...(totalTokenUsage.cachedTokens || usage.cachedTokens
+              ? { cachedTokens: (totalTokenUsage.cachedTokens || 0) + (usage.cachedTokens || 0) }
+              : {}),
+            ...(prevGenerationMs !== undefined || generationMs !== undefined
+              ? { generationMs: (prevGenerationMs || 0) + (generationMs || 0) }
+              : {}),
+          }
+        }, streamTiming)
+      }
+    } catch (err: any) {
+      if (runSignal?.aborted) {
+        // signal.aborted 视为正常中止，保留 tokenUsage 返回
+        aborted = true
+        // 区分用户主动停止 vs 底层异常（如网络中断）：若底层抛的是非 AbortError 错误，
+        // 说明 signal 虽被中止但底层同时发生了异常，记录具体错误便于排查
+        const isAbortError = err?.name === 'AbortError' || /abort/i.test(err?.message || '')
+        abortReason = isAbortError
+          ? '用户主动停止（signal 已中止，底层请求被中止）'
+          : `signal 已中止，但底层抛出异常: ${err?.message || String(err)}`
+        return
+      }
+      // LLM 请求失败：保留完整上下文供"重试"重新发起这次请求。
+      // 失败响应本身（stopReason=error 的 assistant 消息）续跑前丢弃，等同于这次请求没有发生。
+      const last = appendedMessages[appendedMessages.length - 1] as PiAssistantMessage | undefined
+      const dropFailedResponse = last?.role === 'assistant' && last.stopReason === 'error'
+      const tail = dropFailedResponse ? appendedMessages[appendedMessages.length - 2] : last
+      if (onResumable && tail && tail.role !== 'assistant') {
+        onResumable({
+          resume: async (resumeSignal?: AbortSignal) => {
+            if (dropFailedResponse) {
+              appendedMessages.pop()
+              // 失败的一轮不计入轮次上限：续跑等价于重发这一轮
+              turnCount = Math.max(0, turnCount - 1)
+            }
+            const resumeContext: PiAgentContext = {
+              messages: [...piAgentContext.messages, ...appendedMessages],
+              tools: agentTools,
+            }
+            logger.info(`Agent loop resume after LLM failure (iterations=${agentContext.getIterationCount()}, messages=${resumeContext.messages.length})`)
+            await consumeStream(agentLoopContinue(resumeContext, loopConfig, resumeSignal, streamFn), resumeSignal)
+            return buildResult()
+          },
+        })
+      }
       throw err
     }
   }
+
+  // 启动 agentLoop，获取事件流
+  await consumeStream(
+    prompts.length > 0
+      ? agentLoop(prompts, piAgentContext, loopConfig, signal, streamFn)
+      : agentLoopContinue(piAgentContext, loopConfig, signal, streamFn),
+    signal,
+  )
 
   if (aborted) {
     logger.warn(`Agent loop aborted: ${abortReason}`)
   }
 
-  // 若未累计到任何 token（abort 过早或 LLM 未返回 usage），返回 undefined 让前端回退到字符数
-  const hasUsage = totalTokenUsage.promptTokens !== undefined
-    || totalTokenUsage.completionTokens !== undefined
-    || totalTokenUsage.totalTokens !== undefined
-    || totalTokenUsage.cachedTokens !== undefined
-  return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted, abortReason }
+  return buildResult()
 }
 
 /**

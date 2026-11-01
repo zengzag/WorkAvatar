@@ -43,6 +43,7 @@ const NavSettings: React.FC = () => {
   )
 
   const isPluginKey = (key: string) => pluginItems.some((p) => p.key === key)
+  const firstPluginIndex = sortedConfig.findIndex((c) => isPluginKey(c.key))
 
   return (
     <div>
@@ -66,11 +67,19 @@ const NavSettings: React.FC = () => {
         {sortedConfig.map((item, idx) => {
           const isPlugin = isPluginKey(item.key)
           const isLocked = !isPlugin && LOCKED_KEYS.includes(item.key as NavItemKey)
-          const isFirst = idx === 0
           const isLast = idx === sortedConfig.length - 1
+          const prevItem = sortedConfig[idx - 1]
+          const nextItem = sortedConfig[idx + 1]
+          // 内置项与插件项之间不允许交叉排序
+          const canMoveUp = !isLocked && !!prevItem && isPluginKey(prevItem.key) === isPlugin
+          const canMoveDown = !isLocked && !!nextItem && isPluginKey(nextItem.key) === isPlugin
+          const isFirstPlugin = isPlugin && idx === firstPluginIndex
           return (
+            <React.Fragment key={item.key}>
+            {isFirstPlugin && (
+              <div style={{ height: 1, background: token.colorBorderSecondary }} />
+            )}
             <div
-              key={item.key}
               style={{
                 padding: '10px 14px',
                 display: 'flex',
@@ -102,21 +111,21 @@ const NavSettings: React.FC = () => {
                 )}
               </Space>
               <Space size={8}>
-                <Tooltip title={isFirst ? t('settings.navCannotMoveUp') : t('settings.navMoveUp')}>
+                <Tooltip title={canMoveUp ? t('settings.navMoveUp') : t('settings.navCannotMoveUp')}>
                   <Button
                     size="small"
                     type="text"
                     icon={<ArrowUpOutlined />}
-                    disabled={isFirst || isLocked}
+                    disabled={!canMoveUp}
                     onClick={() => moveUp(item.key)}
                   />
                 </Tooltip>
-                <Tooltip title={isLast ? t('settings.navCannotMoveDown') : t('settings.navMoveDown')}>
+                <Tooltip title={canMoveDown ? t('settings.navMoveDown') : t('settings.navCannotMoveDown')}>
                   <Button
                     size="small"
                     type="text"
                     icon={<ArrowDownOutlined />}
-                    disabled={isLast || isLocked}
+                    disabled={!canMoveDown}
                     onClick={() => moveDown(item.key)}
                   />
                 </Tooltip>
@@ -128,6 +137,7 @@ const NavSettings: React.FC = () => {
                 />
               </Space>
             </div>
+            </React.Fragment>
           )
         })}
       </div>

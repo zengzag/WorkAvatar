@@ -11,6 +11,9 @@ import {
   patchRunSegment,
   appendNestedDelegation,
   mapSegmentsTree,
+  markLlmRequestStart,
+  peekLlmRequestSegStart,
+  clearLlmRequestSegStart,
 } from './chat-helpers'
 
 export interface StreamListenerDeps {
@@ -335,7 +338,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           if (m.id !== streamState.assistantMessageId) return m
           let segs = [...(m.segments || [])]
 
-          // launch_agents 特殊处理：按 runIds 建立/更新并行组 delegation 段（同组横排渲染）
+          // launch_agents 特殊处理：按 runIds 建立/更新并行组 delegation 段（同组纵向堆叠渲染）
           if (name === 'launch_agents') {
             const runIds: string[] = Array.isArray(rawResult?.runIds) ? rawResult.runIds : []
             // 收尾 launch_agents 自身的工具调用卡（并行派发立即返回，不代表子任务完成；
@@ -481,6 +484,19 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           return { ...m, segments: segs }
         })
       )
+    })
+
+    // 每次模型请求开始：记录段边界，请求失败后重试据此回滚本次请求的残缺输出
+    const iterationCleanup = window.electronAPI.llm.onIterationStart((data: { sessionId: string }) => {
+      const streamState = streamStatesRef.current.get(data.sessionId)
+      const msgId = streamState?.assistantMessageId
+      if (!streamState || !msgId) return
+      // 只记录，不改消息：返回原数组避免无谓持久化/重渲染
+      updateConvMessages(streamState.conversationId, (prev) => {
+        const target = prev.find(m => m.id === msgId)
+        if (target) markLlmRequestStart(msgId, (target.segments || []).length)
+        return prev
+      })
     })
 
     // ---- 委托事件路由：将子员工 chatStream 事件写入对应 delegation segment 的 subSegments ----
@@ -941,6 +957,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           // 中止（用户停止/切换/异常中断）时标记，UI 展示中断提醒
           isAborted: metadata?.aborted === true,
         }
+        clearLlmRequestSegStart(assistantMsg.id)
         window.electronAPI.conversation.update({
           id: streamState.conversationId,
           messages_json: JSON.stringify(prev.map((m) =>
@@ -988,6 +1005,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             type: 'answer' as const,
             content: errorText,
             isStreaming: false,
+            isErrorNotice: true,
             timestamp: Date.now(),
             completedAt: Date.now(),
           }
@@ -995,6 +1013,9 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             ...m,
             isStreaming: false,
             isError: true,
+            // 原地重试所需：失败请求所在的 IPC 会话 + 该次请求开始时的段边界
+            failedSessionId: sessionId,
+            failedRequestSegStart: peekLlmRequestSegStart(m.id),
             segments: (m.segments || []).map((s): MessageSegment => {
               // 工具调用未完成时标记为失败，避免 UI 永远停留在"生成参数中"/"执行中"
               if (s.type === 'tool_call' && !s.isToolComplete) {
@@ -1008,6 +1029,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                   isToolArgsStreaming: false,
                   isToolComplete: true,
                   toolArgs: parsedArgs,
+                  // 调用被中断即失败：续写重放历史时按失败结果回放，避免模型误认为工具已成功
+                  toolIsError: true,
                   toolError: tt('workbench.toolFailed'),
                   completedAt: s.completedAt || Date.now(),
                   collapsed: true,
@@ -1069,6 +1092,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       toolCallCleanup()
       toolResultCleanup()
       toolProgressCleanup()
+      iterationCleanup()
       runCleanup()
       doneCleanup()
       errorCleanup()

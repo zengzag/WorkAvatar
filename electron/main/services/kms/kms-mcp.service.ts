@@ -190,8 +190,8 @@ class KMSMCPService {
         }
       })
 
-      // 仅绑定本地回环：MCP 端点无强制鉴权（apiKey 可为空），监听 0.0.0.0 会把
-      // 文件读取类工具暴露给局域网内任意设备
+      // 仅绑定本地回环：即使已强制 Bearer API Key 鉴权，监听 0.0.0.0 仍会把
+      // 文件读取类工具暴露给局域网内设备
       server.listen(this.config.port, '127.0.0.1', () => {
         this.server = server
         // 服务器级别超时：防止慢速攻击（慢头发送、慢 body 读取）

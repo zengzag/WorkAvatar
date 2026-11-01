@@ -1,13 +1,11 @@
 import fs from 'fs'
 import path from 'path'
-import { convert } from 'file2md'
-import mammoth from 'mammoth'
-import WordExtractor from 'word-extractor'
-import XLSX from 'xlsx'
-import { extractTextItems } from 'unpdf'
 import type { ParseResult } from '../../shared/types'
 import OCRService from './ocr.service'
 import { createLogger } from './logger'
+
+// 重型文档解析依赖（file2md/mammoth/word-extractor/xlsx/unpdf）在各自解析方法内按需 require，
+// 避免启动时同步加载（实测这些模块合计约 190ms）拖慢窗口显示
 
 const logger = createLogger('FileParser')
 
@@ -40,6 +38,7 @@ class FileParserService {
       const buffer = await fs.promises.readFile(filePath)
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const data = new Uint8Array(buffer)
+      const { extractTextItems } = require('unpdf') as typeof import('unpdf')
       const result = await extractTextItems(data)
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const pages = result.items.map(pageItems =>
@@ -67,6 +66,7 @@ class FileParserService {
   private async parseDoc(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     try {
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+      const WordExtractor = require('word-extractor') as typeof import('word-extractor').default
       const extractor = new WordExtractor()
       const doc = await extractor.extract(filePath)
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
@@ -90,6 +90,7 @@ class FileParserService {
 
     // 热数据使用 file2md 解析（保留布局和格式），冷数据使用 mammoth 快速解析
     if (tier === 'hot') {
+      const { convert } = require('file2md') as typeof import('file2md')
       const result = await convert(filePath, {
         preserveLayout: true,
         extractImages: false,
@@ -109,6 +110,7 @@ class FileParserService {
     // 冷数据：mammoth 快速纯文本提取
     const buffer = await fs.promises.readFile(filePath)
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+    const mammoth = require('mammoth') as typeof import('mammoth')
     const result = await mammoth.extractRawText({ buffer })
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
@@ -130,6 +132,7 @@ class FileParserService {
     // file2md 的 xlsx-parser 会按行号/列号直接索引创建整行/整列空对象数组，
     // 当单元格散落在 R1048576/XFD 等高编号位置时会导致百万级空对象数组，内存爆炸卡死。
     // Excel 为表格数据，SheetJS 的值提取已足够用于搜索索引，无需保留复杂格式。
+    const XLSX = require('xlsx') as typeof import('xlsx')
     const workbook = XLSX.readFile(filePath, {
       cellStyles: false,
       cellHTML: false,
@@ -236,6 +239,7 @@ class FileParserService {
 
   private async parsePPTX(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+    const { convert } = require('file2md') as typeof import('file2md')
     const result = await convert(filePath, {
       preserveLayout: true,
       extractImages: false,

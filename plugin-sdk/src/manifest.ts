@@ -91,6 +91,40 @@ export type PluginCapability =
       call?: string[]
     }
 
+/** 宿主设置页可渲染的设置项类型（无界面插件借此暴露可配置参数） */
+export type PluginSettingType = 'string' | 'textarea' | 'number' | 'boolean' | 'select'
+
+export interface PluginSettingOption {
+  value: string
+  /** 展示文案或插件 locale 中的 i18n key */
+  label: string
+}
+
+/**
+ * 插件设置项声明：宿主在「设置 → 插件」按此渲染表单，值存内核 settings 表，
+ * 插件经 `ctx.settings.get/getAll` 读取，并在 `onSettingsChanged` 或 `ctx.settings.onChanged` 中应用。
+ */
+export interface PluginSettingField {
+  /** 设置键：/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/ */
+  key: string
+  type: PluginSettingType
+  /** 展示文案或插件 locale 中的 i18n key */
+  label: string
+  /** 说明文案或 i18n key */
+  description?: string
+  placeholder?: string
+  /** 默认值（缺省时按类型取空值：boolean=false、select=首项、其余为空） */
+  default?: string | number | boolean
+  /** 保存时校验非空（仅 string/textarea/select 生效） */
+  required?: boolean
+  /** number 类型取值范围与步长 */
+  min?: number
+  max?: number
+  step?: number
+  /** select 类型的可选项（value 必须是字符串） */
+  options?: PluginSettingOption[]
+}
+
 export interface PluginNavContribution {
   /** 导航标签文案或 i18n key（由插件 locale 提供） */
   label: string
@@ -161,6 +195,8 @@ export interface PluginManifest {
   dependencies?: Record<string, string>
   /** 内置数字员工声明（激活成功后注册进员工库「插件」分组，用户可另存副本） */
   employees?: PluginManifestEmployee[]
+  /** 宿主设置页渲染的插件参数表单（无界面插件的主要配置入口） */
+  settings?: PluginSettingField[]
   /**
    * vendor 目录声明（**构建期**指令，宿主运行时不读取）：
    * 把无法单文件 bundle 的第三方产物（code-split chunk / Web Worker / 二进制资源）

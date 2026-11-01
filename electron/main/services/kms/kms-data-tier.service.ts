@@ -6,8 +6,8 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-DataTier')
 
-// 晋升阈值：需要足够高的使用频率才升级为热数据，避免一搜索就变热数据
-// 命中阈值 15 次：30天内被搜索命中 15 次以上才晋升（约每两天命中 1 次）
+// 需要足够高的使用频率才升级为热数据，避免一搜索就变热数据
+// 晋升阈值：30 天内 engagementScore ≥ 15，或搜索命中 ≥ 30 次，或读取 ≥ 8 次才晋升
 const HOT_PROMOTE_HIT_THRESHOLD = 15
 // 读取阈值 8 次：30天内被读取 8 次以上才晋升（读取权重高于命中）
 const HOT_PROMOTE_READ_THRESHOLD = 8

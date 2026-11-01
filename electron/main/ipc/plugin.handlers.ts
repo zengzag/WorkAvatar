@@ -5,6 +5,8 @@ import type {
   PluginImportParams,
   PluginInvokeParams,
   PluginSetEnabledParams,
+  PluginSetSettingsParams,
+  PluginSettingsParams,
 } from '../../shared/channels/plugin'
 import PluginHostService from '../services/plugin/plugin-host.service'
 
@@ -50,6 +52,14 @@ export function registerPluginHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, (_event, params: { extension?: string }) => {
     const ext = (params?.extension || '').toLowerCase().replace(/^\./, '')
     return host.getPluginForFileExtension(ext) ?? null
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGIN_GET_SETTINGS, (_event, params: PluginSettingsParams) => {
+    return host.getPluginSettings(params.pluginId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGIN_SET_SETTINGS, (_event, params: PluginSetSettingsParams) => {
+    return host.setPluginSettings(params.pluginId, params.values)
   })
 
   ipcMain.handle(IPC_CHANNELS.PLUGIN_OPEN_DIR, () => {
