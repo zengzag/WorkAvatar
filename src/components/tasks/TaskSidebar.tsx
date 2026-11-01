@@ -13,15 +13,23 @@ import {
   CheckSquareOutlined,
   CloseOutlined,
   MenuFoldOutlined,
-  FilterOutlined,
+  UnorderedListOutlined,
+  TeamOutlined,
+  CaretRightOutlined,
+  DownOutlined,
+  FolderOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
-import type { Conversation, Employee } from '../../types'
+import type { Conversation } from '../../types'
+import { getDirName } from '../../utils/format'
 
 const { Text } = Typography
 
 const SIDEBAR_WIDTH_KEY = 'tasks:sidebarWidth'
+
+/** 任务列表视图：列表（按时间分组）/ 员工分组 / 工作区分组 */
+export type TaskViewMode = 'list' | 'employee' | 'workspace'
 
 type TaskGroupKey = 'today' | 'yesterday' | 'week' | 'earlier'
 
@@ -43,6 +51,11 @@ const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 560
 const SIDEBAR_DEFAULT_WIDTH = 260
 
+/** 员工分组视图下每组默认展示的任务数，超出部分点击「显示更多」分批展开 */
+const GROUP_PAGE_SIZE = 5
+/** 每次点击「显示更多」追加展示的任务数 */
+const GROUP_PAGE_STEP = 20
+
 export interface TaskWithEmployee extends Conversation {
   employee_name: string
 }
@@ -50,11 +63,10 @@ export interface TaskWithEmployee extends Conversation {
 interface TaskSidebarProps {
   tasks: TaskWithEmployee[]
   activeTaskId: string | null
-  employees: Employee[]
   searchQuery: string
   onSearchChange: (query: string) => void
-  filterEmployeeId: string | null
-  onFilterChange: (employeeId: string | null) => void
+  viewMode: TaskViewMode
+  onViewModeChange: (mode: TaskViewMode) => void
   onSelect: (taskId: string) => void
   onDelete: (taskId: string) => void
   onDeleteMany?: (taskIds: string[]) => void
@@ -450,11 +462,10 @@ const TaskItem = memo(({
 const TaskSidebar: React.FC<TaskSidebarProps> = ({
   tasks,
   activeTaskId,
-  employees,
   searchQuery,
   onSearchChange,
-  filterEmployeeId,
-  onFilterChange,
+  viewMode,
+  onViewModeChange,
   onSelect,
   onDelete,
   onDeleteMany,
@@ -471,8 +482,11 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-  const [filterVisible, setFilterVisible] = useState(false)
-  const [filterEmployeeSearch, setFilterEmployeeSearch] = useState('')
+  const [viewMenuVisible, setViewMenuVisible] = useState(false)
+  /** 员工分组视图下已折叠的员工分组 */
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  /** 员工分组视图下各分组当前展示条数（默认 5，每次「显示更多」+20） */
+  const [groupLimits, setGroupLimits] = useState<Record<string, number>>({})
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -552,11 +566,23 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
   const allSelected = tasks.length > 0 && selectedIds.size === tasks.length
 
-  const filteredEmployeesForFilter = useMemo(() => {
-    if (!filterEmployeeSearch.trim()) return employees
-    const search = filterEmployeeSearch.toLowerCase()
-    return employees.filter(e => e.name.toLowerCase().includes(search))
-  }, [employees, filterEmployeeSearch])
+  const changeViewMode = useCallback((mode: TaskViewMode) => {
+    setViewMenuVisible(false)
+    onViewModeChange(mode)
+  }, [onViewModeChange])
+
+  const toggleGroupCollapsed = useCallback((key: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const showMoreInGroup = useCallback((key: string) => {
+    setGroupLimits(prev => ({ ...prev, [key]: (prev[key] ?? GROUP_PAGE_SIZE) + GROUP_PAGE_STEP }))
+  }, [])
 
   // 滚动监听：接近底部时自动加载更多
   const handleScroll = useCallback(() => {
@@ -590,6 +616,78 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
     ]).filter((g) => buckets[g.key].length > 0).map((g) => ({ ...g, tasks: buckets[g.key] }))
   }, [tasks, t])
 
+  // 按员工分组：分组顺序取任务首次出现的顺序，组内保持原顺序
+  const employeeGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; hint?: string; icon: React.ReactNode; tasks: TaskWithEmployee[] }>()
+    for (const task of tasks) {
+      const key = task.employee_id || '__unknown__'
+      let group = map.get(key)
+      if (!group) {
+        group = {
+          key,
+          label: task.employee_name || t('tasks.unknownEmployee'),
+          icon: <RobotOutlined style={{ fontSize: 11 }} />,
+          tasks: [],
+        }
+        map.set(key, group)
+      }
+      group.tasks.push(task)
+    }
+    return Array.from(map.values())
+  }, [tasks, t])
+
+  // 按工作区目录分组：用户指定目录按目录名分组，自动创建的任务目录统一归入"默认工作区"
+  const workspaceGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; hint?: string; icon: React.ReactNode; tasks: TaskWithEmployee[] }>()
+    for (const task of tasks) {
+      const isCustom = task.workspace_mode === 'custom' && !!task.workspace_path
+      const workspacePath = isCustom ? (task.workspace_path as string) : ''
+      // 路径大小写不敏感（Windows），统一小写作为分组键
+      const key = isCustom ? workspacePath.replace(/[\\/]+$/, '').toLowerCase() : '__default__'
+      let group = map.get(key)
+      if (!group) {
+        group = {
+          key,
+          label: isCustom ? getDirName(workspacePath) : t('tasks.defaultWorkspace'),
+          hint: isCustom ? workspacePath : undefined,
+          icon: <FolderOutlined style={{ fontSize: 11 }} />,
+          tasks: [],
+        }
+        map.set(key, group)
+      }
+      group.tasks.push(task)
+    }
+    return Array.from(map.values())
+  }, [tasks, t])
+
+  const viewOptions = useMemo(() => ([
+    { key: 'list' as TaskViewMode, icon: <UnorderedListOutlined style={{ fontSize: 12 }} />, label: t('tasks.viewList') },
+    { key: 'employee' as TaskViewMode, icon: <TeamOutlined style={{ fontSize: 12 }} />, label: t('tasks.viewByEmployee') },
+    { key: 'workspace' as TaskViewMode, icon: <FolderOutlined style={{ fontSize: 12 }} />, label: t('tasks.viewByWorkspace') },
+  ]), [t])
+
+  const categorizedGroups = viewMode === 'workspace' ? workspaceGroups : employeeGroups
+
+  const renderTask = (task: TaskWithEmployee) => (
+    <TaskItem
+      key={task.id}
+      task={task}
+      active={task.id === activeTaskId}
+      streaming={isTaskStreaming?.(task.id) ?? false}
+      selectionMode={selectionMode}
+      selected={selectedIds.has(task.id)}
+      onToggleSelect={toggleSelect}
+      onSelect={onSelect}
+      onDelete={onDelete}
+      onExport={onExport}
+      onGenerateTitle={onGenerateTitle}
+      onRename={onRename}
+      onExtractMemory={onExtractMemory}
+      t={t}
+      token={token}
+    />
+  )
+
   return (
     <div ref={sidebarRef} className="wa-task-sidebar" style={{
       width,
@@ -602,7 +700,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       position: 'relative',
       userSelect: resizing ? 'none' : undefined,
     }}>
-      {/* 顶部操作区：单行整合 - 关闭面板 | 搜索框(内嵌筛选/多选) | 新建任务 */}
+      {/* 顶部操作区：单行整合 - 关闭面板 | 搜索框(内嵌视图菜单) | 新建任务 */}
       <div style={{
         padding: '8px 10px',
         display: 'flex',
@@ -611,7 +709,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* 最左侧：面板隐藏按钮（弱样式，框架控件） */}
           {onCollapse && (
             <Tooltip title={t('workbench.closePanel')}>
@@ -684,92 +782,85 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 placeholder={t('tasks.searchPlaceholder')}
                 token={token}
               />
-              {/* 筛选按钮 - 内嵌搜索框右侧 */}
+              {/* 视图与多选合并为一个下拉按钮，避免搜索框内堆叠过多图标 */}
               <Dropdown
-                open={filterVisible}
-                onOpenChange={(o) => {
-                  setFilterVisible(o)
-                  if (!o) setFilterEmployeeSearch('')
-                }}
+                open={viewMenuVisible}
+                onOpenChange={setViewMenuVisible}
                 trigger={['click']}
                 dropdownRender={() => (
                   <div style={{
                     width: 160,
-                    padding: 8,
+                    padding: 6,
                     background: token.colorBgContainer,
                     borderRadius: 8,
                     border: `1px solid ${token.colorBorderSecondary}`,
                     boxShadow: token.boxShadowSecondary,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 4,
+                    gap: 2,
                   }}>
-                    <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 2, padding: '0 4px' }}>
-                      {t('tasks.filterByEmployee')}
+                    <div style={{ fontSize: 11, color: token.colorTextTertiary, padding: '2px 6px' }}>
+                      {t('tasks.view')}
                     </div>
-                    <Input
-                      placeholder={t('workbench.searchEmployee')}
-                      prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
-                      value={filterEmployeeSearch}
-                      onChange={(e) => setFilterEmployeeSearch(e.target.value)}
-                      allowClear
-                      size="small"
-                      variant="borderless"
-                      style={{ padding: '2px 4px', marginBottom: 2 }}
-                    />
-                    <div style={{ maxHeight: 210, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {filteredEmployeesForFilter.length === 0 && (
-                        <div style={{ padding: '20px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
-                          {filterEmployeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
+                    {viewOptions.map(option => {
+                      const active = viewMode === option.key
+                      return (
+                        <div
+                          key={option.key}
+                          onClick={() => changeViewMode(option.key)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            background: active ? token.colorPrimaryBg : 'transparent',
+                            color: active ? token.colorPrimary : token.colorText,
+                            transition: 'all 0.15s',
+                          }}
+                          onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = token.colorBgTextHover }}
+                          onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                        >
+                          {option.icon}
+                          <span style={{ flex: 1 }}>{option.label}</span>
+                          {active && <span style={{ fontSize: 11 }}>✓</span>}
                         </div>
-                      )}
-                      {filteredEmployeesForFilter.map(emp => {
-                        const selected = filterEmployeeId === emp.id
-                        return (
-                          <div
-                            key={emp.id}
-                            onClick={() => {
-                              onFilterChange(selected ? null : emp.id)
-                              setFilterVisible(false)
-                              setFilterEmployeeSearch('')
-                            }}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: 8,
-                              padding: '6px 8px',
-                              borderRadius: 6,
-                              cursor: 'pointer',
-                              background: selected ? token.colorPrimaryBg : 'transparent',
-                              transition: 'all 0.15s',
-                            }}
-                            onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = token.colorBgTextHover }}
-                            onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = 'transparent' }}
-                          >
-                            <RobotOutlined style={{ fontSize: 12, color: token.colorPrimary, flexShrink: 0 }} />
-                            <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.name}</span>
-                            {selected && <span style={{ color: token.colorPrimary, fontSize: 11 }}>✓</span>}
-                          </div>
-                        )
-                      })}
+                      )
+                    })}
+                    <div style={{ height: 1, background: token.colorBorderSecondary, margin: '4px 2px' }} />
+                    <div
+                      onClick={() => {
+                        setViewMenuVisible(false)
+                        setSelectionMode(true)
+                        setSelectedIds(new Set())
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        color: token.colorText,
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = token.colorBgTextHover }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <CheckSquareOutlined style={{ fontSize: 12 }} />
+                      <span style={{ flex: 1 }}>{t('tasks.multiSelect')}</span>
                     </div>
-                    {filterEmployeeId && (
-                      <Button
-                        type="text"
-                        size="small"
-                        block
-                        style={{ marginTop: 6, fontSize: 11 }}
-                        onClick={() => { onFilterChange(null); setFilterVisible(false); setFilterEmployeeSearch('') }}
-                      >
-                        {t('common.clearAll')}
-                      </Button>
-                    )}
                   </div>
                 )}
               >
-                <Tooltip title={t('tasks.filterByEmployee')}>
+                <Tooltip title={t('tasks.view')}>
                   <Button
                     type="text"
                     size="small"
-                    icon={<FilterOutlined style={{ fontSize: 12 }} />}
+                    icon={viewMode === 'workspace'
+                      ? <FolderOutlined style={{ fontSize: 12 }} />
+                      : viewMode === 'employee'
+                        ? <TeamOutlined style={{ fontSize: 12 }} />
+                        : <UnorderedListOutlined style={{ fontSize: 12 }} />}
                     style={{
                       flexShrink: 0,
                       width: 22,
@@ -777,30 +868,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                       minWidth: 22,
                       padding: 0,
                       borderRadius: 4,
-                      color: filterEmployeeId ? token.colorPrimary : token.colorTextTertiary,
-                      background: filterEmployeeId ? token.colorPrimaryBg : 'transparent',
+                      color: viewMenuVisible ? token.colorPrimary : token.colorTextTertiary,
+                      background: viewMenuVisible ? token.colorPrimaryBg : 'transparent',
                     }}
                   />
                 </Tooltip>
               </Dropdown>
-              {/* 多选按钮 - 内嵌搜索框右侧 */}
-              <Tooltip title={t('tasks.multiSelect')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CheckSquareOutlined style={{ fontSize: 12 }} />}
-                  onClick={() => { setSelectionMode(true); setSelectedIds(new Set()) }}
-                  style={{
-                    flexShrink: 0,
-                    width: 22,
-                    height: 22,
-                    minWidth: 22,
-                    padding: 0,
-                    borderRadius: 4,
-                    color: token.colorTextTertiary,
-                  }}
-                />
-              </Tooltip>
             </div>
           </div>
 
@@ -841,18 +914,6 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
             </Tooltip>
           )}
         </div>
-        {filterEmployeeId && !selectionMode && (
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
-            padding: '2px 8px', borderRadius: 10,
-            background: token.colorPrimaryBg, border: `1px solid ${token.colorPrimaryBorder}`,
-            fontSize: 11, color: token.colorPrimary,
-          }}>
-            <RobotOutlined style={{ fontSize: 10 }} />
-            <span>{employees.find(e => e.id === filterEmployeeId)?.name}</span>
-            <DeleteOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onFilterChange(null)} />
-          </div>
-        )}
       </div>
 
       <div
@@ -870,44 +931,84 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           <div style={{ padding: '32px 16px', textAlign: 'center' }}>
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={searchQuery || filterEmployeeId ? t('tasks.noMatchingTasks') : t('tasks.noTasks')}
+              description={searchQuery ? t('tasks.noMatchingTasks') : t('tasks.noTasks')}
             />
           </div>
         ) : (
           <>
-            {groupedTasks.map((group, groupIdx) => (
-              <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <div style={{
-                  padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  letterSpacing: '0.05em',
-                  color: token.colorTextTertiary,
-                  userSelect: 'none',
-                }}>
-                  {group.label}
+            {viewMode === 'list'
+              ? groupedTasks.map((group, groupIdx) => (
+                <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{
+                    padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: '0.05em',
+                    color: token.colorTextTertiary,
+                    userSelect: 'none',
+                  }}>
+                    {group.label}
+                  </div>
+                  {group.tasks.map(renderTask)}
                 </div>
-                {group.tasks.map(task => (
-                  <TaskItem
-                    key={task.id}
-                    task={task}
-                    active={task.id === activeTaskId}
-                    streaming={isTaskStreaming?.(task.id) ?? false}
-                    selectionMode={selectionMode}
-                    selected={selectedIds.has(task.id)}
-                    onToggleSelect={toggleSelect}
-                    onSelect={onSelect}
-                    onDelete={onDelete}
-                    onExport={onExport}
-                    onGenerateTitle={onGenerateTitle}
-                    onRename={onRename}
-                    onExtractMemory={onExtractMemory}
-                    t={t}
-                    token={token}
-                  />
-                ))}
-              </div>
-            ))}
+              ))
+              : categorizedGroups.map((group, groupIdx) => {
+                const collapsed = collapsedGroups.has(group.key)
+                const limit = groupLimits[group.key] ?? GROUP_PAGE_SIZE
+                const visibleTasks = group.tasks.slice(0, limit)
+                const hiddenCount = group.tasks.length - visibleTasks.length
+                return (
+                  <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <div
+                      onClick={() => toggleGroupCollapsed(group.key)}
+                      title={group.hint}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        letterSpacing: '0.05em',
+                        color: token.colorTextTertiary,
+                        userSelect: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <CaretRightOutlined
+                        rotate={collapsed ? 0 : 90}
+                        style={{ fontSize: 9, transition: 'transform 0.15s' }}
+                      />
+                      {group.icon}
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {group.label}
+                      </span>
+                      <span style={{ marginLeft: 'auto', fontWeight: 500, color: token.colorTextQuaternary }}>
+                        {group.tasks.length}
+                      </span>
+                    </div>
+                    {!collapsed && visibleTasks.map(renderTask)}
+                    {!collapsed && hiddenCount > 0 && (
+                      <Button
+                        type="text"
+                        size="small"
+                        onClick={() => showMoreInGroup(group.key)}
+                        style={{
+                          alignSelf: 'flex-start',
+                          marginLeft: 4,
+                          padding: '0 8px',
+                          height: 24,
+                          fontSize: 12,
+                          color: token.colorTextTertiary,
+                        }}
+                      >
+                        <DownOutlined style={{ fontSize: 10, marginRight: 4 }} />
+                        {t('tasks.showMore', { count: hiddenCount })}
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
             {/* 加载更多区域 */}
             {(hasMore || loadingMore) && (
               <div style={{

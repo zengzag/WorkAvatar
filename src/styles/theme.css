@@ -565,6 +565,20 @@ html.dark .ant-switch .ant-switch-handle::before {
   box-shadow: var(--wa-glass-sheen);
 }
 
+.wa-topbar-workspace {
+  transition: color 0.15s var(--wa-ease), background 0.15s var(--wa-ease), border-color 0.15s var(--wa-ease);
+}
+
+.wa-topbar-workspace:hover {
+  color: var(--wa-ink) !important;
+  background: var(--wa-hover);
+  border-color: var(--wa-line) !important;
+}
+
+.wa-topbar-workspace:active {
+  background: var(--wa-accent-soft);
+}
+
 .wa-composer {
   background: var(--wa-glass-bg) !important;
   backdrop-filter: blur(28px) saturate(1.55);

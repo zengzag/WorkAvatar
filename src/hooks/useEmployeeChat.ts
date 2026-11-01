@@ -888,6 +888,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     images?: string[]
     models?: Array<{ providerId: string; modelId: string }>
     highPermission?: boolean
+    /** 用户指定的工作区目录（新建任务时选择），缺省使用自动创建的任务目录 */
+    workspacePath?: string
   }): Promise<string | null> => {
     if (isCreatingConversation || !id) return null
     setIsCreatingConversation(true)
@@ -896,6 +898,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         employee_id: id!,
         title: defaultConversationTitle(),
         minimal_mode: minimalMode,
+        ...(opts?.workspacePath
+          ? { workspace_path: opts.workspacePath, workspace_mode: 'custom' as const }
+          : {}),
       })
       const convId = (result as Conversation).id
       rememberConversationOwner(convId, id)
@@ -1347,7 +1352,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }))
   }
 
-  const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {
+  const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean; workspacePath?: string }) => {
     const trimmedContent = content.trim()
     if (!trimmedContent && (!images || images.length === 0)) return
 
@@ -1360,6 +1365,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         images,
         models,
         highPermission: !!options?.highPermission,
+        workspacePath: options?.workspacePath,
       })
       return
     }
