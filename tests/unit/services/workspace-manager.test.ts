@@ -93,12 +93,28 @@ const mockState = vi.hoisted(() => {
           },
         }
       }
-      if (s === 'SELECT * FROM conversations WHERE id = ?' || s === 'SELECT workspace_path FROM conversations WHERE id = ?') {
+      if (
+        s === 'SELECT * FROM conversations WHERE id = ?'
+        || s === 'SELECT workspace_path FROM conversations WHERE id = ?'
+        || s === 'SELECT workspace_path, workspace_mode FROM conversations WHERE id = ?'
+      ) {
         return { get: (id: string) => conversations.get(id) }
+      }
+      if (s === 'SELECT workspace_mode FROM conversations WHERE workspace_path = ? LIMIT 1') {
+        return {
+          get: (p: string) => [...conversations.values()].find(c => c.workspace_path === p),
+        }
       }
       if (s.startsWith('SELECT 1 FROM conversations WHERE workspace_path = ?')) {
         return {
           get: (p: string) => ([...conversations.values()].some(c => c.workspace_path === p) ? { found: 1 } : undefined),
+        }
+      }
+      if (s === "SELECT DISTINCT workspace_path FROM conversations WHERE workspace_mode = 'custom' AND workspace_path != ''") {
+        return {
+          all: () => [...conversations.values()]
+            .filter(c => c.workspace_mode === 'custom' && c.workspace_path)
+            .map(c => ({ workspace_path: c.workspace_path })),
         }
       }
       if (s.startsWith('SELECT employee_id') && s.includes('FROM conversations WHERE id = ?')) {
@@ -122,7 +138,8 @@ const mockState = vi.hoisted(() => {
             conversations.set(a[0], {
               id: a[0], employee_id: a[1], skill_id: a[2], title: a[3], messages_json: '[]',
               message_count: 0, minimal_mode: a[4], status: 'active', workspace_path: a[5],
-              parent_conversation_id: a[6], created_at: a[7], updated_at: a[8], last_message_at: null,
+              workspace_mode: a[6], parent_conversation_id: a[7], created_at: a[8], updated_at: a[9],
+              last_message_at: null,
             })
             return { changes: 1 }
           },
@@ -233,6 +250,21 @@ describe('workspace-manager / isWithinEmployeesRoot', () => {
   it('含 .. 的相对路径按解析结果判定', () => {
     expect(service.isWithinEmployeesRoot(path.join(employeesRoot, 'a', '..', 'b'))).toBe(true)
     expect(service.isWithinEmployeesRoot(path.join(employeesRoot, '..', 'outside'))).toBe(false)
+  })
+})
+
+describe('workspace-manager / isWithinWorkspaceBoundary', () => {
+  it('自定义工作区目录及其子路径视为合法', () => {
+    const customRoot = path.join(root, 'user-custom')
+    mockState.conversations.set('conv-custom', { id: 'conv-custom', workspace_mode: 'custom', workspace_path: customRoot })
+    expect(service.isWithinWorkspaceBoundary(customRoot)).toBe(true)
+    expect(service.isWithinWorkspaceBoundary(path.join(customRoot, 'sub'))).toBe(true)
+    expect(service.isWithinWorkspaceBoundary(path.join(root, 'other-custom'))).toBe(false)
+    expect(service.isWithinWorkspaceBoundary(`${customRoot}-evil`)).toBe(false)
+  })
+
+  it('无 custom 会话时不放开 employees/ 之外路径', () => {
+    expect(service.isWithinWorkspaceBoundary(path.join(root, 'anywhere'))).toBe(false)
   })
 })
 
@@ -438,6 +470,30 @@ describe('workspace-manager / createConversation 任务工作区', () => {
     const conv = service.createConversation(emp.id, undefined, 'x', undefined, undefined, outside)
     expect(conv.workspace_path).not.toBe('')
     expect(conv.workspace_path).not.toBe(outside)
+  })
+
+  it('指定工作区目录时直接使用该目录并标记 custom（不创建目录）', () => {
+    const emp = service.createEmployee('员工W')
+    const custom = path.join(root, 'user-workspace')
+    const conv = service.createConversation(emp.id, undefined, '自定义', undefined, undefined, undefined, custom)
+    expect(conv.workspace_path).toBe(path.resolve(custom))
+    expect(conv.workspace_mode).toBe('custom')
+    // 用户指定目录不由应用创建
+    expect(fs.existsSync(custom)).toBe(false)
+  })
+
+  it('默认任务目录标记为 default', () => {
+    const emp = service.createEmployee('员工X')
+    expect(service.createConversation(emp.id).workspace_mode).toBe('default')
+  })
+
+  it('分支复用自定义工作区时继承 custom 类型', () => {
+    const emp = service.createEmployee('员工Y')
+    const custom = path.join(emp.workspace_path!, 'shared-custom')
+    const src = service.createConversation(emp.id, undefined, 'src', undefined, undefined, undefined, custom)
+    const reuse = service.createConversation(emp.id, undefined, '复用', undefined, undefined, src.workspace_path!)
+    expect(reuse.workspace_path).toBe(src.workspace_path)
+    expect(reuse.workspace_mode).toBe('custom')
   })
 
   it('minimalMode 落库为 1', () => {

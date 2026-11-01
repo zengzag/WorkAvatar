@@ -163,14 +163,14 @@ class TerminalService {
     return { ok: true, cwd: session.cwd }
   }
 
-  /** 归一化路径并限制在 employees/ 工作区根内；越界或不存在返回 null */
+  /** 归一化路径并限制在可访问工作区内（employees/ 或用户指定目录）；越界或不存在返回 null */
   private resolveInsideWorkspace(target: string): string | null {
     if (!target) return null
     let resolved: string
     try { resolved = fs.realpathSync(path.resolve(target)) } catch {
       resolved = path.resolve(target)
     }
-    return WorkspaceManagerService.getInstance().isWithinEmployeesRoot(resolved) ? resolved : null
+    return WorkspaceManagerService.getInstance().isWithinWorkspaceBoundary(resolved) ? resolved : null
   }
 }
 

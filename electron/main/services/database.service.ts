@@ -214,6 +214,8 @@ class DatabaseService {
         collection_ids_json TEXT DEFAULT '',
         -- 任务工作区目录（每个任务独立子目录）
         workspace_path TEXT DEFAULT '',
+        -- 工作区类型：default=自动创建的任务目录（归入"默认工作区"），custom=用户指定目录
+        workspace_mode TEXT DEFAULT 'default',
         -- 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤
         parent_conversation_id TEXT DEFAULT '',
         last_message_at INTEGER,
@@ -478,6 +480,13 @@ class DatabaseService {
         this.db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${ddl}`)
         logger.info(`迁移：employees 增加 ${name} 列`)
       }
+    }
+
+    // 任务工作区类型增量列（幂等）：default=自动任务目录，custom=用户指定目录
+    const conversationColumns = this.db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
+    if (conversationColumns.length > 0 && !conversationColumns.some(c => c.name === 'workspace_mode')) {
+      this.db.exec("ALTER TABLE conversations ADD COLUMN workspace_mode TEXT DEFAULT 'default'")
+      logger.info('迁移：conversations 增加 workspace_mode 列')
     }
 
     // 模板任务运行记录增量列：运行实际入参（幂等）

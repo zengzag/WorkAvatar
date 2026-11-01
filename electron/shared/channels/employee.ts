@@ -124,8 +124,10 @@ export interface ConversationCreateParams {
   skill_id?: string
   title?: string
   minimal_mode?: boolean
-  /** 复用指定工作区路径（分支任务），传入时不新建任务目录 */
+  /** 复用指定工作区路径（分支任务），传入时不新建任务目录；workspace_mode='custom' 时表示用户指定目录 */
   workspace_path?: string
+  /** 工作区类型：custom=用户指定目录（新建任务时选择），缺省为 default（自动创建任务目录） */
+  workspace_mode?: 'default' | 'custom'
 }
 
 export interface ConversationSearchParams {

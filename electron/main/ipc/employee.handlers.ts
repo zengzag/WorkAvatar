@@ -164,7 +164,17 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_CREATE, (params: ConversationCreateParams) => {
-    const conv = workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode, undefined, params.workspace_path)
+    const isCustomWorkspace = params.workspace_mode === 'custom'
+    const conv = workspaceManager.createConversation(
+      params.employee_id,
+      params.skill_id,
+      params.title,
+      params.minimal_mode,
+      undefined,
+      // 复用已有工作区（分支任务）与用户指定目录互斥
+      isCustomWorkspace ? undefined : params.workspace_path,
+      isCustomWorkspace ? params.workspace_path : undefined,
+    )
     broadcastToRenderers(IPC_CHANNELS.CONVERSATION_CHANGED, { id: conv.id, action: 'create' })
     return conv
   })

@@ -167,6 +167,8 @@ export interface Conversation {
   collection_ids_json?: string
   /** 任务独立工作区目录（空字符串表示未分配，回退到员工工作区） */
   workspace_path?: string
+  /** 工作区类型：default=自动创建的任务目录（归入"默认工作区"），custom=用户指定目录 */
+  workspace_mode?: 'default' | 'custom'
   /** 父会话 ID：委托产生的子会话记录其主管会话 ID，空字符串表示顶层会话 */
   parent_conversation_id?: string
 }
