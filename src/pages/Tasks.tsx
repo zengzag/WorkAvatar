@@ -312,7 +312,7 @@ const Tasks: React.FC = () => {
   // 不使用可变的员工级 selectedLlmProviderId，避免 A 任务设置的模型串扰到未绑定的 B 任务
   const sceneDefaultModel = useMemo(() => getCachedSceneDefaultModel('workbench'), [])
 
-  // 工作区面板根目录：对话模式用任务工作区，新任务模式用员工工作区
+  // 当前任务（含任务工作区路径），供状态栏、工作区面板与打开目录使用
   const activeTask = useMemo(
     () => globalTasks.find(t => t.id === activeConversationId),
     [globalTasks, activeConversationId],
@@ -343,12 +343,13 @@ const Tasks: React.FC = () => {
   const statusEmployee = taskMode === 'chat'
     ? employee
     : employees.find(e => e.id === newTaskEmployeeId)
+  // 工作区面板根目录：仅使用任务工作区（新任务或旧对话无目录时为空）
   const panelRootPath = useMemo(() => {
     if (taskMode === 'chat') {
-      return activeTask?.workspace_path || fetchedConv?.workspace_path || employee?.workspace_path || null
+      return activeTask?.workspace_path || fetchedConv?.workspace_path || null
     }
-    return employee?.workspace_path || null
-  }, [taskMode, activeTask, fetchedConv, employee])
+    return null
+  }, [taskMode, activeTask, fetchedConv])
   // 终端会话按任务隔离：任务内 cd 状态与运行中命令互不干扰
   const terminalId = taskMode === 'chat' && activeConversationId
     ? `conv:${activeConversationId}`
@@ -508,7 +509,7 @@ const Tasks: React.FC = () => {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
-      // 任务目录非空时，询问是否一并删除任务目录
+      // 工作区目录非空时，询问是否一并删除工作区目录
       if (res?.taskDirNonEmpty && res?.taskDir) {
         modal.confirm({
           title: t('workbench.deleteTaskDirTitle'),
@@ -541,7 +542,7 @@ const Tasks: React.FC = () => {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
-      // 存在非空任务目录时，询问是否一并删除
+      // 存在非空工作区目录时，询问是否一并删除
       if (nonEmptyDirs.length > 0) {
         modal.confirm({
           title: t('workbench.deleteTaskDirManyTitle'),
@@ -798,16 +799,10 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  // 打开当前员工的工作区目录
-  const handleOpenWorkspace = useCallback(() => {
-    openDirInExplorer(employee?.workspace_path)
-  }, [employee, openDirInExplorer])
-
   // 打开当前任务的工作区目录
   const handleOpenTaskWorkspace = useCallback(() => {
-    const activeTask = globalTasks.find(t => t.id === activeConversationId)
-    openDirInExplorer(activeTask?.workspace_path)
-  }, [globalTasks, activeConversationId, openDirInExplorer])
+    openDirInExplorer(panelRootPath || undefined)
+  }, [panelRootPath, openDirInExplorer])
 
   // 打开执行当前任务的数字员工设置抽屉
   const handleOpenEmployeeSettings = useCallback(() => {
@@ -827,19 +822,13 @@ const Tasks: React.FC = () => {
         onClick: handleOpenTaskWorkspace,
       },
       {
-        key: 'openWorkspace',
-        icon: <FolderOpenOutlined />,
-        label: t('workbench.openWorkspace'),
-        onClick: handleOpenWorkspace,
-      },
-      {
         key: 'openEmployeeSettings',
         icon: <SettingOutlined />,
         label: t('workbench.openEmployeeSettings'),
         onClick: handleOpenEmployeeSettings,
       },
     ]
-  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace, handleOpenEmployeeSettings])
+  }, [t, handleOpenTaskWorkspace, handleOpenEmployeeSettings])
 
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }

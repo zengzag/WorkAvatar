@@ -28,7 +28,7 @@ const MAX_WIDTH = 860
 const DEFAULT_WIDTH = 420
 
 interface TaskWorkspacePanelProps {
-  /** 当前任务/员工工作区根目录；为空表示尚不可用 */
+  /** 当前任务的工作区根目录；为空表示尚不可用 */
   rootPath: string | null
   /** 终端会话标识（随任务切换变化） */
   terminalId: string

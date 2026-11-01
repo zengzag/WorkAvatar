@@ -637,11 +637,8 @@ class EmployeeAgentService {
     const lines: string[] = []
     if (taskWorkspace) {
       lines.push(`Current task workspace: ${taskWorkspace} (read/write authorized). Create and modify all scripts, temporary files, and deliverables inside it unless the user requests otherwise; never write outside it.`)
-      if (emp.workspace_path) {
-        lines.push(`Digital employee workspace: ${emp.workspace_path} (read-only by default; modifications require user confirmation; use it only to inspect other tasks).`)
-      }
     } else if (emp.workspace_path) {
-      // 旧对话无任务目录：回退到员工工作区为读写授权，保持兼容
+      // 旧对话无任务工作区：回退到员工目录作为读写边界，保持兼容
       lines.push(`Workspace: ${emp.workspace_path} (read/write authorized; create and modify files directly.)`)
     }
     return lines.length > 0 ? lines.join('\n') : undefined
