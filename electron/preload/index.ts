@@ -344,6 +344,9 @@ const electronAPI = {
     dragEnd: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_END),
     /** 面板内容高度变化，主进程同步窗口高度 */
     setPanelHeight: (height: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_HEIGHT, height),
+    /** 面板左右边缘拖拽只调整宽度；anchor 为保持不动的那条边，高度仍由内容上报决定 */
+    setPanelSize: (size: { width?: number; anchor?: 'left' | 'right' }) =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, size),
     /** 挂件窗口透明区域的鼠标穿透开关 */
     setIgnoreMouse: (ignore: boolean) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_IGNORE_MOUSE, ignore),
     quit: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_QUIT),

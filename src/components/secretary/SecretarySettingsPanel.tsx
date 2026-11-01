@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { App, Card, Input, Slider, Space, Switch, Typography, theme } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
+  DEFAULT_SECRETARY_SETTINGS,
   SECRETARY_CHARACTER_IDS,
   isSecretaryCharacterId,
   type SecretaryCharacterId,
@@ -51,7 +52,7 @@ const SecretarySettingsPanel: React.FC = () => {
 
   if (!state) return null
   const settings = state.settings
-  const character = isSecretaryCharacterId(settings.character) ? settings.character : 'blob'
+  const character = isSecretaryCharacterId(settings.character) ? settings.character : DEFAULT_SECRETARY_SETTINGS.character
   const sizeValue = sizeDraft ?? settings.size
   const opacityValue = opacityDraft ?? Math.round(settings.opacity * 100)
 

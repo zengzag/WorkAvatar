@@ -1,11 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { theme } from 'antd'
 import { useTranslation } from 'react-i18next'
-import { isSecretaryCharacterId, type SecretaryCharacterId } from '../../../electron/shared/channels/secretary'
+import {
+  DEFAULT_SECRETARY_SETTINGS,
+  isSecretaryCharacterId,
+  type SecretaryCharacterId,
+  type SecretarySettings,
+} from '../../../electron/shared/channels/secretary'
 import { CHARACTER_PLAYS, type PlayAction } from './characters'
 import { SecretaryAvatar } from './SecretaryAvatar'
 import { subscribeSecretaryBus, postSecretaryMessage, SECRETARY_PENDING_FILES_KEY, type SecretaryBusState } from './secretary-bus'
 import './secretary.css'
+
+/** 主进程建窗时经 query 带上的设置快照：首帧即渲染用户选中的形象，避免先闪默认形象再切换 */
+const INITIAL_SETTINGS: Partial<SecretarySettings> = (() => {
+  try {
+    const raw = new URLSearchParams(window.location.search).get('settings')
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+})()
 
 /** 挂件窗：只负责表情、气泡、角标与拖动/点击，任务数据由面板窗经 BroadcastChannel 同步 */
 const PetWindow: React.FC = () => {
@@ -14,10 +30,12 @@ const PetWindow: React.FC = () => {
   const [state, setState] = useState<SecretaryBusState>({
     status: 'idle', bubble: '', runningCount: 0, unreadCount: 0,
   })
-  const [size, setSize] = useState(128)
-  const [opacity, setOpacity] = useState(1)
+  const [size, setSize] = useState(INITIAL_SETTINGS.size || DEFAULT_SECRETARY_SETTINGS.size)
+  const [opacity, setOpacity] = useState(INITIAL_SETTINGS.opacity || DEFAULT_SECRETARY_SETTINGS.opacity)
   const [side, setSide] = useState<'left' | 'right'>('right')
-  const [character, setCharacter] = useState<SecretaryCharacterId>('blob')
+  const [character, setCharacter] = useState<SecretaryCharacterId>(
+    isSecretaryCharacterId(INITIAL_SETTINGS.character) ? INITIAL_SETTINGS.character : DEFAULT_SECRETARY_SETTINGS.character,
+  )
   const [play, setPlay] = useState<PlayAction | ''>('')
   /** robot 屏幕脸：面板选中员工的头像图（无则显示员工头像图标，再退回默认 W 图标）；任务运行时跟随执行员工 */
   const [faceImage, setFaceImage] = useState<string | null>(null)
@@ -93,7 +111,7 @@ const PetWindow: React.FC = () => {
     const offSettings = window.electronAPI.secretary.onSettingsChanged((s) => {
       setSize(s.size)
       setOpacity(s.opacity)
-      setCharacter(isSecretaryCharacterId(s.character) ? s.character : 'blob')
+      setCharacter(isSecretaryCharacterId(s.character) ? s.character : DEFAULT_SECRETARY_SETTINGS.character)
     })
     const offSide = window.electronAPI.secretary.onSideChanged(setSide)
     // 拖动中窗口失焦（如 Alt+Tab）时结束拖动，避免窗口黏在光标上

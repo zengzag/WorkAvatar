@@ -18,6 +18,7 @@ const STRINGS = {
   trayShowWindow: { 'zh-CN': '显示窗口', 'en-US': 'Show Window' },
   traySecretaryShow: { 'zh-CN': '显示小秘书', 'en-US': 'Show Secretary' },
   traySecretaryHide: { 'zh-CN': '隐藏小秘书', 'en-US': 'Hide Secretary' },
+  secretaryMenuMainWindow: { 'zh-CN': '打开主窗口', 'en-US': 'Open main window' },
   secretaryMenuOpen: { 'zh-CN': '打开小秘书面板', 'en-US': 'Open secretary panel' },
   secretaryMenuHide: { 'zh-CN': '隐藏小秘书', 'en-US': 'Hide secretary' },
   secretaryMenuSettings: { 'zh-CN': '小秘书设置…', 'en-US': 'Secretary settings…' },

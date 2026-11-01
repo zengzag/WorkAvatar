@@ -1,7 +1,11 @@
-import type { Employee, ThinkingLevel } from '../../types'
+import type { Employee, ThinkingLevel, GeneratedFileInfo } from '../../types'
 import i18n from '../../i18n'
 import { generateId } from '../../utils/format'
 import { getSceneDefaultModel } from '../../utils/default-model'
+import {
+  defaultConversationTitle,
+  generateConversationTitle,
+} from '../../utils/conversation-title'
 import { getToolDisplayName } from '../../utils/tool-display'
 import { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
 import { useSecretaryStore, selectBusSummary, type SecretaryTask } from './secretary.store'
@@ -30,6 +34,8 @@ interface SecretarySegment {
   toolCallId?: string
   isToolComplete?: boolean
   isToolArgsStreaming?: boolean
+  /** 工具产物：面板对话窗只展示文件名，点击用系统软件打开 */
+  generatedFiles?: GeneratedFileInfo[]
 }
 
 /** 任务执行期间累计的助手消息要素（后台运行没有消息渲染器，需自己收集后落库） */
@@ -43,6 +49,11 @@ interface SessionEntry {
   segments: SecretarySegment[]
   segSeq: number
   toolSeq: number
+  /** 续接已有会话时的历史消息（不含本次用户消息） */
+  baseMessages?: unknown[]
+  /** 本次用户消息内容与时间：续接时与任务原始 prompt 不同，不能复用 task.prompt */
+  userContent?: string
+  userTimestamp?: number
   /** 本次任务实际使用的模型：主窗口消息底部据此显示模型标签（与模型对比/重生成共用字段） */
   providerId: string
   modelId: string
@@ -77,6 +88,35 @@ function setStep(taskId: string, step: string): void {
   const task = findTask(taskId)
   if (!task || task.step === step) return
   store().patchTask(taskId, { step })
+}
+
+/** 面板内简化对话窗的实时增量（不落 store，避免每个 token 触发 localStorage 写入） */
+export interface SecretaryStreamSnapshot {
+  taskId: string
+  conversationId?: string
+  assistantMessageId: string
+  content: string
+  streaming: boolean
+}
+
+const streamListeners = new Set<(snapshot: SecretaryStreamSnapshot) => void>()
+
+export function subscribeSecretaryStream(listener: (snapshot: SecretaryStreamSnapshot) => void): () => void {
+  streamListeners.add(listener)
+  return () => { streamListeners.delete(listener) }
+}
+
+/** 只在对话框打开时才有订阅者，未订阅时不做任何额外工作 */
+function emitStream(entry: SessionEntry, streaming: boolean): void {
+  if (streamListeners.size === 0) return
+  const snapshot: SecretaryStreamSnapshot = {
+    taskId: entry.taskId,
+    conversationId: findTask(entry.taskId)?.conversationId,
+    assistantMessageId: entry.assistantMessageId,
+    content: entry.text,
+    streaming,
+  }
+  for (const listener of Array.from(streamListeners)) listener(snapshot)
 }
 
 /** 把任务汇总成挂件状态（面板窗是唯一数据源，挂件窗只消费） */
@@ -117,6 +157,7 @@ export function installSecretaryRunner(): void {
       entry.text += text
       appendTextSegment(entry, 'answer', text)
       setStep(entry.taskId, String(i18n.t('secretary.responding')))
+      emitStream(entry, true)
       schedulePersist(entry)
     }
   })
@@ -149,7 +190,7 @@ export function installSecretaryRunner(): void {
     schedulePersist(entry)
   })
 
-  window.electronAPI.llm.onToolResult(({ sessionId, name, result }) => {
+  window.electronAPI.llm.onToolResult(({ sessionId, name, result, generatedFiles }) => {
     const entry = sessions.get(sessionId)
     if (!entry) return
     // 工具结果事件不带调用 id，按「同名且未完成」的最后一次调用回填
@@ -157,6 +198,9 @@ export function installSecretaryRunner(): void {
       const seg = entry.segments[i]
       if (seg.type === 'tool_call' && seg.toolName === name && !seg.isToolComplete) {
         seg.toolResult = result
+        if (Array.isArray(generatedFiles) && generatedFiles.length > 0) {
+          seg.generatedFiles = generatedFiles as GeneratedFileInfo[]
+        }
         seg.isToolComplete = true
         seg.completedAt = Date.now()
         break
@@ -252,6 +296,8 @@ async function persistMessages(conversationId: string, messages: unknown[], touc
 /**
  * 运行中把已发生的思考/正文/工具调用落库（节流）：
  * 主窗口中途打开任务时能直接读到「打开之前」的完整过程，而不是从接入那一刻才开始。
+ * 注意：不能在这里收口流式段。段一旦被关闭，后续增量会另起新段，
+ * 落库结果就是一个思考被拆成很多节（主窗口没跟着看时尤其明显）。
  */
 function schedulePersist(entry: SessionEntry): void {
   if (entry.finished || entry.persistTimer) return
@@ -259,19 +305,18 @@ function schedulePersist(entry: SessionEntry): void {
     entry.persistTimer = null
     const task = findTask(entry.taskId)
     if (!task?.conversationId || entry.finished) return
-    closeStreamingSegments(entry)
     const messages = buildMessages(task, entry, entry.text, Date.now())
     entry.writeChain = entry.writeChain.then(() => persistMessages(task.conversationId!, messages, false))
   }, PERSIST_THROTTLE_MS)
 }
 
-/** 会话消息：用户原始任务 + 助手输出（含思考 / 工具调用 / 用量，主窗口按普通消息渲染） */
+/** 会话消息：历史消息（续接时）+ 本次用户消息 + 助手输出（含思考 / 工具调用 / 用量，主窗口按普通消息渲染） */
 function buildMessages(task: SecretaryTask, entry: SessionEntry | undefined, content: string, endedAt: number): unknown[] {
   const user = {
     id: entry?.userMessageId || generateId(),
     role: 'user',
-    content: task.prompt || task.title,
-    timestamp: task.startedAt,
+    content: entry?.userContent ?? (task.prompt || task.title),
+    timestamp: entry?.userTimestamp ?? task.startedAt,
   }
   const assistant: Record<string, unknown> = {
     id: entry?.assistantMessageId || generateId(),
@@ -289,7 +334,7 @@ function buildMessages(task: SecretaryTask, entry: SessionEntry | undefined, con
       assistant.comparisonModelId = entry.modelId
     }
   }
-  return [user, assistant]
+  return [...(entry?.baseMessages || []), user, assistant]
 }
 
 async function finishTask(entry: SessionEntry, status: 'done' | 'failed'): Promise<void> {
@@ -322,6 +367,7 @@ async function finishTask(entry: SessionEntry, status: 'done' | 'failed'): Promi
     endedAt,
     viewed: false,
   })
+  emitStream(entry, false)
   sessionByTask.delete(entry.taskId)
   // 完成提醒只走挂件（气泡 + 未读角标），不再重复发系统通知
 }
@@ -345,8 +391,8 @@ export async function startSecretaryTask(params: {
   const content = paths.length
     ? `${prompt}\n\n参考附件：\n${paths.map((p) => `- ${p}`).join('\n')}`
     : prompt
-  const firstFileName = paths[0]?.split(/[\\/]/).pop() || ''
-  const title = prompt.trim().slice(0, 30) || firstFileName || String(i18n.t('secretary.newTask'))
+  // 标题与普通任务一致：先落日期标题，自动命名成功后替换
+  const title = defaultConversationTitle()
 
   const conversation = await window.electronAPI.conversation.create({
     employee_id: employee.id,
@@ -437,6 +483,8 @@ export async function startSecretaryTask(params: {
     segments: [],
     segSeq: 0,
     toolSeq: 0,
+    userContent: content,
+    userTimestamp: task.startedAt,
     providerId,
     modelId,
     attachedElsewhere: false,
@@ -445,7 +493,148 @@ export async function startSecretaryTask(params: {
     writeChain: Promise.resolve(),
   })
   sessionByTask.set(taskId, result.sessionId)
+  void autoNameTask(taskId, conversation.id, content)
   return taskId
+}
+
+/** 自动命名（与普通任务一致）：成功后就地替换会话标题与面板任务标题，失败保留日期标题 */
+async function autoNameTask(taskId: string, conversationId: string, content: string): Promise<void> {
+  const title = await generateConversationTitle(conversationId, content)
+  if (title) store().patchTask(taskId, { title })
+}
+
+/**
+ * 在已有任务的会话上继续追问（面板内简化对话窗使用）：
+ * 复用同一 conversationId 与员工，历史消息 + 本次提问一起发给模型，
+ * 收尾时把「历史 + 提问 + 回答」整体写回，主窗口打开能看到完整多轮对话。
+ */
+export async function continueSecretaryTask(params: {
+  taskId: string
+  prompt: string
+  attachmentPaths?: string[]
+  providerId?: string
+  modelId?: string
+  enableThinking?: ThinkingLevel
+}): Promise<void> {
+  installSecretaryRunner()
+
+  const task = findTask(params.taskId)
+  if (!task) throw new Error('TASK_NOT_FOUND')
+  if (!task.conversationId) throw new Error('NO_CONVERSATION')
+  if (sessionByTask.has(task.id)) throw new Error('BUSY')
+
+  const conversationId = task.conversationId
+  const conversation = await window.electronAPI.conversation.get(conversationId).catch(() => null)
+  // 读不到历史时不能继续：否则本次写入会把已有对话整体覆盖掉
+  if (!conversation) throw new Error('CONVERSATION_NOT_FOUND')
+  let baseMessages: unknown[] = []
+  try {
+    const parsed = conversation?.messages_json ? JSON.parse(conversation.messages_json) : []
+    if (Array.isArray(parsed)) baseMessages = parsed
+  } catch { /* 历史解析失败按空会话处理 */ }
+
+  const paths = params.attachmentPaths || []
+  const prompt = params.prompt.trim()
+  const content = paths.length
+    ? `${prompt}\n\n参考附件：\n${paths.map((p) => `- ${p}`).join('\n')}`
+    : prompt
+  const userMessageId = generateId()
+  const userTimestamp = Date.now()
+  await persistMessages(conversationId, [
+    ...baseMessages,
+    { id: userMessageId, role: 'user', content, timestamp: userTimestamp },
+  ])
+
+  // 模型：面板选择 > 会话绑定 > 工作台场景默认（与发起任务一致）
+  let providerId = params.providerId || ''
+  let modelId = params.modelId || ''
+  if (!providerId && conversation?.default_model_json) {
+    try {
+      const bound = JSON.parse(conversation.default_model_json)
+      if (bound?.providerId) {
+        providerId = bound.providerId
+        modelId = modelId || bound.modelId || ''
+      }
+    } catch { /* ignore */ }
+  }
+  if (!providerId) {
+    const fallback = await getSceneDefaultModel('workbench')
+    providerId = fallback?.provider_id || ''
+    modelId = modelId || fallback?.model_id || ''
+  }
+  if (!providerId) {
+    store().patchTask(task.id, {
+      status: 'failed', error: 'no-provider', step: '', endedAt: Date.now(), viewed: false,
+    })
+    throw new Error('NO_PROVIDER')
+  }
+
+  await window.electronAPI.conversation.update({
+    id: conversationId,
+    default_model_json: JSON.stringify({ providerId, modelId }),
+  }).catch(() => {})
+
+  store().patchTask(task.id, {
+    status: 'running',
+    step: String(i18n.t('secretary.thinking')),
+    error: undefined,
+    endedAt: undefined,
+  })
+
+  // 简化对话不重放工具调用过程：按角色 + 正文重建历史即可
+  const history = [...baseMessages, { role: 'user', content }]
+    .filter((m: any) => (m?.role === 'user' || m?.role === 'assistant')
+      && typeof m.content === 'string' && m.content.trim().length > 0)
+    .map((m: any) => ({ role: m.role, content: m.content }))
+
+  let result: { success?: boolean; sessionId?: string } | undefined
+  try {
+    result = await window.electronAPI.llm.employeeChatStream({
+      employee_id: task.employee.id,
+      provider_id: providerId,
+      model_id: modelId,
+      messages: history,
+      use_skills: true,
+      collection_ids: [],
+      conversation_id: conversationId,
+      minimal_mode: false,
+      high_permission: false,
+      enable_thinking: params.enableThinking ?? 'high',
+    })
+  } catch (err) {
+    store().patchTask(task.id, {
+      status: 'failed', error: 'start-failed', step: '', endedAt: Date.now(), viewed: false,
+    })
+    throw err
+  }
+  if (!result?.success || !result.sessionId) {
+    store().patchTask(task.id, {
+      status: 'failed', error: 'start-failed', step: '', endedAt: Date.now(), viewed: false,
+    })
+    throw new Error('START_FAILED')
+  }
+
+  sessions.set(result.sessionId, {
+    taskId: task.id,
+    sessionId: result.sessionId,
+    userMessageId,
+    assistantMessageId: generateId(),
+    text: '',
+    thought: '',
+    segments: [],
+    segSeq: 0,
+    toolSeq: 0,
+    baseMessages,
+    userContent: content,
+    userTimestamp,
+    providerId,
+    modelId,
+    attachedElsewhere: false,
+    finished: false,
+    persistTimer: null,
+    writeChain: Promise.resolve(),
+  })
+  sessionByTask.set(task.id, result.sessionId)
 }
 
 /** 中止任务（面板上的“停止”）：先落状态，再停主进程运行，最后把已有输出落库 */
@@ -489,6 +678,7 @@ export async function abortSecretaryTask(taskId: string): Promise<void> {
       await persistMessages(conversationId, messages)
     }
   }
+  if (entry) emitStream(entry, false)
 }
 
 /** 中止所有在跑任务（停用小秘书前调用） */

@@ -17,9 +17,12 @@ const logger = createLogger('Secretary')
 /** settings 表中的持久化键 */
 const SETTINGS_KEY = 'secretary_settings'
 const POSITION_KEY = 'secretary_pet_position'
+const PANEL_SIZE_KEY = 'secretary_panel_size'
 
-/** 面板固定宽度；高度由面板内容上报（clamp 后生效） */
-const PANEL_WIDTH = 372
+/** 面板默认宽度；用户可拖拽右下角调整（宽/高一起存 settings secretary_panel_size） */
+const DEFAULT_PANEL_WIDTH = 372
+const MIN_PANEL_WIDTH = 300
+const MAX_PANEL_WIDTH = 640
 /** 首帧高度取小一点，等渲染端上报真实内容高度再调整，避免开面板瞬间留一大片透明空区 */
 const DEFAULT_PANEL_HEIGHT = 200
 /** 高度完全由内容决定，这里只兜底首帧/异常上报，不能设太大会在面板底部留出空白 */
@@ -54,7 +57,10 @@ class SecretaryWindowService {
   private mainWindow: BrowserWindow | null = null
   private petWin: BrowserWindow | null = null
   private panelWin: BrowserWindow | null = null
+  private panelWidth = DEFAULT_PANEL_WIDTH
   private panelHeight = DEFAULT_PANEL_HEIGHT
+  /** 拖拽调整尺寸期间合并落盘，避免每帧写库 */
+  private panelSizeTimer: NodeJS.Timeout | null = null
   private settings: SecretarySettings = { ...DEFAULT_SECRETARY_SETTINGS }
   private position: { x: number; y: number } | null = null
   private ipcReady = false
@@ -162,12 +168,18 @@ class SecretaryWindowService {
     this.stateListener = fn
   }
 
-  /** 打开主窗口的「设置 → 小秘书」 */
-  openSettings(): void {
+  /** 唤起主窗口（挂件右键菜单） */
+  showMainWindow(): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
     if (this.mainWindow.isMinimized()) this.mainWindow.restore()
     this.mainWindow.show()
     this.mainWindow.focus()
+  }
+
+  /** 打开主窗口的「设置 → 小秘书」 */
+  openSettings(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    this.showMainWindow()
     this.mainWindow.webContents.send(IPC_CHANNELS.SECRETARY_OPEN_SETTINGS)
   }
 
@@ -184,11 +196,13 @@ class SecretaryWindowService {
       : path.join(process.cwd(), 'dist-electron', 'preload', 'index.js')
   }
 
-  private loadRoute(win: BrowserWindow, route: string): void {
+  private loadRoute(win: BrowserWindow, route: string, query?: Record<string, string>): void {
     if (app.isPackaged) {
-      win.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'), { hash: route })
+      win.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'), { hash: route, query })
     } else {
-      win.loadURL(`http://localhost:5173/#${route}`)
+      // 沿用 hash 路由，query 放在 hash 前，渲染端用 location.search 同步读取
+      const search = query ? `?${new URLSearchParams(query).toString()}` : ''
+      win.loadURL(`http://localhost:5173/${search}#${route}`)
     }
   }
 
@@ -316,7 +330,8 @@ class SecretaryWindowService {
       this.hidePanel()
     })
     this.petWin = win
-    this.loadRoute(win, '/secretary/pet')
+    // 带上设置快照：挂件首帧就渲染用户选中的形象/尺寸/不透明度，避免先闪默认形象再切换
+    this.loadRoute(win, '/secretary/pet', { settings: JSON.stringify(this.getSettings()) })
     logger.info('Pet window created')
     return win
   }
@@ -324,7 +339,7 @@ class SecretaryWindowService {
   private ensurePanelWindow(): BrowserWindow | null {
     if (this.panelWin && !this.panelWin.isDestroyed()) return this.panelWin
     const win = new BrowserWindow({
-      width: PANEL_WIDTH,
+      width: this.panelWidth,
       height: this.panelHeight,
       transparent: true,
       backgroundColor: '#00000000',
@@ -366,17 +381,18 @@ class SecretaryWindowService {
     const body = this.petRect(petBounds)
     const preferLeft = body.x + body.width / 2 > area.x + area.width / 2
 
-    let x = preferLeft ? body.x - PANEL_WIDTH - 14 : body.x + body.width + 14
-    if (x < area.x + 12 || x + PANEL_WIDTH > area.x + area.width - 12) {
-      x = preferLeft ? body.x + body.width + 14 : body.x - PANEL_WIDTH - 14
+    const width = this.panelWidth
+    let x = preferLeft ? body.x - width - 14 : body.x + body.width + 14
+    if (x < area.x + 12 || x + width > area.x + area.width - 12) {
+      x = preferLeft ? body.x + body.width + 14 : body.x - width - 14
     }
-    x = clamp(x, area.x + 12, Math.max(area.x + 12, area.x + area.width - PANEL_WIDTH - 12))
+    x = clamp(x, area.x + 12, Math.max(area.x + 12, area.x + area.width - width - 12))
     const y = clamp(
       body.y + body.height - this.panelHeight,
       area.y + 12,
       Math.max(area.y + 12, area.y + area.height - this.panelHeight - 12)
     )
-    panel.setBounds({ x: Math.round(x), y: Math.round(y), width: PANEL_WIDTH, height: this.panelHeight })
+    panel.setBounds({ x: Math.round(x), y: Math.round(y), width, height: this.panelHeight })
   }
 
   private applyPetSize(): void {
@@ -399,6 +415,11 @@ class SecretaryWindowService {
     if (this.cursorTimer) {
       clearInterval(this.cursorTimer)
       this.cursorTimer = null
+    }
+    if (this.panelSizeTimer) {
+      clearTimeout(this.panelSizeTimer)
+      this.panelSizeTimer = null
+      this.persistPanelSize()
     }
     if (this.panelWin && !this.panelWin.isDestroyed()) this.panelWin.destroy()
     if (this.petWin && !this.petWin.isDestroyed()) this.petWin.destroy()
@@ -492,6 +513,16 @@ class SecretaryWindowService {
           this.settings.character = DEFAULT_SECRETARY_SETTINGS.character
         }
       }
+      const sizeRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(PANEL_SIZE_KEY) as { value?: string } | undefined
+      if (sizeRow?.value) {
+        const parsed = JSON.parse(sizeRow.value)
+        if (Number.isFinite(parsed?.width) && parsed.width > 0) {
+          this.panelWidth = clamp(Math.round(parsed.width), MIN_PANEL_WIDTH, MAX_PANEL_WIDTH)
+        }
+        if (Number.isFinite(parsed?.height) && parsed.height > 0) {
+          this.panelHeight = clamp(Math.round(parsed.height), MIN_PANEL_HEIGHT, MAX_PANEL_HEIGHT)
+        }
+      }
       const posRow = db.prepare('SELECT value FROM settings WHERE key = ?').get(POSITION_KEY) as { value?: string } | undefined
       if (posRow?.value) {
         const parsed = JSON.parse(posRow.value)
@@ -504,6 +535,25 @@ class SecretaryWindowService {
       }
     } catch (err: any) {
       logger.warn('读取小秘书设置失败，使用默认值:', err?.message || err)
+    }
+  }
+
+  private schedulePersistPanelSize(): void {
+    if (this.panelSizeTimer) clearTimeout(this.panelSizeTimer)
+    this.panelSizeTimer = setTimeout(() => {
+      this.panelSizeTimer = null
+      this.persistPanelSize()
+    }, 400)
+    this.panelSizeTimer.unref?.()
+  }
+
+  private persistPanelSize(): void {
+    try {
+      DatabaseService.getInstance().getDb()
+        .prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
+        .run(PANEL_SIZE_KEY, JSON.stringify({ width: this.panelWidth, height: this.panelHeight }))
+    } catch (err: any) {
+      logger.warn('保存小秘书面板尺寸失败:', err?.message || err)
     }
   }
 
@@ -601,15 +651,35 @@ class SecretaryWindowService {
       this.persistPosition()
     })
 
+    ipcMain.on(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, (event, size: { width?: number; anchor?: 'left' | 'right' }) => {
+      const win = this.panelWin
+      if (!win || win.isDestroyed() || win.webContents !== event.sender) return
+      const bounds = win.getBounds()
+      const area = screen.getDisplayMatching(bounds).workArea
+      const width = clamp(Math.round(Number(size?.width) || this.panelWidth), MIN_PANEL_WIDTH, MAX_PANEL_WIDTH)
+      this.panelWidth = width
+      // anchor 是保持不动的那条边：拖左边缘时右边缘固定，拖右边缘时左边缘固定
+      const rawX = size?.anchor === 'right' ? bounds.x + bounds.width - width : bounds.x
+      const x = clamp(rawX, area.x + 12, Math.max(area.x + 12, area.x + area.width - width - 12))
+      win.setBounds({ x: Math.round(x), y: bounds.y, width, height: bounds.height })
+      this.schedulePersistPanelSize()
+    })
+
     ipcMain.on(IPC_CHANNELS.SECRETARY_SET_PANEL_HEIGHT, (_e, height: number) => {
       const next = clamp(Math.round(Number(height) || DEFAULT_PANEL_HEIGHT), MIN_PANEL_HEIGHT, MAX_PANEL_HEIGHT)
       if (Math.abs(next - this.panelHeight) < 2) return
       this.panelHeight = next
-      if (this.panelWin && !this.panelWin.isDestroyed()) {
-        const b = this.panelWin.getBounds()
-        this.panelWin.setBounds({ x: b.x, y: b.y, width: PANEL_WIDTH, height: next })
-        this.placePanel()
-      }
+      const win = this.panelWin
+      if (!win || win.isDestroyed()) return
+      // 高度只跟着内容走：底边保持不动向上长；x 保留用户拖拽后的位置，不能重新按挂件吸附
+      const b = win.getBounds()
+      const area = screen.getDisplayMatching(b).workArea
+      const y = clamp(
+        b.y + b.height - next,
+        area.y + 12,
+        Math.max(area.y + 12, area.y + area.height - next - 12),
+      )
+      win.setBounds({ x: b.x, y: Math.round(y), width: this.panelWidth, height: next })
     })
 
     ipcMain.on(IPC_CHANNELS.SECRETARY_SET_IGNORE_MOUSE, (event, ignore: boolean) => {
@@ -625,6 +695,8 @@ class SecretaryWindowService {
       if (!win || win.isDestroyed() || win !== this.petWin) return
       // 用原生菜单：小窗只有挂件大小，渲染端浮层会被裁掉
       Menu.buildFromTemplate([
+        { label: mainUiI18n.t('secretaryMenuMainWindow'), click: () => this.showMainWindow() },
+        { type: 'separator' },
         { label: mainUiI18n.t('secretaryMenuOpen'), click: () => this.showPanel() },
         { type: 'separator' },
         { label: mainUiI18n.t('secretaryMenuHide'), click: () => this.setSettings({ enabled: false }) },

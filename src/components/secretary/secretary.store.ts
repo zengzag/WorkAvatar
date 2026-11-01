@@ -29,6 +29,8 @@ export interface SecretaryTask {
 }
 
 const STORAGE_KEY = 'wa.secretary.tasks'
+/** 已完成任务改为「点完成才移除」后的一次性迁移标记 */
+const DISMISS_MIGRATION_KEY = 'wa.secretary.tasksDismissMigrated'
 
 function load(): SecretaryTask[] {
   try {
@@ -36,12 +38,19 @@ function load(): SecretaryTask[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    // 渲染进程重建后原流已断，执行中/等待确认的任务都标记为中断
-    return parsed.slice(0, 30).map((t: any) => (
-      t?.status === 'running' || t?.status === 'waiting'
-        ? { ...t, status: 'failed', error: 'interrupted', endedAt: Date.now(), step: '' }
-        : t
-    ))
+    // 旧版点开已完成任务即视为已处理（只是隐藏）。升级后这些历史任务不应重新堆回面板；
+    // 执行中/等待确认的任务不受影响（它们下面会被标记为中断）
+    const migrating = !localStorage.getItem(DISMISS_MIGRATION_KEY)
+    if (migrating) localStorage.setItem(DISMISS_MIGRATION_KEY, '1')
+    return parsed
+      .slice(0, 30)
+      .filter((t: any) => !(migrating && (t?.status === 'done' || t?.status === 'failed') && t?.viewed))
+      // 渲染进程重建后原流已断，执行中/等待确认的任务都标记为中断
+      .map((t: any) => (
+        t?.status === 'running' || t?.status === 'waiting'
+          ? { ...t, status: 'failed', error: 'interrupted', endedAt: Date.now(), step: '' }
+          : t
+      ))
   } catch {
     return []
   }
@@ -84,6 +93,11 @@ export function selectRunningTasks(tasks: SecretaryTask[]): SecretaryTask[] {
 
 export function selectUnreadTasks(tasks: SecretaryTask[]): SecretaryTask[] {
   return tasks.filter((t) => (t.status === 'done' || t.status === 'failed') && !t.viewed)
+}
+
+/** 面板「已完成」区：已结束的任务要等用户点「完成」才从面板消失（与角标的未读数无关） */
+export function selectFinishedTasks(tasks: SecretaryTask[]): SecretaryTask[] {
+  return tasks.filter((t) => t.status === 'done' || t.status === 'failed')
 }
 
 export interface SecretaryBusSummary {

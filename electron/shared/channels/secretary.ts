@@ -20,6 +20,8 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_DRAG_END: 'secretary:drag-end',
   /** 面板内容高度变化：主进程据此调整窗口高度 */
   SECRETARY_SET_PANEL_HEIGHT: 'secretary:set-panel-height',
+  /** 面板左右边缘拖拽调整宽度（高度仍由内容上报决定） */
+  SECRETARY_SET_PANEL_SIZE: 'secretary:set-panel-size',
   /** 透明区域点击穿透开关（挂件窗口用） */
   SECRETARY_SET_IGNORE_MOUSE: 'secretary:set-ignore-mouse',
   /** 退出小秘书（从面板菜单触发） */
@@ -32,7 +34,7 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_OPEN_SETTINGS: 'secretary:open-settings',
 } as const
 
-/** 可选的挂件形象，数组顺序即设置面板展示顺序；robot（波波）屏幕脸默认显示应用图标、可被员工头像图替换，blob 为最初的圆团子 */
+/** 可选的挂件形象，数组顺序即设置面板展示顺序；robot（波波，默认形象）屏幕脸默认显示应用图标、可被员工头像图替换，blob 为最初的圆团子 */
 export const SECRETARY_CHARACTER_IDS = ['robot', 'blob', 'momo', 'pip'] as const
 
 export type SecretaryCharacterId = (typeof SECRETARY_CHARACTER_IDS)[number]
@@ -73,5 +75,5 @@ export const DEFAULT_SECRETARY_SETTINGS: SecretarySettings = {
   opacity: 1,
   hotkey: 'Control+Alt+Space',
   employeeId: '',
-  character: 'blob',
+  character: 'robot',
 }

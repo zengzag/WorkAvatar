@@ -24,7 +24,7 @@ import type { Employee, LLMProvider, ThinkingLevel } from '../../types'
 import {
   useSecretaryStore,
   selectRunningTasks,
-  selectUnreadTasks,
+  selectFinishedTasks,
   type SecretaryTask,
 } from './secretary.store'
 import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState } from './secretary-runner'
@@ -32,6 +32,7 @@ import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KE
 import { useInteractionStore } from '../../stores/interaction.store'
 import UnifiedInteractionModal from '../common/UnifiedInteractionModal'
 import SecretaryComposer, { type ComposerFile, type ComposerHandle } from './SecretaryComposer'
+import SecretaryTaskDetail from './SecretaryTaskDetail'
 import './secretary.css'
 
 const EMPLOYEE_KEY = 'wa.secretary.employeeId'
@@ -43,6 +44,10 @@ const THINKING_KEY = 'wa.secretary.thinking'
 const DEFAULT_THINKING: ThinkingLevel = 'high'
 /** 面板最大高度：超出后卡片内部滚动（上报给主进程的高度也用这个上限） */
 const PANEL_MAX_HEIGHT = 620
+/** 左右边缘拖拽的宽度范围（与主进程 secretary-window.service 的 clamp 保持一致） */
+const PANEL_DEFAULT_WIDTH = 372
+const PANEL_MIN_WIDTH = 300
+const PANEL_MAX_WIDTH = 640
 
 /** 从路径里取文件名 */
 function baseName(p: string): string {
@@ -77,6 +82,10 @@ const SecretaryPanel: React.FC = () => {
     () => localStorage.getItem(MODEL_ID_KEY) || getCachedSceneDefaultModel('workbench')?.model_id || '',
   )
   const [thinking, setThinking] = useState<ThinkingLevel>(readStoredThinking)
+  /** 面板内查看的已结束任务（打开简化对话窗）；空 = 任务列表 */
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
+  /** 左右边缘拖拽调整宽度时的起点（高度始终由内容自适应） */
+  const resizeOriginRef = useRef<{ edge: 'left' | 'right'; x: number; width: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ComposerHandle>(null)
@@ -85,8 +94,57 @@ const SecretaryPanel: React.FC = () => {
 
   const tasks = useSecretaryStore((s) => s.tasks)
   const markViewed = useSecretaryStore((s) => s.markViewed)
+  const removeTask = useSecretaryStore((s) => s.removeTask)
   const running = useMemo(() => selectRunningTasks(tasks), [tasks])
-  const unread = useMemo(() => selectUnreadTasks(tasks), [tasks])
+  const finished = useMemo(() => selectFinishedTasks(tasks), [tasks])
+  const detailTask = useMemo(
+    () => (detailTaskId ? tasks.find((t) => t.id === detailTaskId) : undefined),
+    [tasks, detailTaskId],
+  )
+
+  // 任务被移除（完成按钮 / 列表裁剪）后退出详情，回到任务列表
+  useEffect(() => {
+    if (detailTaskId && !detailTask) setDetailTaskId(null)
+  }, [detailTaskId, detailTask])
+
+  // 主窗口删除任务（或清空某员工任务）后，小秘书列表同步移除对应任务
+  useEffect(() => {
+    const off = window.electronAPI.conversation.onChanged?.((data) => {
+      if (data.action !== 'delete' && data.action !== 'delete-all') return
+      const state = useSecretaryStore.getState()
+      for (const task of state.tasks) {
+        const hit = data.action === 'delete'
+          ? task.conversationId === data.id
+          : task.employee.id === data.id
+        if (!hit) continue
+        // 会话已被删除：在跑的任务一并停掉，避免后台继续消耗模型调用
+        if (task.status === 'running' || task.status === 'waiting') void abortSecretaryTask(task.id)
+        state.removeTask(task.id)
+      }
+    })
+    return () => { off?.() }
+  }, [])
+
+  // 面板（重新）创建时清理会话已被删除的历史任务（小秘书关闭期间主窗口删除的情况）
+  useEffect(() => {
+    const snapshot = useSecretaryStore.getState().tasks
+    if (snapshot.length === 0) return
+    let cancelled = false
+    void Promise.all(snapshot.map(async (task) => {
+      if (!task.conversationId) return null
+      try {
+        const conversation = await window.electronAPI.conversation.get(task.conversationId)
+        return conversation ? null : task.id
+      } catch {
+        // 查询失败时保留任务，避免网络/DB 异常导致误删
+        return null
+      }
+    })).then((ids) => {
+      if (cancelled) return
+      for (const id of ids) if (id) useSecretaryStore.getState().removeTask(id)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   const employee = useMemo(
     () => employees.find((e) => e.id === employeeId) || employees[0],
@@ -307,8 +365,40 @@ const SecretaryPanel: React.FC = () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
     }
-    // 菜单展开/收起时卡片被 max-height 夹住，ResizeObserver 收不到盒子变化，必须重跑上报
-  }, [modalOpen, menu])
+    // 菜单展开/收起、列表与对话详情互切时卡片被 max-height 夹住，ResizeObserver 收不到盒子变化，必须重跑上报
+  }, [modalOpen, menu, detailTaskId])
+
+  /** 左右边缘拖拽柄：只调宽度，高度仍由内容决定 */
+  const startResize = useCallback((edge: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    resizeOriginRef.current = { edge, x: e.screenX, width: window.innerWidth }
+  }, [])
+
+  const resizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const origin = resizeOriginRef.current
+    if (!origin) return
+    const dx = e.screenX - origin.x
+    // 拖左边缘时右边缘不动（anchor: right），拖右边缘时左边缘不动
+    const raw = origin.edge === 'left' ? origin.width - dx : origin.width + dx
+    const width = Math.min(Math.max(Math.round(raw), PANEL_MIN_WIDTH), PANEL_MAX_WIDTH)
+    window.electronAPI.secretary.setPanelSize({
+      width,
+      anchor: origin.edge === 'left' ? 'right' : 'left',
+    })
+  }, [])
+
+  const endResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeOriginRef.current) return
+    resizeOriginRef.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+  }, [])
+
+  /** 双击边缘拖拽柄：恢复默认宽度 */
+  const resetPanelSize = useCallback(() => {
+    window.electronAPI.secretary.setPanelSize({ width: PANEL_DEFAULT_WIDTH, anchor: 'left' })
+  }, [])
 
   // 请求到达后把对应任务标记为“等待确认”（挂件据此进入等待态），结束后恢复执行中
   const waitingTaskRef = useRef<string | null>(null)
@@ -341,16 +431,20 @@ const SecretaryPanel: React.FC = () => {
       if (e.key !== 'Escape') return
       // 弹窗打开时 Esc 不能收起面板，否则确认框会被一起藏起来
       if (interactionRequest) return
-      // Esc 先收浮层，再收面板
+      // Esc 依次收：浮层 → 对话详情 → 面板
       if (menu) {
         setMenu(null)
+        return
+      }
+      if (detailTaskId) {
+        setDetailTaskId(null)
         return
       }
       window.electronAPI.secretary.hidePanel()
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [menu, interactionRequest])
+  }, [menu, interactionRequest, detailTaskId])
 
   const handleSend = useCallback(async (text: string, files: ComposerFile[]) => {
     if (!employee || sending) return
@@ -381,9 +475,14 @@ const SecretaryPanel: React.FC = () => {
     }
   }, [employee, sending, message, t, modelProviderId, modelId, thinking])
 
+  /** 行点击：已结束任务在面板内看简化对话；执行中的任务仍跳主窗口看实时过程 */
   const openTask = useCallback((task: SecretaryTask) => {
     setMenu(null)
     if (!task.viewed) markViewed(task.id)
+    if (task.status === 'done' || task.status === 'failed') {
+      setDetailTaskId(task.id)
+      return
+    }
     if (task.conversationId) {
       window.electronAPI.secretary.openTask({
         employeeId: task.employee.id,
@@ -392,6 +491,21 @@ const SecretaryPanel: React.FC = () => {
       window.electronAPI.secretary.hidePanel()
     }
   }, [markViewed])
+
+  /** 「完成」按钮：该任务从面板消失（主窗口的任务列表不受影响） */
+  const dismissTask = useCallback((taskId: string) => {
+    removeTask(taskId)
+    setDetailTaskId((prev) => (prev === taskId ? null : prev))
+  }, [removeTask])
+
+  const openInMain = useCallback((task: SecretaryTask) => {
+    if (!task.conversationId) return
+    window.electronAPI.secretary.openTask({
+      employeeId: task.employee.id,
+      conversationId: task.conversationId,
+    })
+    window.electronAPI.secretary.hidePanel()
+  }, [])
 
   /** 文件 → 行内令牌（与主窗口新任务编辑器一致，不再在底部堆附件条） */
   const insertPaths = useCallback((paths: string[]) => {
@@ -451,7 +565,7 @@ const SecretaryPanel: React.FC = () => {
 
   // 任务区全部展示（面板内部可滚动），避免超出前几条的任务无法停止或查看
   const runningShown = running
-  const unreadShown = unread
+  const finishedShown = finished
 
   const taskRow = (task: SecretaryTask) => (
     <div
@@ -496,6 +610,20 @@ const SecretaryPanel: React.FC = () => {
           <StopOutlined />
         </button>
       )}
+      {(task.status === 'done' || task.status === 'failed') && (
+        <button
+          type="button"
+          className="secretary-task-complete"
+          title={t('secretary.complete')}
+          onClick={(e) => {
+            e.stopPropagation()
+            dismissTask(task.id)
+          }}
+          style={{ color: token.colorTextTertiary }}
+        >
+          {t('secretary.complete')}
+        </button>
+      )}
     </div>
   )
 
@@ -504,19 +632,36 @@ const SecretaryPanel: React.FC = () => {
       <div
         className={`secretary-panel${modalOpen ? ' is-modal-open' : ''}`}
         ref={rootRef}
-        style={{ background: token.colorBgElevated, borderColor: token.colorBorder, maxHeight: PANEL_MAX_HEIGHT }}
+        style={{
+          background: token.colorBgElevated,
+          borderColor: token.colorBorder,
+          maxHeight: PANEL_MAX_HEIGHT,
+        }}
       onDragOver={(e) => { e.preventDefault(); setDropping(true) }}
       onDragLeave={() => setDropping(false)}
       onDrop={(e) => {
         e.preventDefault()
         setDropping(false)
-        addFiles(e.dataTransfer.files)
+        // 对话详情有自己的输入框与附件按钮，避免文件被塞进被隐藏的列表输入框
+        if (!detailTask) addFiles(e.dataTransfer.files)
       }}
     >
       <div
         className="secretary-panel-inner"
         style={{ outline: dropping ? `1px dashed ${token.colorPrimary}` : 'none', outlineOffset: -6, borderRadius: 16 }}
       >
+        {detailTask ? (
+          /* 已结束任务：面板内简化对话窗（看回答 + 二次回复 + 跳主窗口） */
+          <SecretaryTaskDetail
+            task={detailTask}
+            providerId={modelProviderId}
+            modelId={modelId}
+            thinking={thinking}
+            onBack={() => setDetailTaskId(null)}
+            onOpenInMain={() => openInMain(detailTask)}
+          />
+        ) : (
+          <>
         {/* 头部：员工 + 切换 + 设置 + 关闭 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           {employee && (
@@ -624,7 +769,7 @@ const SecretaryPanel: React.FC = () => {
         )}
 
         {/* 任务区 */}
-        {(runningShown.length > 0 || unreadShown.length > 0) && (
+        {(runningShown.length > 0 || finishedShown.length > 0) && (
           <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
             {runningShown.length > 0 && (
               <>
@@ -634,12 +779,12 @@ const SecretaryPanel: React.FC = () => {
                 {runningShown.map(taskRow)}
               </>
             )}
-            {unreadShown.length > 0 && (
+            {finishedShown.length > 0 && (
               <>
                 <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '6px 8px 3px' }}>
-                  {t('secretary.unread')} {unread.length > 1 ? `· ${unread.length}` : ''}
+                  {t('secretary.finished')} {finished.length > 1 ? `· ${finished.length}` : ''}
                 </div>
-                {unreadShown.map(taskRow)}
+                {finishedShown.map(taskRow)}
               </>
             )}
           </div>
@@ -735,7 +880,23 @@ const SecretaryPanel: React.FC = () => {
             }}
           />
         </div>
+          </>
+        )}
       </div>
+      {/* 左右边缘拖拽柄：只调整宽度（高度由内容自适应），双击恢复默认宽度 */}
+      {(['left', 'right'] as const).map((edge) => (
+        <div
+          key={edge}
+          className={`secretary-resize-edge is-${edge}`}
+          title={t('secretary.resizeHint')}
+          onPointerDown={startResize(edge)}
+          onPointerMove={resizeMove}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          onDoubleClick={resetPanelSize}
+          style={{ color: token.colorTextTertiary }}
+        />
+      ))}
       </div>
       {/* 权限 / ask_user：交互会话绑定本窗口，弹窗必须挂在这里；小窗宽度有限，用紧凑版弹窗 */}
       <UnifiedInteractionModal compact />
