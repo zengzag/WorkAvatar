@@ -193,6 +193,12 @@ const SecretaryPanel: React.FC = () => {
     return () => { off() }
   }, [loadEmployees, loadProviders])
 
+  // 员工信息变更（如更换头像）：面板常驻时实时刷新，避免需重启才生效
+  useEffect(() => {
+    const off = window.electronAPI.employee.onChanged(() => { loadEmployees() })
+    return () => { off?.() }
+  }, [loadEmployees])
+
   useEffect(() => {
     if (employeeId) localStorage.setItem(EMPLOYEE_KEY, employeeId)
   }, [employeeId])
@@ -739,10 +745,10 @@ const SecretaryPanel: React.FC = () => {
                   size={20}
                   shape="square"
                 />
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ flexShrink: 0, maxWidth: '50%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {emp.name}
                 </span>
-                <span style={{ fontSize: 11, color: token.colorTextTertiary, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ flex: 1, minWidth: 0, marginLeft: 8, fontSize: 11, color: token.colorTextTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {emp.description}
                 </span>
                 {emp.id === employee?.id && <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 12 }} />}

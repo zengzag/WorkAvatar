@@ -595,6 +595,22 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     return () => { off?.() }
   }, [])
 
+  // 员工信息变更（如更换头像）：实时刷新当前员工元数据，避免需重启才生效
+  useEffect(() => {
+    if (!id) return
+    const employeeId = id
+    const off = window.electronAPI.employee.onChanged(async () => {
+      try {
+        const latest = await window.electronAPI.employee.get(employeeId)
+        if (!latest || employeeId !== _visibleEmployeeId) return
+        // 必须写入新对象：MessageList 按引用比较 memo，原地修改不会触发重渲染
+        _persistentEmployeeData.set(employeeId, latest)
+        setEmployee(latest)
+      } catch { /* 刷新失败时保留旧数据 */ }
+    })
+    return () => { off?.() }
+  }, [id])
+
   const initEmployee = async () => {
     const version = initVersionRef.current
     try {
