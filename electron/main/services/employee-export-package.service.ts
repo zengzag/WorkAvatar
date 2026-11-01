@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { generateId } from './common-utils'
 import fs from 'fs'
 import path from 'path'
+import YAML from 'yaml'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
 import PathService from './path.service'
@@ -365,18 +366,27 @@ export class EmployeeExportPackageService {
   } {
     const result: { description?: string; version?: string; author?: string; tags?: string[] } = {}
     const match = content.match(/^---\s*\n([\s\S]*?)\n---/)
-    if (match) {
-      const frontMatter = match[1]
-      const descMatch = frontMatter.match(/^description:\s*(.+)$/m)
-      if (descMatch) result.description = descMatch[1].trim()
-      const versionMatch = frontMatter.match(/^version:\s*(.+)$/m)
-      if (versionMatch) result.version = versionMatch[1].trim()
-      const authorMatch = frontMatter.match(/^author:\s*(.+)$/m)
-      if (authorMatch) result.author = authorMatch[1].trim()
-      const tagsMatch = frontMatter.match(/^tags:\s*(.+)$/m)
-      if (tagsMatch) {
-        result.tags = tagsMatch[1].split(',').map(t => t.trim()).filter(Boolean)
-      }
+    if (!match) return result
+
+    let frontMatter: Record<string, any> | null = null
+    try {
+      frontMatter = YAML.parse(match[1]) as Record<string, any> | null
+    } catch {
+      return result
+    }
+    if (!frontMatter || typeof frontMatter !== 'object') return result
+
+    if (frontMatter.description) result.description = String(frontMatter.description).trim()
+    // 与 SkillRegistryService 保持一致：顶层 version 优先，其次 metadata.version
+    const version = frontMatter.version ?? frontMatter.metadata?.version
+    if (version !== undefined && version !== null && String(version).trim()) {
+      result.version = String(version).trim()
+    }
+    if (frontMatter.author) result.author = String(frontMatter.author).trim()
+    if (Array.isArray(frontMatter.tags)) {
+      result.tags = frontMatter.tags.map((t: any) => String(t).trim()).filter(Boolean)
+    } else if (typeof frontMatter.tags === 'string') {
+      result.tags = frontMatter.tags.split(',').map(t => t.trim()).filter(Boolean)
     }
     return result
   }

@@ -347,6 +347,17 @@ class SkillRegistryService {
     }
   }
 
+  // 版本号解析：顶层 version 优先；第三方 skill（openclaw/hermes 生态）常把 version 放在 metadata 下
+  private resolveVersion(frontMatter: Record<string, any>): string {
+    const candidates = [frontMatter.version, frontMatter.metadata?.version]
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null) continue
+      const version = String(candidate).trim()
+      if (version) return version
+    }
+    return '1.0.0'
+  }
+
   // 把字段值统一转为字符串数组（兼容 "a, b, c"、"a b c"、YAML 列表三种写法）
   private toStringArray(value: any): string[] {
     if (!value) return []
@@ -385,7 +396,7 @@ class SkillRegistryService {
       const tools = this.toStringArray(frontMatter.tools)
       manifest.name = String(frontMatter.name ?? '').trim()
       manifest.description = String(frontMatter.description ?? '').trim()
-      manifest.version = frontMatter.version ? String(frontMatter.version).trim() : '1.0.0'
+      manifest.version = this.resolveVersion(frontMatter)
       manifest.author = frontMatter.author ? String(frontMatter.author).trim() : ''
       manifest.license = frontMatter.license ? String(frontMatter.license).trim() : ''
       manifest.compatibility = frontMatter.compatibility ? String(frontMatter.compatibility).trim() : ''
