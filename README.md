@@ -60,6 +60,7 @@ Avatars can also be an uploaded image now; the same picture identifies the emplo
 Add folders to the knowledge base and employees can search the project files, contracts, reports and meeting notes inside them.
 
 - **Hybrid search** — full-text keyword, semantic vector and filename matching run in parallel, then merge into one ranking. Switch between Hybrid / Keyword / Semantic / Filename, and filter by file type, time range, directory or collection.
+- **Everything integration (optional)** — on Windows, Filename search can use Everything. Enable Everything's HTTP server for real-time results without maintaining directory metadata; it falls back to built-in search automatically when unavailable.
 - **Progressive enhancement** — files that are opened or matched often gain paragraph summaries, vectors and knowledge cards in the background. Cold files stay as lightweight index entries, so cost grows with actual use.
 - **Collections** — group related files and get an auto-generated summary and table of contents, ready to browse or to hand to an employee as context.
 - **Works offline** — parsing, tokenizing, indexing and search are local. Keyword search keeps working when the model service is unreachable. Supported formats: PDF, Word, Excel, PowerPoint, Markdown, plain text, HTML, and images through local OCR.

@@ -68,6 +68,8 @@ export const KMS_CHANNELS = {
   KMS_UPDATE_SEARCH_DIR: 'kms:update-search-dir',
   KMS_DELETE_SEARCH_DIR: 'kms:delete-search-dir',
   KMS_REFRESH_SEARCH_DIR: 'kms:refresh-search-dir',
+  // KMS Everything 文件搜索连接检测
+  KMS_TEST_EVERYTHING: 'kms:test-everything',
   // KMS MCP 服务（已扩展为通用内置工具 MCP）
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -215,6 +217,11 @@ export interface KMSModelConfig {
   enable_thinking?: boolean
 }
 
+export interface KMSFileSearchSettings {
+  engine: 'builtin' | 'everything'
+  everything: { host: string; port: number }
+}
+
 export interface KMSSetSettingsParams {
   embeddingModel?: KMSModelConfig | null
   summaryModel?: KMSModelConfig | null
@@ -228,6 +235,18 @@ export interface KMSSetSettingsParams {
     autoRefreshStaleCards?: boolean
   }
   autoIndex?: KMSAutoIndexConfig
+  fileSearch?: KMSFileSearchSettings
+}
+
+export interface KMSTestEverythingParams {
+  host?: string
+  port?: number
+}
+
+export interface KMSTestEverythingResult {
+  available: boolean
+  error?: string
+  totalResults?: number
 }
 
 export interface KMSRecordSearchHistoryParams {

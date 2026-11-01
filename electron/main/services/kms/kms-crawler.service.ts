@@ -8,13 +8,13 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-Crawler')
 
-const SUPPORTED_EXTENSIONS = new Set([
+export const SUPPORTED_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
   'txt', 'md', 'html', 'htm',
   'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'
 ])
 
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg',
   '__pycache__', '.DS_Store', 'Thumbs.db',
   '.vscode', '.idea', '.trae',
