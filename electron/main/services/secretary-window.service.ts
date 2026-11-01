@@ -247,6 +247,23 @@ class SecretaryWindowService {
     if (this.isPanelOpen()) this.placePanel()
   }
 
+  /**
+   * 记录拖动起点：光标屏幕坐标 + 窗口坐标。
+   * 每次按下都必须重置，残留的起点会让下一次拖动按旧基准算位移，窗口直接跳到别处。
+   */
+  private beginPetDrag(): void {
+    const win = this.petWin
+    if (!win || win.isDestroyed()) return
+    const cursor = screen.getCursorScreenPoint()
+    const bounds = win.getBounds()
+    this.dragOrigin = { cursorX: cursor.x, cursorY: cursor.y, winX: bounds.x, winY: bounds.y }
+    // 拖动期间保持可交互：此时切回穿透会打断渲染端的 pointer capture，挂件卡在半路
+    if (this.ignoreMouse) {
+      this.ignoreMouse = false
+      win.setIgnoreMouseEvents(false)
+    }
+  }
+
   /** 挂件停在屏幕左半侧时，窗口留白与气泡一起翻到右侧 */
   private updateSide(area: Electron.Rectangle, petCenterX: number): void {
     const next: SecretarySide = petCenterX < area.x + area.width / 2 ? 'left' : 'right'
@@ -447,6 +464,8 @@ class SecretaryWindowService {
     this.cursorTimer = setInterval(() => {
       const win = this.petWin
       if (!win || win.isDestroyed() || !win.isVisible()) return
+      // 拖动中不切穿透：ignoreMouseEvents 会让渲染端丢掉 pointer capture
+      if (this.dragOrigin) return
       const body = this.petRect(win.getBounds())
       const p = screen.getCursorScreenPoint()
       const inside = p.x >= body.x && p.x <= body.x + body.width
@@ -602,26 +621,34 @@ class SecretaryWindowService {
       return this.state()
     })
 
-    ipcMain.on(IPC_CHANNELS.SECRETARY_MOVE_PET, (_e, cursor: { x: number; y: number }) => {
-      if (!this.petWin || this.petWin.isDestroyed() || !cursor) return
-      // 首次收到拖动消息时记录光标与窗口的起点：窗口移动不会改变光标的屏幕坐标，
-      // 因此必须用「起点 + 光标位移」计算，而不是累加每帧增量（会互相抵消导致拖不动）
-      if (!this.dragOrigin) {
-        const b = this.petWin.getBounds()
-        this.dragOrigin = { cursorX: cursor.x, cursorY: cursor.y, winX: b.x, winY: b.y }
-      }
+    ipcMain.on(IPC_CHANNELS.SECRETARY_DRAG_START, () => this.beginPetDrag())
+
+    ipcMain.on(IPC_CHANNELS.SECRETARY_MOVE_PET, () => {
+      const win = this.petWin
+      if (!win || win.isDestroyed()) return
+      if (!this.dragOrigin) this.beginPetDrag()
       const origin = this.dragOrigin
+      if (!origin) return
+      // 光标坐标由主进程读取：渲染端的 screenX/Y 是「客户端坐标 + 窗口位置」换算出来的，
+      // 窗口被程序移动时这个换算会互相污染，release 下表现为位置抖动/乱跳
+      const cursor = screen.getCursorScreenPoint()
       const x = Math.round(origin.winX + (cursor.x - origin.cursorX))
       const y = Math.round(origin.winY + (cursor.y - origin.cursorY))
-      this.petWin.setPosition(x, y)
+      const bounds = win.getBounds()
+      if (x === bounds.x && y === bounds.y) return
+      win.setPosition(x, y)
       this.position = { x, y }
       if (this.isPanelOpen()) this.placePanel()
     })
 
     ipcMain.on(IPC_CHANNELS.SECRETARY_DRAG_END, () => {
+      const origin = this.dragOrigin
       this.dragOrigin = null
-      if (!this.petWin || this.petWin.isDestroyed()) return
+      // 没有进行中的拖动（如窗口失焦时补发的结束）直接忽略
+      if (!origin || !this.petWin || this.petWin.isDestroyed()) return
       const bounds = this.petWin.getBounds()
+      // 只按下没移动：不吸附、不落盘，避免点一下挂件就贴边
+      if (bounds.x === origin.winX && bounds.y === origin.winY) return
       const area = screen.getDisplayMatching(bounds).workArea
       const pet = this.petRect(bounds)
 
@@ -686,6 +713,8 @@ class SecretaryWindowService {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win || win.isDestroyed()) return
       if (win !== this.petWin) return
+      // 拖动中到达的「开启穿透」是鼠标移到挂件外的旧事件，落地会中断拖动
+      if (this.dragOrigin && ignore) return
       this.ignoreMouse = !!ignore
       win.setIgnoreMouseEvents(this.ignoreMouse, { forward: true })
     })

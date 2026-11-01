@@ -14,7 +14,9 @@ export const SECRETARY_CHANNELS = {
   /** 读取运行态（设置 + 面板是否打开） */
   SECRETARY_GET_STATE: 'secretary:get-state',
   SECRETARY_SET_SETTINGS: 'secretary:set-settings',
-  /** 挂件拖动：按增量移动窗口（send） */
+  /** 挂件拖动开始：主进程记录光标与窗口起点（send） */
+  SECRETARY_DRAG_START: 'secretary:drag-start',
+  /** 挂件拖动中：主进程按系统光标坐标移动窗口（send） */
   SECRETARY_MOVE_PET: 'secretary:move-pet',
   /** 拖动结束：吸附到屏幕边缘并落盘 */
   SECRETARY_DRAG_END: 'secretary:drag-end',

@@ -116,9 +116,11 @@ const PetWindow: React.FC = () => {
     const offSide = window.electronAPI.secretary.onSideChanged(setSide)
     // 拖动中窗口失焦（如 Alt+Tab）时结束拖动，避免窗口黏在光标上
     const resetDrag = () => {
+      if (!dragRef.current) return
       dragRef.current = null
       setPressed(false)
       updateLook(0, 0)
+      window.electronAPI.secretary.dragEnd()
     }
     window.addEventListener('blur', resetDrag)
     return () => {
@@ -186,9 +188,13 @@ const PetWindow: React.FC = () => {
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
-    e.currentTarget.setPointerCapture(e.pointerId)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch { /* 指针已失效时忽略，不影响后续点击判定 */ }
     dragRef.current = { startX: e.screenX, startY: e.screenY, moved: false }
     setPressed(true)
+    // 让主进程重置拖动起点：残留的起点会让这次拖动按旧基准算位移，窗口直接跳走
+    window.electronAPI.secretary.dragStart()
   }
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -196,7 +202,7 @@ const PetWindow: React.FC = () => {
     if (!drag) return
     if (!drag.moved && Math.abs(e.screenX - drag.startX) + Math.abs(e.screenY - drag.startY) < 3) return
     drag.moved = true
-    window.electronAPI.secretary.movePetTo(e.screenX, e.screenY)
+    window.electronAPI.secretary.movePetTo()
   }
 
   const handlePointerUp = () => {
@@ -204,8 +210,9 @@ const PetWindow: React.FC = () => {
     dragRef.current = null
     setPressed(false)
     if (!drag) return
-    if (drag.moved) window.electronAPI.secretary.dragEnd()
-    else {
+    // 无论是否真的移动都结束主进程的拖动：否则起点残留会一直跳过穿透判定
+    window.electronAPI.secretary.dragEnd()
+    if (!drag.moved) {
       triggerPlay()
       window.electronAPI.secretary.togglePanel()
     }

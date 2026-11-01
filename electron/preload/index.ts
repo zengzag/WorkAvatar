@@ -344,8 +344,10 @@ const electronAPI = {
     togglePanel: () => ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_TOGGLE_PANEL),
     setSettings: (patch: Partial<{ enabled: boolean; size: number; opacity: number; hotkey: string; employeeId: string; character: SecretaryCharacterId }>) =>
       ipcRenderer.invoke(IPC_CHANNELS.SECRETARY_SET_SETTINGS, patch),
-    /** 挂件拖动：发送光标屏幕坐标（主进程按起点位移移动窗口） */
-    movePetTo: (x: number, y: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET, { x, y }),
+    /** 挂件拖动开始：主进程记录光标与窗口起点，后续按系统光标坐标移动 */
+    dragStart: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_START),
+    /** 挂件拖动中：主进程自己读取光标屏幕坐标，不依赖渲染端的 screenX/Y */
+    movePetTo: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET),
     /** 拖动结束：主进程吸附到边缘并持久化位置 */
     dragEnd: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_END),
     /** 面板内容高度变化，主进程同步窗口高度 */
