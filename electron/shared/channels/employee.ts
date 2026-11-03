@@ -117,6 +117,8 @@ export interface ConversationListWithEmployeeParams {
   employee_ids?: string[]
   limit?: number
   offset?: number
+  /** 标题/员工名关键字（去掉空格后 LIKE 匹配），仅查元数据，不含正文 */
+  keyword?: string
 }
 
 export interface ConversationCreateParams {

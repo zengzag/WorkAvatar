@@ -65,6 +65,10 @@ interface TaskSidebarProps {
   activeTaskId: string | null
   searchQuery: string
   onSearchChange: (query: string) => void
+  /** 回车提交：触发全文内容检索 */
+  onSearchSubmit?: (query: string) => void
+  /** 是否已提交过全文检索（用于提示"当前仅匹配标题"） */
+  contentSearched?: boolean
   viewMode: TaskViewMode
   onViewModeChange: (mode: TaskViewMode) => void
   onSelect: (taskId: string) => void
@@ -96,30 +100,39 @@ export const formatTaskTime = (timestamp: number | null, t: (key: string, option
   return time.format('YYYY/M/D')
 }
 
-/** 搜索提交防抖时长：停止输入后再触发检索与列表过滤 */
+/** 搜索提交防抖时长：停止输入后再触发标题检索与列表过滤 */
 const SEARCH_DEBOUNCE_MS = 250
 
+const noop = () => {}
+
 /**
- * 搜索输入框：本地维护输入值并防抖提交。
- * 输入过程只重渲染这个小组件，不触发整页（含对话区）重渲染与后端检索；
+ * 搜索输入框：本地维护输入值并防抖提交标题检索。
+ * 输入过程只重渲染这个小组件，不触发整页（含对话区）重渲染；
  * 提交时用 startTransition 标记为低优先级，避免长列表/流式输出阻塞按键。
+ * 全文内容检索成本高（主进程同步 FTS + LIKE 兜底），只在回车或点击搜索图标时触发。
  */
 const DebouncedSearchInput = memo(({
   value,
   onChange,
+  onSubmit,
   placeholder,
+  submitHint,
   token,
 }: {
   value: string
   onChange: (query: string) => void
+  onSubmit: (query: string) => void
   placeholder: string
+  submitHint: string
   token: any
 }) => {
   const [local, setLocal] = useState(value)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onChangeRef = useRef(onChange)
+  const onSubmitRef = useRef(onSubmit)
 
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
+  useEffect(() => { onSubmitRef.current = onSubmit }, [onSubmit])
   // 外部重置（如清空筛选）时同步本地值
   useEffect(() => { setLocal(value) }, [value])
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
@@ -134,11 +147,27 @@ const DebouncedSearchInput = memo(({
     }
   }, [])
 
+  const submit = useCallback((next: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    startTransition(() => {
+      onChangeRef.current(next)
+      onSubmitRef.current(next)
+    })
+  }, [])
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value
     setLocal(next)
     commit(next)
   }, [commit])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    // 输入法组词中的回车只用于选词，不触发检索
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      submit(local)
+    }
+  }, [local, submit])
 
   const handleClear = useCallback(() => {
     setLocal('')
@@ -147,11 +176,17 @@ const DebouncedSearchInput = memo(({
 
   return (
     <>
-      <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
+      <Tooltip title={submitHint}>
+        <SearchOutlined
+          onClick={() => submit(local)}
+          style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0, cursor: 'pointer' }}
+        />
+      </Tooltip>
       <input
         placeholder={placeholder}
         value={local}
         onChange={handleChange}
+        onKeyDown={handleKeyDown}
         style={{
           flex: 1,
           height: '100%',
@@ -464,6 +499,8 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   activeTaskId,
   searchQuery,
   onSearchChange,
+  onSearchSubmit,
+  contentSearched,
   viewMode,
   onViewModeChange,
   onSelect,
@@ -779,7 +816,9 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               <DebouncedSearchInput
                 value={searchQuery}
                 onChange={onSearchChange}
+                onSubmit={onSearchSubmit ?? noop}
                 placeholder={t('tasks.searchPlaceholder')}
+                submitHint={t('tasks.searchContentHint')}
                 token={token}
               />
               {/* 视图与多选合并为一个下拉按钮，避免搜索框内堆叠过多图标 */}
@@ -914,6 +953,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
             </Tooltip>
           )}
         </div>
+        {/* 仅标题匹配阶段提示：告知回车可搜全文，避免用户误以为搜不到 */}
+        {searchQuery.trim() && !contentSearched && (
+          <div style={{ fontSize: 11, color: token.colorTextQuaternary, padding: '0 2px', userSelect: 'none' }}>
+            {t('tasks.searchHintTitleOnly')}
+          </div>
+        )}
       </div>
 
       <div

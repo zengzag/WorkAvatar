@@ -93,6 +93,8 @@ export default {
     newTaskTitle: 'Start a New Task',
     newTaskHint: 'Select a digital employee and enter your request to start',
     searchPlaceholder: 'Search tasks...',
+    searchContentHint: 'Press Enter to search message content',
+    searchHintTitleOnly: 'Matching titles only. Press Enter to search full content',
     view: 'View',
     viewList: 'List',
     viewByEmployee: 'Group by employee',

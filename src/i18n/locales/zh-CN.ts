@@ -93,6 +93,8 @@ export default {
     newTaskTitle: '开始新任务',
     newTaskHint: '选择数字员工，输入您的需求开始对话',
     searchPlaceholder: '搜索任务...',
+    searchContentHint: '回车搜索全文内容',
+    searchHintTitleOnly: '当前仅匹配任务标题，回车可搜索对话全文',
     view: '视图',
     viewList: '列表',
     viewByEmployee: '员工分组',

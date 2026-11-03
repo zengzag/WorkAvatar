@@ -94,7 +94,10 @@ const Tasks: React.FC = () => {
   useEffect(() => { currentEmployeeIdRef.current = currentEmployeeId }, [currentEmployeeId])
 
   // 搜索
+  // 标题检索词：输入即生效（防抖），服务端只按标题/员工名分页匹配，成本低
   const [searchQuery, setSearchQuery] = useState('')
+  // 全文检索词：仅回车提交后生效，触发 FTS 检索 + 全量任务加载
+  const [contentQuery, setContentQuery] = useState('')
   // 任务列表视图：列表（时间分组）/ 员工分组
   const [viewMode, setViewMode] = useState<TaskViewMode>(() => {
     try {
@@ -107,9 +110,9 @@ const Tasks: React.FC = () => {
   // 全文内容搜索匹配的任务 ID 集合（null = 未搜索，Set = 搜索结果）
   const [contentMatchIds, setContentMatchIds] = useState<Set<string> | null>(null)
 
-  // 是否使用全量模式：有搜索或分组视图时使用全量加载，否则分页模式下初始加载20条，滚动加载更多
+  // 是否使用全量模式：全文检索或分组视图时使用全量加载，否则分页加载
   // 分组视图需要拿到全部任务，才能让"每组只看最近5条"不受加载进度限制
-  const useFullLoad = !!searchQuery.trim() || !!contentMatchIds || viewMode !== 'list'
+  const useFullLoad = !!contentQuery || viewMode !== 'list'
 
   const handleViewModeChange = useCallback((mode: TaskViewMode) => {
     setViewMode(mode)
@@ -127,9 +130,11 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  // 加载任务列表：支持全量模式和分页模式
-  const loadGlobalTasks = useCallback(async (opts?: { reset?: boolean; forceFull?: boolean }) => {
+  // 加载任务列表：支持全量模式和分页模式（分页模式可带标题关键字）
+  const loadGlobalTasks = useCallback(async (opts?: { reset?: boolean; forceFull?: boolean; keyword?: string }) => {
     const forceFull = !!opts?.forceFull
+    // 非全量模式下默认沿用当前标题检索词，避免事件触发的刷新丢掉筛选条件
+    const keyword = useFullLoad ? '' : (opts?.keyword ?? searchQuery.trim())
     try {
       const full = forceFull || useFullLoad
       if (full) {
@@ -143,7 +148,7 @@ const Tasks: React.FC = () => {
         // 分页模式：保持当前已加载条数，避免刷新（如选中任务）后列表被截断回 PAGE_SIZE
         // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"；reset 时按首页大小重新加载
         const limit = opts?.reset ? PAGE_SIZE : Math.max(PAGE_SIZE, loadedCountRef.current)
-        const result = await window.electronAPI.conversation.listAll({ limit, offset: 0 })
+        const result = await window.electronAPI.conversation.listAll({ limit, offset: 0, keyword: keyword || undefined })
         const arr = Array.isArray(result) ? result : []
         setGlobalTasks(arr)
         setLoadedCount(arr.length)
@@ -154,14 +159,14 @@ const Tasks: React.FC = () => {
       setLoadedCount(0)
       setHasMore(false)
     }
-  }, [PAGE_SIZE, useFullLoad])
+  }, [PAGE_SIZE, useFullLoad, searchQuery])
 
   // 加载更多（仅在分页模式下使用）
   const loadMoreTasks = useCallback(async () => {
     if (loadingMore || useFullLoad) return
     setLoadingMore(true)
     try {
-      const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: loadedCount })
+      const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: loadedCount, keyword: searchQuery.trim() || undefined })
       const arr = Array.isArray(result) ? result : []
       if (arr.length > 0) {
         setGlobalTasks(prev => {
@@ -177,21 +182,27 @@ const Tasks: React.FC = () => {
     } finally {
       setLoadingMore(false)
     }
-  }, [PAGE_SIZE, loadedCount, loadingMore, useFullLoad])
+  }, [PAGE_SIZE, loadedCount, loadingMore, useFullLoad, searchQuery])
 
-  // 全量模式（搜索/员工分组）与分页模式切换时重新加载列表：
-  // 进入全量模式拉取全部；退回分页模式时按首页大小重载，相当于重新打开任务列表，避免一次渲染全部任务卡顿
+  // 进入/退出全量模式、标题检索词变化时重新加载列表：
+  // 进入全量模式拉取全部；标题检索走分页 + 服务端关键字；退出全量时按首页大小重载
   const prevFullLoadRef = useRef(useFullLoad)
+  const searchEffectMountedRef = useRef(false)
   useEffect(() => {
     const wasFullLoad = prevFullLoadRef.current
     prevFullLoadRef.current = useFullLoad
-    if (useFullLoad) {
-      loadGlobalTasks({ forceFull: true, reset: true })
-    } else if (wasFullLoad) {
-      loadGlobalTasks({ reset: true })
+    if (!searchEffectMountedRef.current) {
+      searchEffectMountedRef.current = true
+      return
     }
+    if (useFullLoad) {
+      if (!wasFullLoad) loadGlobalTasks({ forceFull: true, reset: true })
+      return
+    }
+    // 全量模式下输入关键词不重载（由本地过滤完成），只在非全量模式才走服务端标题检索
+    loadGlobalTasks({ reset: true, keyword: searchQuery.trim() })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useFullLoad])
+  }, [useFullLoad, searchQuery])
 
   const loadAllCollections = useCallback(async () => {
     try {
@@ -250,10 +261,28 @@ const Tasks: React.FC = () => {
     }
   }, [taskMode, employees, currentEmployeeId])
 
-  // 全文内容搜索：输入框侧已做防抖，这里直接请求；请求序号用于丢弃过期结果
+  // 全文内容搜索：只在用户回车提交后才请求（FTS + LIKE 兜底在主进程同步执行，逐字触发会卡住界面）
   const searchSeqRef = useRef(0)
+  // contentQuery 镜像：供输入变更回调判断是否需要作废旧全文结果
+  const contentQueryRef = useRef('')
+  useEffect(() => { contentQueryRef.current = contentQuery }, [contentQuery])
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query)
+    // 输入变化后旧的全文结果已不对应当前关键词，退回标题检索
+    if (contentQueryRef.current && query.trim() !== contentQueryRef.current) {
+      setContentQuery('')
+      setContentMatchIds(null)
+    }
+  }, [])
+
+  const handleSearchSubmit = useCallback((query: string) => {
+    setSearchQuery(query)
+    setContentQuery(query.trim())
+  }, [])
+
   useEffect(() => {
-    const trimmed = searchQuery.trim()
+    const trimmed = contentQuery.trim()
     if (!trimmed) {
       setContentMatchIds(null)
       return
@@ -272,7 +301,7 @@ const Tasks: React.FC = () => {
       if (seq !== searchSeqRef.current) return
       startTransition(() => setContentMatchIds(new Set()))
     })
-  }, [searchQuery])
+  }, [contentQuery])
 
   // 使用 useEmployeeChat，传入 skipAutoInit 避免自动选择对话
   const chatHook = useEmployeeChat({ id: currentEmployeeId, message, skipAutoInit: true })
@@ -469,13 +498,14 @@ const Tasks: React.FC = () => {
   }, [employee, selectConversation])
 
   // 过滤后的任务列表（支持标题/员工名匹配 + 全文内容搜索）
+  // 标题匹配与服务端一致：去掉空格后再比较，避免本地把空格当必须字符
   const filteredTasks = useMemo(() => {
     let result = globalTasks
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
+      const q = searchQuery.toLowerCase().replace(/\s+/g, '')
       result = result.filter(t =>
-        (t.title || '').toLowerCase().includes(q) ||
-        (t.employee_name || '').toLowerCase().includes(q) ||
+        (t.title || '').toLowerCase().replace(/\s+/g, '').includes(q) ||
+        (t.employee_name || '').toLowerCase().replace(/\s+/g, '').includes(q) ||
         (contentMatchIds?.has(t.id) ?? false)
       )
     }
@@ -993,7 +1023,9 @@ const Tasks: React.FC = () => {
             tasks={filteredTasks}
             activeTaskId={taskMode === 'new' ? null : activeConversationId}
             searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
+            onSearchChange={handleSearchChange}
+            onSearchSubmit={handleSearchSubmit}
+            contentSearched={!!contentQuery}
             viewMode={viewMode}
             onViewModeChange={handleViewModeChange}
             onSelect={handleSelectTask}
