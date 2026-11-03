@@ -177,7 +177,10 @@ if (gotTheLock) {
 
 // 设置应用名称，用于系统通知中标识程序名（macOS/Linux 直接生效，Windows 配合 AUMID 生效）
 app.setName('WorkAvatar')
-app.setAppUserModelId('com.workavatar.desktop')
+// 开发运行必须用 electron.exe 路径作为 AUMID：Windows 按 AUMID 匹配开始菜单快捷方式做通知展示与点击激活，
+// 若开发态也占用正式 AUMID，会在开始菜单留下指向 electron.exe 的同名快捷方式，接管正式安装版的通知
+//（通知显示为 Electron，点击启动一个裸 Electron 窗口）
+app.setAppUserModelId(app.isPackaged ? 'com.workavatar.desktop' : process.execPath)
 
 /**
  * 内嵌网页权限策略：默认授权。
