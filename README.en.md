@@ -93,7 +93,8 @@ Plugins can also contribute navigation pages, settings tabs, agent tools, MCP to
     <td><img src="images/voice.png" alt="Voice recognition and meeting minutes" width="100%" /></td>
     <td><img src="images/automation.png" alt="Automation" width="100%" /></td>
   </tr><tr>
-    <td colspan="2"><img src="images/workflow.png" alt="Task template canvas" width="100%" /></td>
+    <td><img src="images/workflow.gif" alt="Task templates" width="100%" /></td>
+    <td><img src="images/image-studio.gif" alt="Image Studio" width="100%" /></td>
   </tr></table>
 </div>
 

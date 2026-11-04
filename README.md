@@ -93,7 +93,8 @@
     <td><img src="images/voice.png" alt="语音识别与会议纪要" width="100%" /></td>
     <td><img src="images/automation.png" alt="自动化任务" width="100%" /></td>
   </tr><tr>
-    <td colspan="2"><img src="images/workflow.png" alt="模板任务画布" width="100%" /></td>
+    <td><img src="images/workflow.gif" alt="模板任务" width="100%" /></td>
+    <td><img src="images/image-studio.gif" alt="生图" width="100%" /></td>
   </tr></table>
 </div>
 
