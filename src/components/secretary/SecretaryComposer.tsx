@@ -117,26 +117,28 @@ const SecretaryComposer = forwardRef<ComposerHandle, SecretaryComposerProps>(({
     onSendRef.current(text, files)
   }, [readContent])
 
+  const insertFiles = useCallback((files: ComposerFile[]) => {
+    const el = editorRef.current
+    if (!el) return
+    const existing = new Set(
+      Array.from(el.querySelectorAll<HTMLElement>(`.${TOKEN_CLASS}`)).map((n) => n.dataset.path || ''),
+    )
+    let added = false
+    for (const file of files) {
+      if (!file.path || existing.has(file.path)) continue
+      existing.add(file.path)
+      el.appendChild(createToken(file))
+      el.appendChild(document.createTextNode('\u00A0'))
+      added = true
+    }
+    if (added) {
+      refreshEmpty()
+      focusToEnd()
+    }
+  }, [createToken, focusToEnd, refreshEmpty])
+
   useImperativeHandle(ref, () => ({
-    insertFiles: (files) => {
-      const el = editorRef.current
-      if (!el) return
-      const existing = new Set(
-        Array.from(el.querySelectorAll<HTMLElement>(`.${TOKEN_CLASS}`)).map((n) => n.dataset.path || ''),
-      )
-      let added = false
-      for (const file of files) {
-        if (!file.path || existing.has(file.path)) continue
-        existing.add(file.path)
-        el.appendChild(createToken(file))
-        el.appendChild(document.createTextNode('\u00A0'))
-        added = true
-      }
-      if (added) {
-        refreshEmpty()
-        focusToEnd()
-      }
-    },
+    insertFiles,
     clear: () => {
       const el = editorRef.current
       if (!el) return
@@ -145,7 +147,7 @@ const SecretaryComposer = forwardRef<ComposerHandle, SecretaryComposerProps>(({
     },
     focus: focusToEnd,
     submit: doSend,
-  }), [createToken, doSend, focusToEnd, refreshEmpty])
+  }), [insertFiles, doSend, focusToEnd, refreshEmpty])
 
   useEffect(() => {
     const el = editorRef.current
@@ -168,7 +170,20 @@ const SecretaryComposer = forwardRef<ComposerHandle, SecretaryComposerProps>(({
       role="textbox"
       aria-multiline="true"
       onPaste={(e) => {
-        // 粘贴统一转纯文本，避免把外部 HTML/样式带进编辑器
+        // 剪贴板里带真实文件路径（从系统文件管理器复制）时，按文件令牌插入
+        const pastedFiles = Array.from(e.clipboardData?.files || [])
+          .map((file) => {
+            let path = ''
+            try { path = window.electronAPI?.getPathForFile?.(file) || '' } catch { /* ignore */ }
+            return { path, name: file.name }
+          })
+          .filter((file) => !!file.path)
+        if (pastedFiles.length > 0) {
+          e.preventDefault()
+          insertFiles(pastedFiles)
+          return
+        }
+        // 其余情况统一转纯文本，避免把外部 HTML/样式带进编辑器
         e.preventDefault()
         const text = e.clipboardData.getData('text/plain')
         if (text) document.execCommand('insertText', false, text)

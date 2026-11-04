@@ -725,6 +725,11 @@ app.whenReady().then(() => {
     SecretaryWindowService.getInstance().init(mainWindow)
     // 小秘书显隐变化后刷新托盘菜单文案（显示/隐藏）
     SecretaryWindowService.getInstance().setStateListener(() => updateTrayMenu())
+    // 小秘书启用时承接宿主通知（日历提醒/自动化完成/ask_user 等），关闭时还原系统通知
+    NotificationService.getInstance().setSecretaryNotifier((payload) => {
+      const secretary = SecretaryWindowService.getInstance()
+      return secretary.isEnabled() && secretary.deliverNotification(payload)
+    })
   }
 
   // Windows/Linux 首次启动时从 argv 提取 .md 文件（macOS 走 open-file 事件）

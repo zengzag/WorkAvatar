@@ -62,6 +62,7 @@ beforeEach(() => {
   mockState.flags.supported = true
   mockState.flags.throwOnConstruct = false
   service.setMainWindow(null)
+  service.setSecretaryNotifier(null)
 })
 
 describe('notification / 主窗口激活判定', () => {
@@ -179,6 +180,35 @@ describe('notification / source 路由', () => {
   it('主窗口不存在时宿主通知静默丢弃但仍返回 true', () => {
     service.setMainWindow(null)
     expect(service.notify({ title: 'T', body: 'B' })).toBe(true)
+  })
+})
+
+describe('notification / 小秘书接管', () => {
+  it('小秘书接管时不弹系统通知、不推主窗口 IPC', () => {
+    const win = makeWindow({ focused: false })
+    service.setMainWindow(win)
+    const notifier = vi.fn(() => true)
+    service.setSecretaryNotifier(notifier)
+    expect(service.notify({ title: 'T', body: 'B', source: 'calendar' })).toBe(true)
+    expect(notifier).toHaveBeenCalledWith(expect.objectContaining({ title: 'T', body: 'B' }))
+    expect(mockState.notifications).toHaveLength(0)
+    expect(win.webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('小秘书未接管（未启用）时回落原通知链路', () => {
+    const win = makeWindow({ focused: false })
+    service.setMainWindow(win)
+    service.setSecretaryNotifier(() => false)
+    expect(service.notify({ title: 'T', body: 'B' })).toBe(true)
+    expect(mockState.notifications).toHaveLength(1)
+  })
+
+  it('小秘书投递抛错时回落原通知链路', () => {
+    const win = makeWindow({ focused: true })
+    service.setMainWindow(win)
+    service.setSecretaryNotifier(() => { throw new Error('secretary down') })
+    expect(service.notify({ title: 'T', body: 'B' })).toBe(true)
+    expect(win.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.CALENDAR_NOTIFY, expect.anything())
   })
 })
 

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
-import type { SecretaryCharacterId } from '../shared/channels/secretary'
+import type { SecretaryCharacterId, SecretaryNotifyPayload } from '../shared/channels/secretary'
 import type {
   WorkspaceOpenInExplorerParams,
   WorkspaceListFilesParams,
@@ -389,6 +389,18 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
     },
+    /** 宿主通知改由小秘书承接时推送到挂件窗/面板窗 */
+    onNotify: (callback: (payload: SecretaryNotifyPayload) => void) => {
+      const handler = (_event: any, payload: SecretaryNotifyPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_NOTIFY, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_NOTIFY, handler)
+    },
+    /** 面板通知条目点击：聚焦主窗口并按 clickTarget/clickId 跳转（source 决定插件点击路由） */
+    openNotice: (payload: { clickTarget?: string; clickId?: string; source?: string }) =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_NOTIFY_CLICK, payload),
+    /** 渲染端挂载完成：主进程据此开始投递通知（并补发加载期间积压的通知） */
+    notifyReady: (kind: 'pet' | 'panel') =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_WINDOW_READY, kind),
   },
 
   tool: {

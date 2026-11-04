@@ -3,10 +3,12 @@ import path from 'path'
 import DatabaseService from './database.service'
 import { createLogger } from './logger'
 import mainUiI18n from './ui-i18n.service'
+import PluginHostService from './plugin/plugin-host.service'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import {
   DEFAULT_SECRETARY_SETTINGS,
   isSecretaryCharacterId,
+  type SecretaryNotifyPayload,
   type SecretaryRuntimeState,
   type SecretarySettings,
   type SecretarySide,
@@ -74,6 +76,11 @@ class SecretaryWindowService {
   private cursorTimer: NodeJS.Timeout | null = null
   /** 启用状态变化回调（主进程用它刷新托盘菜单文案） */
   private stateListener: (() => void) | null = null
+  /** 渲染端是否已挂载完成：窗口加载完成 ≠ React 已注册 IPC 监听，必须等渲染端主动上报 */
+  private petReady = false
+  private panelReady = false
+  /** 面板未就绪期间积压的通知，面板上报 ready 后一次性补发 */
+  private pendingNotices: SecretaryNotifyPayload[] = []
 
   static getInstance(): SecretaryWindowService {
     if (!SecretaryWindowService.instance) {
@@ -88,6 +95,36 @@ class SecretaryWindowService {
 
   isPanelOpen(): boolean {
     return !!this.panelWin && !this.panelWin.isDestroyed() && this.panelWin.isVisible()
+  }
+
+  isEnabled(): boolean {
+    return this.settings.enabled
+  }
+
+  /**
+   * 通知交由小秘书承接：挂件弹气泡、面板记录通知条目。
+   * 返回 true 表示已接管，调用方不再发系统通知/主窗口 antd 通知（避免重复提醒）。
+   */
+  deliverNotification(payload: Omit<SecretaryNotifyPayload, 'createdAt'>): boolean {
+    if (!this.settings.enabled) return false
+    const data: SecretaryNotifyPayload = { ...payload, createdAt: Date.now() }
+    const pet = this.ensurePetWindow()
+    // 面板窗可能从未打开过：隐藏创建，通知才能进列表
+    const panel = this.ensurePanelWindow()
+    if (this.petReady) this.sendTo(pet, data)
+    if (this.panelReady) {
+      this.sendTo(panel, data)
+    } else {
+      this.pendingNotices = [...this.pendingNotices, data].slice(-30)
+    }
+    return true
+  }
+
+  private sendTo(win: BrowserWindow | null, payload: SecretaryNotifyPayload): void {
+    if (!win || win.isDestroyed()) return
+    try {
+      win.webContents.send(IPC_CHANNELS.SECRETARY_NOTIFY, payload)
+    } catch { /* 窗口正在销毁时忽略 */ }
   }
 
   /** 是否来自小秘书面板窗：面板会自己弹出并让挂件进入等待态，不需要再发系统通知 */
@@ -344,8 +381,11 @@ class SecretaryWindowService {
     })
     win.on('closed', () => {
       this.petWin = null
+      this.petReady = false
       this.hidePanel()
     })
+    win.webContents.on('did-start-loading', () => { this.petReady = false })
+    this.petReady = false
     this.petWin = win
     // 带上设置快照：挂件首帧就渲染用户选中的形象/尺寸/不透明度，避免先闪默认形象再切换
     this.loadRoute(win, '/secretary/pet', { settings: JSON.stringify(this.getSettings()) })
@@ -377,8 +417,11 @@ class SecretaryWindowService {
     win.setAlwaysOnTop(true, 'floating')
     win.on('closed', () => {
       this.panelWin = null
+      this.panelReady = false
       this.notifyPanelVisibility()
     })
+    win.webContents.on('did-start-loading', () => { this.panelReady = false })
+    this.panelReady = false
     this.panelWin = win
     this.loadRoute(win, '/secretary/panel')
     logger.info('Panel window created')
@@ -442,6 +485,9 @@ class SecretaryWindowService {
     if (this.petWin && !this.petWin.isDestroyed()) this.petWin.destroy()
     this.panelWin = null
     this.petWin = null
+    this.petReady = false
+    this.panelReady = false
+    this.pendingNotices = []
   }
 
   /**
@@ -737,6 +783,40 @@ class SecretaryWindowService {
     ipcMain.handle(IPC_CHANNELS.SECRETARY_QUIT, () => {
       this.setSettings({ enabled: false })
       return true
+    })
+
+    // 渲染端挂载完成（React 已注册通知监听）：面板窗补发加载期间积压的通知
+    ipcMain.on(IPC_CHANNELS.SECRETARY_WINDOW_READY, (event, kind: 'pet' | 'panel') => {
+      if (kind === 'pet' && event.sender === this.petWin?.webContents) {
+        this.petReady = true
+        const latest = this.pendingNotices[this.pendingNotices.length - 1]
+        if (latest) this.sendTo(this.petWin, latest)
+        return
+      }
+      if (kind !== 'panel' || event.sender !== this.panelWin?.webContents) return
+      this.panelReady = true
+      const pending = this.pendingNotices
+      this.pendingNotices = []
+      for (const item of pending) this.sendTo(this.panelWin, item)
+    })
+
+    // 面板通知条目点击：聚焦主窗口，并按来源复用宿主通知的点击路由
+    // （插件来源走插件桥 notify-click，其余下发 CALENDAR_NOTIFY_CLICK）
+    ipcMain.on(IPC_CHANNELS.SECRETARY_NOTIFY_CLICK, (_e, payload: { clickTarget?: string; clickId?: string; source?: string }) => {
+      this.showMainWindow()
+      const clickData = { target: payload?.clickTarget, id: payload?.clickId }
+      const pluginId = payload?.source?.startsWith('plugin:') ? payload.source.slice('plugin:'.length) : null
+      try {
+        if (pluginId) {
+          PluginHostService.getInstance().broadcast(pluginId, 'notify-click', clickData)
+          return
+        }
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          this.mainWindow.webContents.send(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, clickData)
+        }
+      } catch (err: any) {
+        logger.warn('Notify click failed:', err?.message || err)
+      }
     })
 
     ipcMain.handle(IPC_CHANNELS.SECRETARY_OPEN_TASK, (_e, payload: { employeeId: string; conversationId: string }) => {

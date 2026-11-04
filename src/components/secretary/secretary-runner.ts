@@ -10,6 +10,7 @@ import { getToolDisplayName } from '../../utils/tool-display'
 import { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
 import { useSecretaryStore, selectBusSummary, type SecretaryTask } from './secretary.store'
 import { postSecretaryMessage } from './secretary-bus'
+import { markSecretaryOwned } from './secretary-remote'
 
 /**
  * 小秘书任务执行器：
@@ -121,7 +122,9 @@ function emitStream(entry: SessionEntry, streaming: boolean): void {
 
 /** 把任务汇总成挂件状态（面板窗是唯一数据源，挂件窗只消费） */
 export function broadcastSecretaryState(): void {
-  const summary = selectBusSummary(store().tasks)
+  // 主窗口发起的任务也计入挂件状态：用户无需打开主窗口就能看到有任务在跑
+  const combined = [...store().remoteTasks, ...store().tasks].sort((a, b) => b.startedAt - a.startedAt)
+  const summary = selectBusSummary(combined, store().notices)
   const focus = summary.waiting || summary.latest || summary.unreadFirst
   postSecretaryMessage({
     type: 'state',
@@ -398,6 +401,8 @@ export async function startSecretaryTask(params: {
     employee_id: employee.id,
     title,
   })
+  // 永久标记归属：任务被「完成」移除后，也不能作为主窗口任务重新出现在面板
+  markSecretaryOwned(conversation.id)
 
   const taskId = generateId()
   const task: SecretaryTask = {

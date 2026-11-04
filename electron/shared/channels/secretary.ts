@@ -34,7 +34,26 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_CONTEXT_MENU: 'secretary:context-menu',
   /** 主进程 → 主窗口：打开「设置 → 小秘书」 */
   SECRETARY_OPEN_SETTINGS: 'secretary:open-settings',
+  /** 主进程 → 挂件窗/面板窗：宿主通知（小秘书启用时承接系统通知） */
+  SECRETARY_NOTIFY: 'secretary:notify',
+  /** 面板窗 → 主进程：点击通知条目，聚焦主窗口并跳转目标 */
+  SECRETARY_NOTIFY_CLICK: 'secretary:notify-click',
+  /** 渲染端 → 主进程：窗口已完成挂载，可以接收通知（挂件窗/面板窗各自上报） */
+  SECRETARY_WINDOW_READY: 'secretary:window-ready',
 } as const
+
+/** 小秘书承接的通知载荷（复用宿主 NotifyPayload 字段，额外带接收时间） */
+export interface SecretaryNotifyPayload {
+  title: string
+  body: string
+  clickTarget?: string
+  clickId?: string
+  source?: string
+  i18nKey?: string
+  i18nTitleKey?: string
+  i18nParams?: Record<string, string | number>
+  createdAt: number
+}
 
 /** 可选的挂件形象，数组顺序即设置面板展示顺序；robot（波波，默认形象）屏幕脸默认显示应用图标、可被员工头像图替换，blob 为最初的圆团子 */
 export const SECRETARY_CHARACTER_IDS = ['robot', 'blob', 'momo', 'pip'] as const

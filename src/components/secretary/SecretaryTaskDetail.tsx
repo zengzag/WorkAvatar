@@ -19,6 +19,8 @@ interface SecretaryTaskDetailProps {
   providerId: string
   modelId: string
   thinking: ThinkingLevel
+  /** 主窗口发起的任务：面板内只读查看，继续对话请回主窗口 */
+  readOnly?: boolean
   onBack: () => void
   onOpenInMain: () => void
 }
@@ -57,6 +59,7 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
   providerId,
   modelId,
   thinking,
+  readOnly = false,
   onBack,
   onOpenInMain,
 }) => {
@@ -358,51 +361,70 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
         )}
       </div>
 
-      <div className="secretary-detail-composer">
-        <SecretaryComposer
-          ref={composerRef}
-          placeholder={t('secretary.replyPlaceholder')}
-          onSend={handleSend}
-        />
-        <div className="secretary-detail-actions">
-          <Tooltip title={t('secretary.attach')}>
+      {readOnly ? (
+        <div className="secretary-detail-composer">
+          <div className="secretary-detail-actions">
+            <span className="secretary-detail-hint" style={{ color: token.colorTextQuaternary }}>
+              {t('secretary.mainTaskHint')}
+            </span>
             <Button
-              type="text"
+              type="primary"
               size="small"
-              icon={<PaperClipOutlined />}
-              style={{ color: token.colorTextTertiary }}
-              onClick={() => fileRef.current?.click()}
-            />
-          </Tooltip>
-          <span
-            className="secretary-detail-hint"
-            style={{ color: token.colorTextQuaternary }}
-          >
-            {remote ? t('secretary.remoteRunning') : t('secretary.inputHint')}
-          </span>
-          <Button
-            type="primary"
-            size="small"
-            loading={sending}
-            disabled={busy}
-            icon={<SendOutlined />}
-            style={{ borderRadius: 999 }}
-            onClick={() => composerRef.current?.submit()}
-          >
-            {t('secretary.send')}
-          </Button>
+              icon={<ExportOutlined />}
+              style={{ borderRadius: 999 }}
+              onClick={onOpenInMain}
+            >
+              {t('secretary.openInMain')}
+            </Button>
+          </div>
         </div>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            addFiles(e.target.files)
-            e.target.value = ''
-          }}
-        />
-      </div>
+      ) : (
+        <div className="secretary-detail-composer">
+          <SecretaryComposer
+            ref={composerRef}
+            placeholder={t('secretary.replyPlaceholder')}
+            onSend={handleSend}
+          />
+          <div className="secretary-detail-actions">
+            <Tooltip title={t('secretary.attach')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<PaperClipOutlined />}
+                style={{ color: token.colorTextTertiary }}
+                onClick={() => fileRef.current?.click()}
+              />
+            </Tooltip>
+            <span
+              className="secretary-detail-hint"
+              style={{ color: token.colorTextQuaternary }}
+            >
+              {remote ? t('secretary.remoteRunning') : t('secretary.inputHint')}
+            </span>
+            <Button
+              type="primary"
+              size="small"
+              loading={sending}
+              disabled={busy}
+              icon={<SendOutlined />}
+              style={{ borderRadius: 999 }}
+              onClick={() => composerRef.current?.submit()}
+            >
+              {t('secretary.send')}
+            </Button>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              addFiles(e.target.files)
+              e.target.value = ''
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

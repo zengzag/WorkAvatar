@@ -15,19 +15,24 @@ import {
   BulbFilled,
   RobotOutlined,
   CheckOutlined,
+  BellOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeAvatar, { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
 import { getCachedSceneDefaultModel } from '../../utils/default-model'
+import { generateId } from '../../utils/format'
 import { getProviderModels, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import type { Employee, LLMProvider, ThinkingLevel } from '../../types'
 import {
   useSecretaryStore,
   selectRunningTasks,
   selectFinishedTasks,
+  selectUnreadNotices,
   type SecretaryTask,
+  type SecretaryNotice,
 } from './secretary.store'
 import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState } from './secretary-runner'
+import { syncRemoteTasks, abortRemoteTask, dismissRemoteTask } from './secretary-remote'
 import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KEY } from './secretary-bus'
 import { useInteractionStore } from '../../stores/interaction.store'
 import UnifiedInteractionModal from '../common/UnifiedInteractionModal'
@@ -93,13 +98,27 @@ const SecretaryPanel: React.FC = () => {
   const pendingRef = useRef(false)
 
   const tasks = useSecretaryStore((s) => s.tasks)
+  const remoteTasks = useSecretaryStore((s) => s.remoteTasks)
   const markViewed = useSecretaryStore((s) => s.markViewed)
   const removeTask = useSecretaryStore((s) => s.removeTask)
-  const running = useMemo(() => selectRunningTasks(tasks), [tasks])
-  const finished = useMemo(() => selectFinishedTasks(tasks), [tasks])
+  const notices = useSecretaryStore((s) => s.notices)
+  const addNotice = useSecretaryStore((s) => s.addNotice)
+  const markNoticeViewed = useSecretaryStore((s) => s.markNoticeViewed)
+  const removeNotice = useSecretaryStore((s) => s.removeNotice)
+  /** 本地任务 + 主窗口任务镜像：面板里统一展示，来源只影响点击/停止/完成的行为 */
+  const allTasks = useMemo(() => [...remoteTasks, ...tasks], [remoteTasks, tasks])
+  const running = useMemo(
+    () => selectRunningTasks(allTasks).sort((a, b) => b.startedAt - a.startedAt),
+    [allTasks],
+  )
+  const finished = useMemo(
+    () => selectFinishedTasks(allTasks).sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt)),
+    [allTasks],
+  )
+  const unreadNoticeCount = useMemo(() => selectUnreadNotices(notices).length, [notices])
   const detailTask = useMemo(
-    () => (detailTaskId ? tasks.find((t) => t.id === detailTaskId) : undefined),
-    [tasks, detailTaskId],
+    () => (detailTaskId ? allTasks.find((t) => t.id === detailTaskId) : undefined),
+    [allTasks, detailTaskId],
   )
 
   // 任务被移除（完成按钮 / 列表裁剪）后退出详情，回到任务列表
@@ -107,10 +126,27 @@ const SecretaryPanel: React.FC = () => {
     if (detailTaskId && !detailTask) setDetailTaskId(null)
   }, [detailTaskId, detailTask])
 
-  // 主窗口删除任务（或清空某员工任务）后，小秘书列表同步移除对应任务
+  /** 主窗口任务镜像：员工信息用于头像/配色，事件回调取最新值，避免重复订阅 */
+  const employeesRef = useRef<Employee[]>([])
+  const syncRemote = useCallback(() => {
+    void syncRemoteTasks(employeesRef.current)
+  }, [])
+
+  // 主窗口任务的新增/改名/删除、以及运行会话变化时刷新镜像
   useEffect(() => {
+    let timer: number | null = null
+    const scheduleSync = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        syncRemote()
+      }, 250)
+    }
     const off = window.electronAPI.conversation.onChanged?.((data) => {
-      if (data.action !== 'delete' && data.action !== 'delete-all') return
+      if (data.action === 'create' || data.action === 'update') {
+        scheduleSync()
+        return
+      }
       const state = useSecretaryStore.getState()
       for (const task of state.tasks) {
         const hit = data.action === 'delete'
@@ -121,9 +157,42 @@ const SecretaryPanel: React.FC = () => {
         if (task.status === 'running' || task.status === 'waiting') void abortSecretaryTask(task.id)
         state.removeTask(task.id)
       }
+      for (const task of state.remoteTasks) {
+        const hit = data.action === 'delete'
+          ? task.conversationId === data.id
+          : task.employee.id === data.id
+        if (!hit) continue
+        if (task.status === 'running' || task.status === 'waiting') void abortRemoteTask(task)
+        state.removeRemoteTask(task.id)
+      }
+      scheduleSync()
     })
-    return () => { off?.() }
-  }, [])
+    const offStarted = window.electronAPI.llm.onSessionStarted?.(() => scheduleSync())
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      off?.()
+      offStarted?.()
+    }
+  }, [syncRemote])
+
+  // 首次挂载先按会话列表拉一次；员工列表加载完成后带着头像信息再同步
+  useEffect(() => { syncRemote() }, [syncRemote])
+
+  useEffect(() => {
+    employeesRef.current = employees
+    if (employees.length > 0) syncRemote()
+  }, [employees, syncRemote])
+
+  const hasRemoteRunning = useMemo(
+    () => remoteTasks.some((t) => t.status === 'running' || t.status === 'waiting'),
+    [remoteTasks],
+  )
+
+  // 主窗口任务运行期间高频轮询活跃会话；空闲时低频兜底（原地续跑等不经过 session-started 的会话也能被发现）
+  useEffect(() => {
+    const timer = window.setInterval(syncRemote, hasRemoteRunning ? 3000 : 15000)
+    return () => window.clearInterval(timer)
+  }, [hasRemoteRunning, syncRemote])
 
   // 面板（重新）创建时清理会话已被删除的历史任务（小秘书关闭期间主窗口删除的情况）
   useEffect(() => {
@@ -198,6 +267,34 @@ const SecretaryPanel: React.FC = () => {
     const off = window.electronAPI.employee.onChanged(() => { loadEmployees() })
     return () => { off?.() }
   }, [loadEmployees])
+
+  // 宿主通知改由小秘书承接：记录到通知列表（挂件由 PetWindow 自己弹气泡）
+  useEffect(() => {
+    const off = window.electronAPI.secretary.onNotify((payload) => {
+      const pluginId = payload.source?.startsWith('plugin:') ? payload.source.slice('plugin:'.length) : undefined
+      const localize = (textKey?: string, fallback?: string): string => {
+        if (!textKey) return fallback || ''
+        return String(t(textKey, {
+          ...(payload.i18nParams || {}),
+          defaultValue: fallback || textKey,
+          ...(pluginId ? { ns: pluginId } : {}),
+        }))
+      }
+      addNotice({
+        id: generateId(),
+        title: localize(payload.i18nTitleKey, payload.title) || payload.title,
+        body: localize(payload.i18nKey, payload.body),
+        source: payload.source,
+        clickTarget: payload.clickTarget,
+        clickId: payload.clickId,
+        createdAt: payload.createdAt || Date.now(),
+        viewed: false,
+      })
+    })
+    // 监听注册完成后再上报，主进程据此补发窗口加载期间积压的通知
+    window.electronAPI.secretary.notifyReady('panel')
+    return () => { off() }
+  }, [addNotice, t])
 
   useEffect(() => {
     if (employeeId) localStorage.setItem(EMPLOYEE_KEY, employeeId)
@@ -499,10 +596,17 @@ const SecretaryPanel: React.FC = () => {
   }, [markViewed])
 
   /** 「完成」按钮：该任务从面板消失（主窗口的任务列表不受影响） */
-  const dismissTask = useCallback((taskId: string) => {
-    removeTask(taskId)
-    setDetailTaskId((prev) => (prev === taskId ? null : prev))
+  const dismissTask = useCallback((task: SecretaryTask) => {
+    if (task.origin === 'main') dismissRemoteTask(task)
+    else removeTask(task.id)
+    setDetailTaskId((prev) => (prev === task.id ? null : prev))
   }, [removeTask])
+
+  /** 停止任务：主窗口发起的任务用它的运行会话中止 */
+  const stopTask = useCallback((task: SecretaryTask) => {
+    if (task.origin === 'main') void abortRemoteTask(task)
+    else void abortSecretaryTask(task.id)
+  }, [])
 
   const openInMain = useCallback((task: SecretaryTask) => {
     if (!task.conversationId) return
@@ -573,6 +677,49 @@ const SecretaryPanel: React.FC = () => {
   const runningShown = running
   const finishedShown = finished
 
+  /** 通知条目点击：标记已读并跳转主窗口对应目标（无目标时仅标记已读） */
+  const openNotice = useCallback((notice: SecretaryNotice) => {
+    if (!notice.viewed) markNoticeViewed(notice.id)
+    if (!notice.clickTarget) return
+    window.electronAPI.secretary.openNotice({
+      clickTarget: notice.clickTarget,
+      clickId: notice.clickId,
+      source: notice.source,
+    })
+    window.electronAPI.secretary.hidePanel()
+  }, [markNoticeViewed])
+
+  const noticeRow = (notice: SecretaryNotice) => (
+    <div
+      key={notice.id}
+      className="secretary-task-row"
+      role="button"
+      tabIndex={0}
+      onClick={() => openNotice(notice)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openNotice(notice) }}
+      style={{ color: token.colorText }}
+    >
+      <BellOutlined style={{ color: token.colorPrimary }} />
+      <span className="secretary-task-main">
+        <span className="secretary-task-title">{notice.title}</span>
+        <span className="secretary-task-meta">{notice.body}</span>
+      </span>
+      {!notice.viewed && <span className="secretary-unread-dot" />}
+      <button
+        type="button"
+        className="secretary-task-complete"
+        title={t('secretary.complete')}
+        onClick={(e) => {
+          e.stopPropagation()
+          removeNotice(notice.id)
+        }}
+        style={{ color: token.colorTextTertiary }}
+      >
+        {t('secretary.complete')}
+      </button>
+    </div>
+  )
+
   const taskRow = (task: SecretaryTask) => (
     <div
       key={task.id}
@@ -609,7 +756,7 @@ const SecretaryPanel: React.FC = () => {
           title={t('secretary.stop')}
           onClick={(e) => {
             e.stopPropagation()
-            void abortSecretaryTask(task.id)
+            stopTask(task)
           }}
           style={{ color: token.colorTextTertiary }}
         >
@@ -623,7 +770,7 @@ const SecretaryPanel: React.FC = () => {
           title={t('secretary.complete')}
           onClick={(e) => {
             e.stopPropagation()
-            dismissTask(task.id)
+            dismissTask(task)
           }}
           style={{ color: token.colorTextTertiary }}
         >
@@ -663,6 +810,7 @@ const SecretaryPanel: React.FC = () => {
             providerId={modelProviderId}
             modelId={modelId}
             thinking={thinking}
+            readOnly={detailTask.origin === 'main'}
             onBack={() => setDetailTaskId(null)}
             onOpenInMain={() => openInMain(detailTask)}
           />
@@ -771,6 +919,16 @@ const SecretaryPanel: React.FC = () => {
                 </button>
               </>
             )}
+          </div>
+        )}
+
+        {/* 通知区：小秘书承接的日历提醒 / 自动化完成等 */}
+        {notices.length > 0 && (
+          <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '0 8px 3px' }}>
+              {t('secretary.notices')} {unreadNoticeCount > 0 ? `· ${unreadNoticeCount}` : ''}
+            </div>
+            {notices.map(noticeRow)}
           </div>
         )}
 
