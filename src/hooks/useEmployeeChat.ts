@@ -697,7 +697,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       }
 
       // 阶段 2：后台静默刷新最新数据
-      const [result, convList] = await Promise.all([
+      const [result, rawConvList] = await Promise.all([
         window.electronAPI.employee.get(id!),
         window.electronAPI.conversation.list({ employee_id: id! })
       ])
@@ -705,6 +705,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setLoadingConversationId(prev => prev === cachedActiveConvId ? null : prev)
         return
       }
+      // IPC 失败时主进程返回 { error }，这里统一归一化为数组，避免下游迭代崩溃
+      const convList = Array.isArray(rawConvList) ? rawConvList : []
 
       _persistentEmployeeData.set(id!, result)
       _persistentConvList.set(id!, convList)
@@ -864,8 +866,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const refreshConversationList = async () => {
     try {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
-      if (id) _persistentConvList.set(id, result)
-      setAllConversations(result)
+      const convList = Array.isArray(result) ? result : []
+      if (id) _persistentConvList.set(id, convList)
+      setAllConversations(convList)
     } catch {
     }
   }
