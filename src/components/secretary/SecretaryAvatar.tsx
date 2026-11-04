@@ -13,6 +13,8 @@ interface Props {
   accent?: string
   status?: string
   play?: string
+  /** 睡眠态：长时间无交互时只保留极缓呼吸 */
+  sleep?: boolean
   /** 3D 角色只出静态帧（设置页预览，避免常驻渲染循环） */
   still?: boolean
   /** 光标相对挂件中心的归一化坐标，驱动 3D 头部跟随 */
@@ -24,7 +26,7 @@ interface Props {
  * 角色渲染入口：robot 走 Three.js 真 3D（失败时回落到同款 SVG），
  * 其余角色沿用内联 SVG（父级仍按 viewBox 0 0 140 140 排布）。
  */
-export const SecretaryAvatar: React.FC<Props> = ({ id, className, style, faceImage, faceIcon, accent, status, play, still, lookX, lookY }) => {
+export const SecretaryAvatar: React.FC<Props> = ({ id, className, style, faceImage, faceIcon, accent, status, play, sleep, still, lookX, lookY }) => {
   const [glFailed, setGlFailed] = useState(false)
   if (!glFailed && id === 'robot') {
     return (
@@ -33,6 +35,7 @@ export const SecretaryAvatar: React.FC<Props> = ({ id, className, style, faceIma
         style={style}
         status={status}
         play={play}
+        sleep={sleep}
         faceImage={faceImage}
         faceIcon={faceIcon}
         accent={accent}

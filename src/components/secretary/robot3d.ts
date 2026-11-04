@@ -12,6 +12,8 @@ export type RobotStageProps = {
   status?: string
   /** 空闲时的调皮动作：wave / hop / tilt / clap */
   play?: string
+  /** 睡眠态：长时间无交互后只保留极缓呼吸，屏幕压暗、头微垂 */
+  sleep?: boolean
   /** 屏幕脸素材（员工头像 data URL），为空时显示员工头像图标 */
   faceImage?: string | null
   /** 员工头像图标 key（robot/user/team/...），无上传头像时绘制在屏幕上 */
@@ -62,6 +64,7 @@ type Pose = {
   sqy: number
   headZ: number
   headY: number
+  headX: number
   armL: number
   armR: number
   armLX: number
@@ -75,7 +78,7 @@ type Pose = {
 }
 
 const emptyPose = (): Pose => ({
-  rootY: 0, rootRotZ: 0, sqx: 1, sqy: 1, headZ: 0, headY: 0,
+  rootY: 0, rootRotZ: 0, sqx: 1, sqy: 1, headZ: 0, headY: 0, headX: 0,
   armL: 0, armR: 0, armLX: 0, armRX: 0, legLX: 0, legRX: 0,
   screen: 1, flash: 0, warn: 0, shadow: 1,
 })
@@ -225,7 +228,7 @@ function envelope(t: number, dur: number, inT = 0.16, outT = 0.22) {
   return k * k * (3 - 2 * k)
 }
 
-function basePose(t: number, status: string, p: Pose): Pose {
+function basePose(t: number, status: string, sleep: boolean, p: Pose): Pose {
   Object.assign(p, POSE_DEFAULTS)
   switch (status) {
     case 'running':
@@ -267,6 +270,17 @@ function basePose(t: number, status: string, p: Pose): Pose {
       p.warn = 0.2 + Math.sin(t * 6) * 0.08
       break
     default:
+      if (sleep) {
+        // 睡眠：极慢的呼吸起伏 + 头部微垂 + 屏幕压暗，几乎不动，避免打扰用户
+        p.rootY = Math.sin(t * 0.5) * 0.5
+        p.sqy = 1 + Math.sin(t * 0.5) * 0.007
+        p.sqx = 1 - Math.sin(t * 0.5) * 0.005
+        p.headX = 7 + Math.sin(t * 0.5) * 0.6
+        p.armL = -2
+        p.armR = 2
+        p.screen = 0.52 + Math.sin(t * 0.5) * 0.025
+        break
+      }
       // idle：呼吸 + 缓慢左右打量，避免“站桩”
       p.rootY = Math.sin(t * 1.15) * 0.9
       p.rootRotZ = Math.sin(t * 0.55) * 0.9
@@ -681,7 +695,7 @@ export async function createRobotStage(
   if (currentFace) setFace(currentFace)
 
   /* ---------- 状态与动画循环 ---------- */
-  const state = { status: initial.status || 'idle', play: initial.play || '', playAt: performance.now() }
+  const state = { status: initial.status || 'idle', play: initial.play || '', playAt: performance.now(), sleep: !!initial.sleep }
   const cur = emptyPose()
   const base = emptyPose()
   const target = emptyPose()
@@ -706,7 +720,7 @@ export async function createRobotStage(
     headPivot.rotation.z = p.headZ * DEG
     // 头部朝向 = 待机摆动 + 光标跟随（限幅，鼠标太远时会回到自然姿态）
     headPivot.rotation.y = (p.headY + lookCur.x * LOOK.yaw) * DEG
-    headPivot.rotation.x = lookCur.y * LOOK.pitch * DEG
+    headPivot.rotation.x = (p.headX + lookCur.y * LOOK.pitch) * DEG
     armL.rotation.set(p.armLX * DEG, 0, p.armL * DEG)
     armR.rotation.set(p.armRX * DEG, 0, p.armR * DEG)
     legs[0].rotation.x = p.legLX * DEG
@@ -732,8 +746,9 @@ export async function createRobotStage(
     lookCur.y = lerp(lookCur.y, lookTarget.y, lk)
 
     // 基础姿态（状态驱动）平滑过渡，一次性动作直接叠加，避免抖动被抹平
-    basePose((now - t0) / 1000, state.status, base)
-    const k = 1 - Math.exp(-dt * 14)
+    basePose((now - t0) / 1000, state.status, state.sleep, base)
+    // 入睡 / 醒来的姿态变化放慢，避免突然垂头或猛地抬头
+    const k = 1 - Math.exp(-dt * (state.sleep ? 2.4 : 14))
     for (const key of POSE_KEYS) cur[key] = lerp(cur[key], base[key], k)
     Object.assign(target, cur)
     if (state.play) applyPlay(target, state.play, (now - state.playAt) / 1000)
@@ -748,8 +763,9 @@ export async function createRobotStage(
   const tick = (now: number) => {
     if (disposed) return
     raf = requestAnimationFrame(tick)
-    // 静止待机 30fps、动作与任务态 60fps：常驻小挂件没必要跑满刷新率
-    if (now - lastDraw < (state.status === 'idle' && !state.play ? 30 : 15)) return
+    // 静止待机 30fps、动作与任务态 60fps、睡眠 15fps：常驻小挂件没必要跑满刷新率
+    const interval = state.status === 'idle' && !state.play ? (state.sleep ? 66 : 30) : 15
+    if (now - lastDraw < interval) return
     draw(now)
   }
 
@@ -778,6 +794,7 @@ export async function createRobotStage(
         state.play = next.play || ''
         state.playAt = performance.now()
       }
+      if (next.sleep !== undefined && next.sleep !== state.sleep) state.sleep = next.sleep
       if (next.faceImage !== undefined) setFace(next.faceImage || null)
       if (next.faceIcon !== undefined) setFaceIcon(next.faceIcon)
       if (next.accent !== undefined) setAccent(next.accent)

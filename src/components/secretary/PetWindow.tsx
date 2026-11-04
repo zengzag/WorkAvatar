@@ -23,6 +23,9 @@ const INITIAL_SETTINGS: Partial<SecretarySettings> = (() => {
   }
 })()
 
+/** 无交互多久后进入睡眠（毫秒）：睡眠时只保留极缓呼吸，不再做小动作吸引注意 */
+const SLEEP_AFTER_MS = 3 * 60 * 1000
+
 /** 挂件窗：只负责表情、气泡、角标与拖动/点击，任务数据由面板窗经 BroadcastChannel 同步 */
 const PetWindow: React.FC = () => {
   const { t } = useTranslation()
@@ -42,11 +45,34 @@ const PetWindow: React.FC = () => {
   const [faceIcon, setFaceIcon] = useState<string | null>(null)
   const [faceColor, setFaceColor] = useState<string | undefined>(undefined)
   const [pressed, setPressed] = useState(false)
+  /** 小秘书承接的宿主通知：挂件气泡短暂展示标题 */
+  const [notice, setNotice] = useState<{ title: string; body: string } | null>(null)
   /** 3D 头部跟随：光标相对挂件中心的归一化偏移（-1..1），鼠标太远时归零 */
   const [look, setLook] = useState({ x: 0, y: 0 })
   const dragRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null)
   const petRef = useRef<HTMLDivElement>(null)
   const playTimerRef = useRef(0)
+  const noticeTimerRef = useRef(0)
+  /** 睡眠态：长时间无交互且没有任务时进入，减少一切多余动作 */
+  const [sleeping, setSleeping] = useState(false)
+  const sleepingRef = useRef(false)
+  const statusRef = useRef(state.status)
+  statusRef.current = state.status
+  const lastActiveRef = useRef(Date.now())
+  /** 面板打开时用户正在和小秘书交互，不进入睡眠 */
+  const panelOpenRef = useRef(false)
+
+  const setSleep = useCallback((value: boolean) => {
+    if (sleepingRef.current === value) return
+    sleepingRef.current = value
+    setSleeping(value)
+  }, [])
+
+  /** 记录一次交互：处于睡眠时立即唤醒，倒计时在轮询里按 lastActive 判定 */
+  const touch = useCallback(() => {
+    lastActiveRef.current = Date.now()
+    setSleep(false)
+  }, [setSleep])
 
   /** 触发一次随机的调皮小动作（空闲时循环，点击挂件时也会来一下） */
   const triggerPlay = useCallback(() => {
@@ -106,6 +132,7 @@ const PetWindow: React.FC = () => {
       setSize(s.settings.size)
       setOpacity(s.settings.opacity)
       setSide(s.side)
+      panelOpenRef.current = s.panelOpen
       if (isSecretaryCharacterId(s.settings.character)) setCharacter(s.settings.character)
     }).catch(() => {})
     const offSettings = window.electronAPI.secretary.onSettingsChanged((s) => {
@@ -114,6 +141,11 @@ const PetWindow: React.FC = () => {
       setCharacter(isSecretaryCharacterId(s.character) ? s.character : DEFAULT_SECRETARY_SETTINGS.character)
     })
     const offSide = window.electronAPI.secretary.onSideChanged(setSide)
+    // 面板显隐也算交互：打开期间保持清醒，关闭后重新计时
+    const offPanel = window.electronAPI.secretary.onPanelVisibility((open) => {
+      panelOpenRef.current = open
+      touch()
+    })
     // 拖动中窗口失焦（如 Alt+Tab）时结束拖动，避免窗口黏在光标上
     const resetDrag = () => {
       if (!dragRef.current) return
@@ -127,9 +159,26 @@ const PetWindow: React.FC = () => {
       alive = false
       offSettings()
       offSide()
+      offPanel()
       window.removeEventListener('blur', resetDrag)
     }
-  }, [updateLook])
+  }, [updateLook, touch])
+
+  // 小秘书承接的宿主通知：挂件直接弹气泡，面板窗负责记录到通知列表
+  useEffect(() => {
+    const off = window.electronAPI.secretary.onNotify((payload) => {
+      setNotice({ title: payload.title, body: payload.body })
+      window.clearTimeout(noticeTimerRef.current)
+      noticeTimerRef.current = window.setTimeout(() => setNotice(null), 8000)
+      touch()
+    })
+    // 监听注册完成后再上报，避免主进程在 React 挂载前投递导致通知丢失
+    window.electronAPI.secretary.notifyReady('pet')
+    return () => {
+      off()
+      window.clearTimeout(noticeTimerRef.current)
+    }
+  }, [touch])
 
   useEffect(() => {
     // 完成 / 失败的表情停留 6 秒后回到空闲，期间若有新状态会重置计时
@@ -140,9 +189,25 @@ const PetWindow: React.FC = () => {
     return () => clearTimeout(timer)
   }, [state.status, state.bubble])
 
-  // 空闲时每隔几秒来一个随机小动作；任务状态一变就收起
+  // 空闲且长时间无交互进入睡眠；任务活动或用户交互都会立即唤醒
   useEffect(() => {
     if (state.status !== 'idle') {
+      setSleep(false)
+      return
+    }
+    // 刚回到空闲时重新计时，避免任务结束后立刻入睡
+    lastActiveRef.current = Date.now()
+    setSleep(false)
+    const timer = window.setInterval(() => {
+      if (statusRef.current !== 'idle' || panelOpenRef.current) return
+      if (Date.now() - lastActiveRef.current >= SLEEP_AFTER_MS) setSleep(true)
+    }, 10000)
+    return () => window.clearInterval(timer)
+  }, [state.status, setSleep])
+
+  // 空闲时每隔几秒来一个随机小动作；任务状态一变或进入睡眠就收起
+  useEffect(() => {
+    if (state.status !== 'idle' || sleeping) {
       setPlay('')
       return
     }
@@ -160,13 +225,21 @@ const PetWindow: React.FC = () => {
       alive = false
       window.clearTimeout(next)
     }
-  }, [state.status, triggerPlay])
+  }, [state.status, sleeping, triggerPlay])
 
   useEffect(() => () => window.clearTimeout(playTimerRef.current), [])
 
+  // 入睡时把视线收回正中，避免半睡半醒盯着光标
+  useEffect(() => {
+    if (!sleeping) return
+    petRef.current?.style.setProperty('--look-x', '0')
+    petRef.current?.style.setProperty('--look-y', '0')
+    updateLook(0, 0)
+  }, [sleeping, updateLook])
+
   // 空闲时视线随机游移，制造“东张西望”的灵动效果；hover 跟随由 handleMouseMove 覆盖
   useEffect(() => {
-    if (state.status !== 'idle') return
+    if (state.status !== 'idle' || sleeping) return
     let alive = true
     let timer = 0
     const glance = () => {
@@ -184,10 +257,11 @@ const PetWindow: React.FC = () => {
       alive = false
       window.clearTimeout(timer)
     }
-  }, [state.status])
+  }, [state.status, sleeping])
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
+    touch()
     try {
       e.currentTarget.setPointerCapture(e.pointerId)
     } catch { /* 指针已失效时忽略，不影响后续点击判定 */ }
@@ -221,6 +295,7 @@ const PetWindow: React.FC = () => {
   const handleMouseMove = (e: React.MouseEvent) => {
     // 拖动期间不切换穿透：中途开启穿透会打断 pointer capture，挂件会卡在半路
     if (dragRef.current) return
+    touch()
     const rect = petRef.current?.getBoundingClientRect()
     if (!rect) return
     const inside = e.clientX >= rect.left && e.clientX <= rect.right
@@ -240,7 +315,10 @@ const PetWindow: React.FC = () => {
   }
 
   const statusClass = state.status === 'waiting' ? 'confirm' : state.status === 'failed' ? 'error' : state.status
-  const bubbleText = state.bubble || (state.unreadCount > 0 ? t('secretary.bubbleUnread', { n: state.unreadCount }) : '')
+  // 任务态优先展示执行阶段；空闲时优先展示刚收到的通知标题，其次是未读汇总
+  const bubbleText = state.status === 'waiting' || state.status === 'running'
+    ? state.bubble
+    : notice?.title || (state.unreadCount > 0 ? t('secretary.bubbleUnread', { n: state.unreadCount }) : '')
 
   return (
     <div
@@ -256,6 +334,7 @@ const PetWindow: React.FC = () => {
       onDragOver={(e) => { e.preventDefault() }}
       onDrop={(e) => {
         e.preventDefault()
+        touch()
         const files = Array.from(e.dataTransfer?.files || [])
         if (files.length === 0) return
         // 跨窗口无法传 File 对象，取真实路径后交给面板窗生成附件
@@ -279,6 +358,7 @@ const PetWindow: React.FC = () => {
         data-state={statusClass}
         data-character={character}
         data-play={play || undefined}
+        data-sleep={sleeping ? '' : undefined}
         style={{
           width: size,
           height: size,
@@ -293,11 +373,16 @@ const PetWindow: React.FC = () => {
         onPointerCancel={handlePointerUp}
         onContextMenu={(e) => {
           e.preventDefault()
+          touch()
           window.electronAPI.secretary.showContextMenu()
         }}
       >
         {bubbleText && (
-          <div className="pet-bubble" style={{ background: token.colorBgElevated, borderColor: token.colorBorderSecondary, color: token.colorText }}>
+          <div
+            className="pet-bubble"
+            title={notice?.body || undefined}
+            style={{ background: token.colorBgElevated, borderColor: token.colorBorderSecondary, color: token.colorText }}
+          >
             {statusClass === 'running' && <span className="pet-bubble-spin" style={{ borderTopColor: token.colorPrimary }} />}
             <span>{bubbleText}</span>
           </div>
@@ -307,6 +392,7 @@ const PetWindow: React.FC = () => {
           id={character}
           status={statusClass}
           play={play}
+          sleep={sleeping}
           faceImage={faceImage}
           faceIcon={faceIcon}
           accent={faceColor}
