@@ -261,8 +261,6 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
-      CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id);
-      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_feedbacks_skill ON feedbacks(skill_id);
 
       CREATE TABLE IF NOT EXISTS tools (
@@ -460,6 +458,31 @@ class DatabaseService {
       );
     `)
 
+    // 对话表增量列（幂等）：升级安装会复用旧库，CREATE TABLE IF NOT EXISTS 不会给已有表补列，
+    // 缺列会让后续 SELECT 直接报 no such column，因此按当前 schema 补齐历史版本新增的列
+    const conversationColumns = this.db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
+    for (const [name, ddl] of [
+      ['summary', "TEXT DEFAULT ''"],
+      ['minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0'],
+      ['system_prompt', "TEXT DEFAULT ''"],
+      ['memory_extracted_at', 'INTEGER'],
+      ['memory_extracted_message_count', 'INTEGER NOT NULL DEFAULT 0'],
+      ['context_stats_json', "TEXT DEFAULT '{}'"],
+      ['default_model_json', "TEXT DEFAULT ''"],
+      ['collection_ids_json', "TEXT DEFAULT ''"],
+      ['workspace_path', "TEXT DEFAULT ''"],
+      ['workspace_mode', "TEXT DEFAULT 'default'"],
+      ['parent_conversation_id', "TEXT DEFAULT ''"],
+    ] as const) {
+      if (conversationColumns.length > 0 && !conversationColumns.some(c => c.name === name)) {
+        this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${ddl}`)
+        logger.info(`迁移：conversations 增加 ${name} 列`)
+      }
+    }
+    // 索引依赖上面的增量列：放在迁移之后创建，避免旧库缺列时启动即失败
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id)')
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at)')
+
     // 对话 FTS 表由 conversation-fts 统一建表/迁移（索引侧 jieba 预分词 + 原始预览列）
     ensureConversationFts(this.db)
 
@@ -480,13 +503,6 @@ class DatabaseService {
         this.db.exec(`ALTER TABLE employees ADD COLUMN ${name} ${ddl}`)
         logger.info(`迁移：employees 增加 ${name} 列`)
       }
-    }
-
-    // 任务工作区类型增量列（幂等）：default=自动任务目录，custom=用户指定目录
-    const conversationColumns = this.db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
-    if (conversationColumns.length > 0 && !conversationColumns.some(c => c.name === 'workspace_mode')) {
-      this.db.exec("ALTER TABLE conversations ADD COLUMN workspace_mode TEXT DEFAULT 'default'")
-      logger.info('迁移：conversations 增加 workspace_mode 列')
     }
 
     // 模板任务运行记录增量列：运行实际入参（幂等）
