@@ -91,7 +91,7 @@ export interface SecretaryRuntimeState {
 export type SecretarySide = 'left' | 'right'
 
 export const DEFAULT_SECRETARY_SETTINGS: SecretarySettings = {
-  enabled: true,
+  enabled: false,
   size: 128,
   opacity: 1,
   hotkey: 'Control+Alt+Space',

@@ -937,7 +937,7 @@ export default {
     rerunOnboardingDesc: '再次打开引导流程，重新配置模型服务或创建数字员工',
     rerunOnboardingAction: '开始引导',
     preventSleep: '窗口开启时保持屏幕常亮',
-    preventSleepDesc: '应用窗口未关闭（即使被其他窗口覆盖、不在前台）时，禁止系统自动关闭屏幕和进入休眠；窗口全部关闭、仅剩托盘图标时恢复',
+    preventSleepDesc: '应用窗口未关闭（即使被其他窗口覆盖、不在前台）时，禁止系统自动关闭屏幕和进入休眠；窗口全部关闭、仅剩托盘图标或小秘书浮窗时恢复',
     tabStorage: '存储',
     tabAppearance: '外观',
     tabAbout: '关于',

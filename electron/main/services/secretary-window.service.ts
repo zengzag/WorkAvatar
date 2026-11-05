@@ -4,6 +4,7 @@ import DatabaseService from './database.service'
 import { createLogger } from './logger'
 import mainUiI18n from './ui-i18n.service'
 import PluginHostService from './plugin/plugin-host.service'
+import { markPowerSaveIgnored } from './power-save.service'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import {
   DEFAULT_SECRETARY_SETTINGS,
@@ -372,6 +373,8 @@ class SecretaryWindowService {
       },
     })
     win.setAlwaysOnTop(true, 'floating')
+    // 常驻浮窗：显示时不阻止系统熄屏/锁屏
+    markPowerSaveIgnored(win)
     win.once('ready-to-show', () => {
       win.showInactive()
       // 透明区域不拦截桌面点击；渲染端命中挂件本体时再临时关闭
@@ -415,6 +418,8 @@ class SecretaryWindowService {
       },
     })
     win.setAlwaysOnTop(true, 'floating')
+    // 常驻浮窗：显示时不阻止系统熄屏/锁屏
+    markPowerSaveIgnored(win)
     win.on('closed', () => {
       this.panelWin = null
       this.panelReady = false

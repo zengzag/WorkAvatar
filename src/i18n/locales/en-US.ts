@@ -937,7 +937,7 @@ export default {
     rerunOnboardingDesc: 'Reopen onboarding to reconfigure the model service or create a digital employee',
     rerunOnboardingAction: 'Start',
     preventSleep: 'Keep screen awake while window is open',
-    preventSleepDesc: 'Prevent the system from turning off the screen or sleeping while any app window is open, even when covered by other windows; restore when all windows are closed (tray icon only)',
+    preventSleepDesc: 'Prevent the system from turning off the screen or sleeping while any app window is open, even when covered by other windows; restore when all windows are closed (tray icon or secretary widget only)',
     tabStorage: 'Storage',
     tabAppearance: 'Appearance',
     tabAbout: 'About',
