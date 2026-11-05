@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { App, Button, Dropdown, Tooltip, theme } from 'antd'
 import {
   CloseOutlined,
@@ -120,6 +120,24 @@ const SecretaryPanel: React.FC = () => {
     () => (detailTaskId ? allTasks.find((t) => t.id === detailTaskId) : undefined),
     [allTasks, detailTaskId],
   )
+
+  /** 任务列表最多显示 5 条，超出在列表内滚动：按实际行高计算上限，适配不同字号/主题 */
+  const taskScrollRef = useRef<HTMLDivElement>(null)
+  const [taskListMaxHeight, setTaskListMaxHeight] = useState<number | undefined>(undefined)
+  useLayoutEffect(() => {
+    const el = taskScrollRef.current
+    const rows = el?.querySelectorAll<HTMLElement>('.secretary-task-row')
+    if (!el || !rows || rows.length === 0) {
+      setTaskListMaxHeight(undefined)
+      return
+    }
+    // 超过 5 条时按实际行高裁掉多出的行（保留分组标题的完整高度）
+    const hiddenRows = rows.length - 5
+    const next = hiddenRows <= 0
+      ? undefined
+      : Math.ceil(el.scrollHeight - hiddenRows * rows[0].getBoundingClientRect().height)
+    setTaskListMaxHeight((prev) => (prev === next ? prev : next))
+  }, [running.length, finished.length])
 
   // 任务被移除（完成按钮 / 列表裁剪）后退出详情，回到任务列表
   useEffect(() => {
@@ -932,25 +950,27 @@ const SecretaryPanel: React.FC = () => {
           </div>
         )}
 
-        {/* 任务区 */}
+        {/* 任务区：最多显示 5 条，超出在列表内滚动 */}
         {(runningShown.length > 0 || finishedShown.length > 0) && (
           <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
-            {runningShown.length > 0 && (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '0 8px 3px' }}>
-                  {t('secretary.running')} {running.length > 1 ? `· ${running.length}` : ''}
-                </div>
-                {runningShown.map(taskRow)}
-              </>
-            )}
-            {finishedShown.length > 0 && (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '6px 8px 3px' }}>
-                  {t('secretary.finished')} {finished.length > 1 ? `· ${finished.length}` : ''}
-                </div>
-                {finishedShown.map(taskRow)}
-              </>
-            )}
+            <div ref={taskScrollRef} className="secretary-task-scroll" style={{ maxHeight: taskListMaxHeight }}>
+              {runningShown.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '0 8px 3px' }}>
+                    {t('secretary.running')} {running.length > 1 ? `· ${running.length}` : ''}
+                  </div>
+                  {runningShown.map(taskRow)}
+                </>
+              )}
+              {finishedShown.length > 0 && (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '6px 8px 3px' }}>
+                    {t('secretary.finished')} {finished.length > 1 ? `· ${finished.length}` : ''}
+                  </div>
+                  {finishedShown.map(taskRow)}
+                </>
+              )}
+            </div>
           </div>
         )}
 

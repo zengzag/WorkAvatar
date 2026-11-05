@@ -11,8 +11,8 @@ import { useSecretaryStore, type SecretaryTask } from './secretary.store'
 
 /** 一次拉取的最大会话数：运行中任务一定在最近活跃范围内 */
 const LIST_LIMIT = 60
-/** 面板最多展示的已结束主窗口任务数，避免历史任务把浮窗撑满 */
-const FINISHED_LIMIT = 10
+/** 已结束的主窗口任务只展示最近 24 小时内有活动的，避免历史任务把浮窗撑满 */
+const FINISHED_WINDOW_SEC = 24 * 60 * 60
 const DISMISSED_KEY = 'wa.secretary.dismissedRemote'
 const DISMISSED_MAX = 200
 /** 小秘书自己创建的会话（永久记录）：即使本地任务已被「完成」移除，也不再镜像成主窗口任务 */
@@ -128,6 +128,9 @@ export async function syncRemoteTasks(employees: Employee[]): Promise<void> {
 
     const sessionId = activeByConversation.get(conversation.id)
     const prev = prevByConversation.get(conversation.id)
+    // 已结束且超过 24 小时没有新活动：不再展示（运行中任务不受时间限制）
+    if (!sessionId && Math.floor(Date.now() / 1000) - lastActiveSec > FINISHED_WINDOW_SEC) continue
+
     let status: SecretaryTask['status'] = sessionId ? 'running' : 'done'
     let error: string | undefined
 
@@ -171,7 +174,6 @@ export async function syncRemoteTasks(employees: Employee[]): Promise<void> {
   const finished = remote
     .filter((t) => t.status !== 'running')
     .sort((a, b) => b.startedAt - a.startedAt)
-    .slice(0, FINISHED_LIMIT)
   useSecretaryStore.getState().setRemoteTasks([...running, ...finished])
 }
 
