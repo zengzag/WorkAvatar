@@ -1875,7 +1875,6 @@ export default {
   },
   secretary: {
     title: '小秘书',
-    subtitle: '随叫随到',
     switchEmployee: '切换员工',
     placeholder: '说一句话，交给{{name}}',
     inputHint: 'Enter 发送 · Shift+Enter 换行',

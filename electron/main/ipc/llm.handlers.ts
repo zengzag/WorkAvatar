@@ -14,7 +14,7 @@ import { createPiProvider } from '../services/agent/llm/pi-provider-factory'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
 import { broadcastToOtherRenderers, safeHandle } from './_shared'
-import { flushRunStream, hasOtherSessionViewer, registerSessionWebContents, sendToSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
+import { flushRunStream, hasOtherSessionViewer, registerSessionObserver, registerSessionWebContents, sendToSessionWebContents, unregisterSessionObserver, unregisterSessionWebContents } from './agent-run-events'
 import SubAgentRuntime from '../services/agent-runtime/runtime'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import { clearResumableRun, getResumableRun, takeResumableRun } from '../services/agent/core/resumable-runs'
@@ -92,6 +92,17 @@ export function registerLLMHandlers(
   safeHandle(IPC_CHANNELS.LLM_SESSION_ATTACHED, (sessionId?: string) => {
     if (!sessionId) return false
     return hasOtherSessionViewer(sessionId, sessionOwner.get(sessionId))
+  })
+
+  // 只读观察全部会话事件（小秘书面板显示主窗口任务的执行细节）：
+  // 不进 sessionWebContents，因此不会让发起窗口误判「已有其他窗口接入」而放弃收尾落库
+  ipcMain.handle(IPC_CHANNELS.LLM_OBSERVE_SESSION_EVENTS, (event) => {
+    registerSessionObserver(event.sender)
+    return { success: true }
+  })
+  ipcMain.handle(IPC_CHANNELS.LLM_UNOBSERVE_SESSION_EVENTS, (event) => {
+    unregisterSessionObserver(event.sender)
+    return { success: true }
   })
 
   // 活跃子会话运行列表（renderer 重载后恢复运行面板/消息流用）

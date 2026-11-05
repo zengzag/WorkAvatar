@@ -154,7 +154,10 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onChunk(({ sessionId, chunk, chunks }) => {
     const entry = sessions.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      setRemoteStep(sessionId, String(i18n.t('secretary.responding')))
+      return
+    }
     const text = chunk ?? (chunks ? chunks.join('') : '')
     if (text) {
       entry.text += text
@@ -167,7 +170,11 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onThought(({ sessionId, thought }) => {
     const entry = sessions.get(sessionId)
-    if (!entry || !thought) return
+    if (!entry) {
+      if (thought) setRemoteStep(sessionId, String(i18n.t('secretary.thinkingProcess')))
+      return
+    }
+    if (!thought) return
     entry.thought += thought
     appendTextSegment(entry, 'thinking', thought)
     setStep(entry.taskId, String(i18n.t('secretary.thinkingProcess')))
@@ -176,7 +183,10 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onToolCall(({ sessionId, id, name, args }) => {
     const entry = sessions.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      setRemoteStep(sessionId, getToolDisplayName(name))
+      return
+    }
     closeStreamingSegments(entry)
     entry.segments.push({
       type: 'tool_call',
@@ -195,7 +205,10 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onToolResult(({ sessionId, name, result, generatedFiles }) => {
     const entry = sessions.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      setRemoteStep(sessionId, String(i18n.t('secretary.working')))
+      return
+    }
     // 工具结果事件不带调用 id，按「同名且未完成」的最后一次调用回填
     for (let i = entry.segments.length - 1; i >= 0; i--) {
       const seg = entry.segments[i]
@@ -254,6 +267,13 @@ export function installSecretaryRunner(): void {
 
 function findTask(taskId: string): SecretaryTask | undefined {
   return store().tasks.find((t) => t.id === taskId)
+}
+
+/** 主窗口发起的任务没有本地执行器：按会话定位运行中的镜像任务，让面板也能看到同样的执行细节 */
+function setRemoteStep(sessionId: string, step: string): void {
+  const task = store().remoteTasks.find((t) => t.sessionId === sessionId)
+  if (!task || task.step === step) return
+  store().patchRemoteTask(task.id, { step })
 }
 
 /** 关闭所有仍在流式中的段（思考结束才出正文、工具调用前先收口正文） */

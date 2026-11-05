@@ -31,7 +31,7 @@ import {
   type SecretaryTask,
   type SecretaryNotice,
 } from './secretary.store'
-import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState } from './secretary-runner'
+import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState, installSecretaryRunner } from './secretary-runner'
 import { syncRemoteTasks, abortRemoteTask, dismissRemoteTask } from './secretary-remote'
 import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KEY } from './secretary-bus'
 import { useInteractionStore } from '../../stores/interaction.store'
@@ -242,6 +242,13 @@ const SecretaryPanel: React.FC = () => {
     document.documentElement.style.background = 'transparent'
     document.body.style.background = 'transparent'
     document.body.style.overflow = 'hidden'
+  }, [])
+
+  // 主窗口发起的任务也要显示执行细节：面板常驻，挂载即接管会话流事件
+  useEffect(() => {
+    installSecretaryRunner()
+    void window.electronAPI.llm.observeSessionEvents?.().catch(() => {})
+    return () => { void window.electronAPI.llm.unobserveSessionEvents?.().catch(() => {}) }
   }, [])
 
   const loadEmployees = useCallback(() => {
@@ -834,8 +841,8 @@ const SecretaryPanel: React.FC = () => {
           />
         ) : (
           <>
-        {/* 头部：员工 + 切换 + 设置 + 关闭 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        {/* 头部：员工 + 切换 + 设置 + 关闭，单行紧凑排布 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {employee && (
             <EmployeeAvatar
               employeeId={employee.id}
@@ -844,30 +851,41 @@ const SecretaryPanel: React.FC = () => {
               avatarImage={employee.avatar_image}
               avatarType={employee.avatar_type}
               source={employee.source}
-              size={30}
+              size={24}
               shape="square"
             />
           )}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-                {employee?.name || t('secretary.title')}
-              </span>
-              <Tooltip title={t('secretary.switchEmployee')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<SwapOutlined />}
-                  style={{ color: menu === 'employee' ? token.colorText : token.colorTextTertiary }}
-                  onClick={() => setMenu((prev) => (prev === 'employee' ? null : 'employee'))}
-                />
-              </Tooltip>
-            </div>
-            <div style={{ fontSize: 11, color: token.colorTextTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 190 }}>
-              {employee?.description || t('secretary.subtitle')}
-            </div>
-          </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2 }}>
+          <span
+            style={{
+              flexShrink: 0,
+              maxWidth: '50%',
+              fontSize: 13,
+              fontWeight: 600,
+              color: token.colorText,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {employee?.name || t('secretary.title')}
+          </span>
+          <Tooltip title={t('secretary.switchEmployee')}>
+            <Button
+              type="text"
+              size="small"
+              icon={<SwapOutlined />}
+              style={{
+                color: menu === 'employee' ? token.colorText : token.colorTextTertiary,
+                padding: '0 4px',
+                height: 20,
+                minWidth: 20,
+                borderRadius: 4,
+                flexShrink: 0,
+              }}
+              onClick={() => setMenu((prev) => (prev === 'employee' ? null : 'employee'))}
+            />
+          </Tooltip>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
             <Button
               type="text"
               size="small"

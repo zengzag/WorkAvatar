@@ -156,7 +156,8 @@ export async function syncRemoteTasks(employees: Employee[]): Promise<void> {
       title: conversation.title || defaultConversationTitle(),
       employee: snapshot(employeesById.get(conversation.employee_id), conversation.employee_id, conversation.employee_name || ''),
       status,
-      step: '',
+      // 执行细节由 runner 的流事件写入；轮询重建时保留同一次运行里已拿到的阶段文案
+      step: status === 'running' && prev?.status === 'running' && prev.sessionId === sessionId ? prev.step : '',
       startedAt: time,
       endedAt: status === 'running' ? undefined : time,
       viewed: true,

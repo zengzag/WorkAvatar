@@ -3,6 +3,22 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 /** 会话 → webContents 集合：发起窗口 + 后续接入窗口（如在任务页打开小秘书发起的运行中任务） */
 const sessionWebContents: Map<string, Set<Electron.WebContents>> = new Map()
 
+/**
+ * 会话事件观察者（小秘书面板）：只接收事件用于展示执行进度，
+ * 不计入「已有其他窗口接入」判定，因此不会让发起窗口让出收尾落库。
+ */
+const sessionObservers: Set<Electron.WebContents> = new Set()
+
+export function registerSessionObserver(wc: Electron.WebContents): void {
+  if (sessionObservers.has(wc)) return
+  sessionObservers.add(wc)
+  wc.once('destroyed', () => { sessionObservers.delete(wc) })
+}
+
+export function unregisterSessionObserver(wc: Electron.WebContents): void {
+  sessionObservers.delete(wc)
+}
+
 export interface AgentRunEventPayload {
   parentSessionId: string
   runId: string
@@ -30,12 +46,29 @@ export function unregisterSessionWebContents(sessionId: string): void {
 /** 向会话所有接入窗口推送事件 */
 export function sendToSessionWebContents(sessionId: string, channel: string, payload: unknown): void {
   const targets = sessionWebContents.get(sessionId)
-  if (!targets) return
+  if (!targets) {
+    // 没有接入窗口时观察者仍需要事件（主窗口任务也要在小秘书上显示执行进度）
+    sendToObservers(channel, payload, undefined)
+    return
+  }
   for (const wc of targets) {
     if (wc.isDestroyed()) {
       targets.delete(wc)
       continue
     }
+    wc.send(channel, payload)
+  }
+  sendToObservers(channel, payload, targets)
+}
+
+/** 只读观察者：跳过已收到该事件的接入窗口，避免同一窗口重复处理 */
+function sendToObservers(channel: string, payload: unknown, sent: Set<Electron.WebContents> | undefined): void {
+  for (const wc of sessionObservers) {
+    if (wc.isDestroyed()) {
+      sessionObservers.delete(wc)
+      continue
+    }
+    if (sent?.has(wc)) continue
     wc.send(channel, payload)
   }
 }

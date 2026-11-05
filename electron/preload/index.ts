@@ -209,6 +209,9 @@ const electronAPI = {
     attachSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ATTACH_SESSION, sessionId),
     /** 运行中会话是否已有其他窗口接入（发起方据此让出收尾落库） */
     isSessionAttached: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_SESSION_ATTACHED, sessionId) as Promise<boolean>,
+    /** 只读观察全部会话事件（小秘书显示主窗口任务执行细节，不参与接入判定） */
+    observeSessionEvents: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_OBSERVE_SESSION_EVENTS),
+    unobserveSessionEvents: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_UNOBSERVE_SESSION_EVENTS),
     /** 其他窗口发起了会话：已打开该任务的窗口据此接入并同步消息 */
     onSessionStarted: (callback: (data: { sessionId: string; employeeId?: string; conversationId?: string }) => void) => {
       const handler = (_event: any, data: { sessionId: string; employeeId?: string; conversationId?: string }) => callback(data)

@@ -16,6 +16,9 @@ export const LLM_CHANNELS = {
   LLM_ATTACH_SESSION: 'llm:attach-session',
   /** 查询运行中会话是否被其他窗口接入（小秘书据此决定收尾落库是否让位给任务页） */
   LLM_SESSION_ATTACHED: 'llm:session-attached',
+  /** 只读观察全部会话事件（小秘书据此显示主窗口任务的执行细节，不参与接入判定） */
+  LLM_OBSERVE_SESSION_EVENTS: 'llm:observe-session-events',
+  LLM_UNOBSERVE_SESSION_EVENTS: 'llm:unobserve-session-events',
   /** 主进程 → 其他窗口：某会话开始运行（让已打开该任务的窗口接入并实时同步） */
   LLM_SESSION_STARTED: 'llm:session-started',
   LLM_CHAT_CHUNK: 'llm:chat-chunk',

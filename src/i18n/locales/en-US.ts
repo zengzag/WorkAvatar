@@ -1869,7 +1869,6 @@ export default {
   },
   secretary: {
     title: 'Secretary',
-    subtitle: 'Always around',
     switchEmployee: 'Switch employee',
     placeholder: 'Tell {{name}} what to do',
     inputHint: 'Enter to send · Shift+Enter for a new line',
