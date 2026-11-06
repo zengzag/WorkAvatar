@@ -178,7 +178,7 @@ class SecretaryWindowService {
     const prev = this.settings
     this.settings = { ...this.settings, ...patch }
     // size / opacity / employeeId / character 属于渲染端偏好；enabled 与 hotkey 需要主进程生效
-    this.settings.size = clamp(Math.round(this.settings.size || DEFAULT_SECRETARY_SETTINGS.size), 64, 192)
+    this.settings.size = clamp(Math.round(this.settings.size || DEFAULT_SECRETARY_SETTINGS.size), 32, 192)
     this.settings.opacity = clamp(this.settings.opacity || 1, 0.4, 1)
     if (!isSecretaryCharacterId(this.settings.character)) {
       this.settings.character = DEFAULT_SECRETARY_SETTINGS.character
