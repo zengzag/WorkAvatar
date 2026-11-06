@@ -48,6 +48,8 @@ interface InteractionActions {
   enqueue: (request: InteractionRequest) => void
   respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) => void
   cancelCurrent: () => void
+  /** 主进程侧请求已失效（超时/会话结束）：按 id 移除弹窗，不上报响应 */
+  dismiss: (id: string) => void
 }
 
 /** 弹窗响应上报主进程，失败仅告警不阻塞弹窗流程 */
@@ -94,6 +96,17 @@ export const useInteractionStore = create<InteractionState & InteractionActions>
 
       set((state) => {
         state.currentRequest = state.queue.length > 0 ? state.queue.shift()! : null
+      })
+    },
+
+    dismiss: (id) => {
+      set((state) => {
+        if (state.currentRequest?.id === id) {
+          state.currentRequest = state.queue.length > 0 ? state.queue.shift()! : null
+          return
+        }
+        const index = state.queue.findIndex((q) => q.id === id)
+        if (index >= 0) state.queue.splice(index, 1)
       })
     },
   }))

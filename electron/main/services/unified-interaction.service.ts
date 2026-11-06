@@ -145,6 +145,7 @@ class UnifiedInteractionService {
     if (session) {
       for (const [requestId, pending] of session.pendingRequests) {
         if (pending.timer) clearTimeout(pending.timer)
+        this.notifyRendererDismiss(session, requestId)
         pending.resolve({ id: requestId, cancelled: true })
       }
       this.sessions.delete(sessionId)
@@ -186,6 +187,7 @@ class UnifiedInteractionService {
     return new Promise<InteractionResponse>((resolve) => {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id)
+        this.notifyRendererDismiss(session, id)
         resolve({ id, cancelled: true, timedOut: true })
       }, timeout)
 
@@ -199,6 +201,17 @@ class UnifiedInteractionService {
         resolve({ id, cancelled: true })
       }
     })
+  }
+
+  /**
+   * 请求在主进程侧已失效（超时/会话结束）时通知渲染端关闭弹窗，
+   * 避免用户面对一个已经无响应目标的弹窗。
+   */
+  private notifyRendererDismiss(session: SessionInfo, requestId: string): void {
+    try {
+      if (session.webContents.isDestroyed()) return
+      session.webContents.send(IPC_CHANNELS.INTERACTION_DISMISS, { id: requestId })
+    } catch { /* 窗口已销毁时忽略 */ }
   }
 
   /**

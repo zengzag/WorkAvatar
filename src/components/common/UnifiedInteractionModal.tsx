@@ -80,6 +80,7 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
   const currentRequest = useInteractionStore((s) => s.currentRequest)
   const respond = useInteractionStore((s) => s.respond)
   const enqueue = useInteractionStore((s) => s.enqueue)
+  const dismiss = useInteractionStore((s) => s.dismiss)
 
   const [inputValue, setInputValue] = useState('')
   const [selectedValue, setSelectedValue] = useState<string | undefined>(undefined)
@@ -90,6 +91,14 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
     })
     return () => { cleanup() }
   }, [enqueue])
+
+  // 主进程侧请求超时或会话已结束时弹窗自动关闭，避免停留在无法响应的弹窗上
+  useEffect(() => {
+    const cleanup = window.electronAPI.interaction.onDismiss(({ id }) => {
+      dismiss(id)
+    })
+    return () => { cleanup() }
+  }, [dismiss])
 
   useEffect(() => {
     if (currentRequest) {

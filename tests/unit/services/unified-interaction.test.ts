@@ -150,6 +150,8 @@ describe('unified-interaction / 请求下发与响应', () => {
 
     await vi.advanceTimersByTimeAsync(1)
     await expect(promise).resolves.toEqual({ id, cancelled: true, timedOut: true })
+    // 超时后通知渲染端关闭弹窗，避免残留一个已无响应目标的弹窗
+    expect(lastSent()).toEqual({ channel: IPC_CHANNELS.INTERACTION_DISMISS, payload: { id } })
     expect(respond({ id, confirmed: true, cancelled: false }).success).toBe(false)
   })
 

@@ -604,6 +604,12 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.INTERACTION_REQUEST, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_REQUEST, handler)
     },
+    /** 主进程侧请求已失效（超时/会话结束）：按 id 关闭对应弹窗 */
+    onDismiss: (callback: (payload: { id: string }) => void) => {
+      const handler = (_event: any, payload: { id: string }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.INTERACTION_DISMISS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_DISMISS, handler)
+    },
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
     /** 关闭/开启"本轮任务不再提醒"高权限模式（conversationId 优先，无 DB 会话时传 sessionId） */
@@ -704,6 +710,7 @@ export type ElectronAPI = typeof electronAPI & {
   getPathForFile: (file: File) => string
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
+    onDismiss: (callback: (payload: { id: string }) => void) => () => void
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) => Promise<{ success: boolean }>
     setTaskHighPermission: (params: { conversationId?: string; sessionId?: string; enabled: boolean }) => Promise<{ success: boolean; error?: string }>
   }

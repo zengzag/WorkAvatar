@@ -62,6 +62,21 @@ describe('stores/interaction.store', () => {
     expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
   })
 
+  it('dismiss 移除当前请求并弹出下一个，且不上报响应', () => {
+    const s = useInteractionStore.getState()
+    s.enqueue(req('1'))
+    s.enqueue(req('2'))
+    s.enqueue(req('3'))
+    useInteractionStore.getState().dismiss('1')
+    expect(respondCalls).toHaveLength(0)
+    expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
+    // 队列中的请求同样可按 id 移除；未知 id 是 no-op
+    useInteractionStore.getState().dismiss('3')
+    useInteractionStore.getState().dismiss('nope')
+    expect(useInteractionStore.getState().queue).toHaveLength(0)
+    expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
+  })
+
   it('响应上报失败（异步 reject）时仍弹出下一个请求，不阻塞弹窗流程', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const originalRespond = (globalThis as any).window.electronAPI.interaction.respond
