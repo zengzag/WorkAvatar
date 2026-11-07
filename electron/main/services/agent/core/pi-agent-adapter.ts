@@ -1277,23 +1277,24 @@ async function handleAgentEvent(
       toolStartTime.delete(event.toolCallId)
 
       eventEmitter.emit('tool:call:end', { tool: event.toolName, success })
-      // 展示值（前端 UI 用 output / error）；若 LLM 实际看到的文本与「仅凭展示值重建」不同，
-      // 额外下发 resultRaw，前端重建 history 时原样使用，避免跨轮前缀字节漂移
-      const displayValue = success ? result.output : result.error
+      // 展示值（前端 UI 用）跟随业务结果：result.success=false（如权限被拒、命令失败）
+      // 或工具调用协议失败时展示错误原因，避免界面把失败调用显示为成功。
+      const businessFailed = result.success === false || success === false
+      const displayValue = businessFailed ? (result.error ?? result.output) : result.output
       const llmContent = details?.llmContent
       const resultRaw = typeof llmContent === 'string' && llmContent !== expectedToolMessageContent(displayValue)
         ? llmContent
         : undefined
       callbacks.onToolResult?.({
         name: event.toolName,
-        // 前端展示用 result：工具调用成功时展示 output，失败（异常）时展示 error
+        // 前端展示用 result：业务成功展示 output，失败展示 error
         result: displayValue,
         rawResult: result.rawOutput,
         resultRaw,
         generatedFiles: result.generatedFiles,
         images: result.images,
-        // success 字段表示"工具调用是否成功"（基于 isError），非业务层成功
-        success,
+        // success 供前端判断是否展示失败态（业务结果）
+        success: !businessFailed,
         // 协议级失败标记：Anthropic tool_result.is_error 需要跨轮回放，否则历史字节不一致
         isError: event.isError === true,
       })
