@@ -361,6 +361,18 @@ const SecretaryPanel: React.FC = () => {
     return () => { off() }
   }, [addNotice, t])
 
+  // 交互请求已在其他窗口（主窗口 / 任务页）处理：撤回对应提醒，避免重复展示同一条待确认通知
+  useEffect(() => {
+    const off = window.electronAPI.secretary.onNotifyDismiss?.(({ clickId }) => {
+      if (!clickId) return
+      const state = useSecretaryStore.getState()
+      for (const notice of state.notices) {
+        if (notice.clickTarget === 'ask_user' && notice.clickId === clickId) state.removeNotice(notice.id)
+      }
+    })
+    return () => { off?.() }
+  }, [])
+
   useEffect(() => {
     if (employeeId) localStorage.setItem(EMPLOYEE_KEY, employeeId)
   }, [employeeId])

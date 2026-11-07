@@ -146,6 +146,7 @@ class UnifiedInteractionService {
       for (const [requestId, pending] of session.pendingRequests) {
         if (pending.timer) clearTimeout(pending.timer)
         this.notifyRendererDismiss(session, requestId)
+        this.withdrawSecretaryNotice(requestId)
         pending.resolve({ id: requestId, cancelled: true })
       }
       this.sessions.delete(sessionId)
@@ -182,12 +183,13 @@ class UnifiedInteractionService {
 
     // 主窗口未激活时，通过系统通知告知用户有数字员工询问
     // 避免用户错过权限请求；点击通知会聚焦主窗口显示交互弹窗
-    this.maybeNotifyInactiveWindow(request, session.webContents)
+    this.maybeNotifyInactiveWindow(request, session.webContents, id)
 
     return new Promise<InteractionResponse>((resolve) => {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id)
         this.notifyRendererDismiss(session, id)
+        this.withdrawSecretaryNotice(id)
         resolve({ id, cancelled: true, timedOut: true })
       }, timeout)
 
@@ -198,6 +200,7 @@ class UnifiedInteractionService {
       } catch {
         clearTimeout(timer)
         session.pendingRequests.delete(id)
+        this.withdrawSecretaryNotice(id)
         resolve({ id, cancelled: true })
       }
     })
@@ -219,8 +222,13 @@ class UnifiedInteractionService {
    * 复用 NotificationService 的主窗口失焦检测与通知点击聚焦逻辑。
    * 通知 body 截断到 200 字符，避免过长。
    * 小秘书面板窗发起的请求不发通知：面板会自动弹出并把挂件切到等待态，本身已经是提醒。
+   * clickId 携带交互请求 id：用户在主窗口处理完该请求后，据此撤回小秘书里的同一条提醒。
    */
-  private maybeNotifyInactiveWindow(request: Omit<InteractionRequest, 'id'>, sender: Electron.WebContents): void {
+  private maybeNotifyInactiveWindow(
+    request: Omit<InteractionRequest, 'id'>,
+    sender: Electron.WebContents,
+    requestId: string,
+  ): void {
     try {
       const secretaryWindow = require('./secretary-window.service').default
       if (secretaryWindow.getInstance().isPanelWebContents(sender)) return
@@ -232,9 +240,22 @@ class UnifiedInteractionService {
         title,
         body,
         clickTarget: 'ask_user',
+        clickId: requestId,
         source: 'ask_user',
       })
     } catch { /* 通知失败不影响主流程 */ }
+  }
+
+  /**
+   * 交互请求已处理（用户响应 / 超时 / 会话结束）：撤回小秘书里对应的提醒。
+   * 请求处理发生在主窗口时，小秘书不应再重复展示同一条待确认通知。
+   */
+  private withdrawSecretaryNotice(requestId: string): void {
+    if (!requestId) return
+    try {
+      const secretaryWindow = require('./secretary-window.service').default
+      secretaryWindow.getInstance().dismissInteractionNotice(requestId)
+    } catch { /* 小秘书未启用或模块不可用时忽略 */ }
   }
 
   /**
@@ -313,6 +334,8 @@ class UnifiedInteractionService {
             this.setTaskHighPermission(pending.allowKey, true)
           }
           pending.resolve(response)
+          // 用户已在窗口里处理完该请求：撤回小秘书里同一条待确认提醒
+          this.withdrawSecretaryNotice(response.id)
           return { success: true }
         }
       }

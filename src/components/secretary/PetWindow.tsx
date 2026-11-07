@@ -194,15 +194,25 @@ const PetWindow: React.FC = () => {
   // 小秘书承接的宿主通知：挂件直接弹气泡，面板窗负责记录到通知列表
   useEffect(() => {
     const off = window.electronAPI.secretary.onNotify((payload) => {
-      setNotice({ title: payload.title, body: payload.body })
+      setNotice({ title: payload.title, body: payload.body, clickId: payload.clickId })
       window.clearTimeout(noticeTimerRef.current)
       noticeTimerRef.current = window.setTimeout(() => setNotice(null), 8000)
       touch()
+    })
+    // 交互请求已在其他窗口处理：若气泡正展示同一条提醒则立即收起
+    const offDismiss = window.electronAPI.secretary.onNotifyDismiss?.(({ clickId }) => {
+      if (!clickId) return
+      setNotice((prev) => {
+        if (!prev || prev.clickId !== clickId) return prev
+        window.clearTimeout(noticeTimerRef.current)
+        return null
+      })
     })
     // 监听注册完成后再上报，避免主进程在 React 挂载前投递导致通知丢失
     window.electronAPI.secretary.notifyReady('pet')
     return () => {
       off()
+      offDismiss?.()
       window.clearTimeout(noticeTimerRef.current)
     }
   }, [touch])

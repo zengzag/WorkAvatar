@@ -9,6 +9,7 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import {
   DEFAULT_SECRETARY_SETTINGS,
   isSecretaryCharacterId,
+  type SecretaryNotifyDismissPayload,
   type SecretaryNotifyPayload,
   type SecretaryRuntimeState,
   type SecretarySettings,
@@ -126,6 +127,29 @@ class SecretaryWindowService {
     try {
       win.webContents.send(IPC_CHANNELS.SECRETARY_NOTIFY, payload)
     } catch { /* 窗口正在销毁时忽略 */ }
+  }
+
+  private sendDismissTo(win: BrowserWindow | null, payload: SecretaryNotifyDismissPayload): void {
+    if (!win || win.isDestroyed()) return
+    try {
+      win.webContents.send(IPC_CHANNELS.SECRETARY_NOTIFY_DISMISS, payload)
+    } catch { /* 窗口正在销毁时忽略 */ }
+  }
+
+  /**
+   * 交互请求已在某个窗口处理（权限确认 / ask_user 等）：撤回对应的提醒，
+   * 避免用户在主窗口处理完之后，小秘书里仍挂着同一条待确认通知。
+   * clickId 为交互请求 id，通知下发时写入。
+   */
+  dismissInteractionNotice(requestId: string): void {
+    if (!requestId) return
+    const payload: SecretaryNotifyDismissPayload = { clickId: requestId }
+    // 面板未就绪时通知还在队列里：直接移除，避免就绪后补发一条已处理的提醒
+    this.pendingNotices = this.pendingNotices.filter(
+      (item) => !(item.source === 'ask_user' && item.clickId === requestId),
+    )
+    this.sendDismissTo(this.petWin, payload)
+    this.sendDismissTo(this.panelWin, payload)
   }
 
   /** 是否来自小秘书面板窗：面板会自己弹出并让挂件进入等待态，不需要再发系统通知 */

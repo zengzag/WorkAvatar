@@ -36,11 +36,18 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_OPEN_SETTINGS: 'secretary:open-settings',
   /** 主进程 → 挂件窗/面板窗：宿主通知（小秘书启用时承接系统通知） */
   SECRETARY_NOTIFY: 'secretary:notify',
+  /** 主进程 → 挂件窗/面板窗：交互请求已在任意窗口处理，撤回对应提醒 */
+  SECRETARY_NOTIFY_DISMISS: 'secretary:notify-dismiss',
   /** 面板窗 → 主进程：点击通知条目，聚焦主窗口并跳转目标 */
   SECRETARY_NOTIFY_CLICK: 'secretary:notify-click',
   /** 渲染端 → 主进程：窗口已完成挂载，可以接收通知（挂件窗/面板窗各自上报） */
   SECRETARY_WINDOW_READY: 'secretary:window-ready',
 } as const
+
+/** 撤回提醒的关联键：交互请求 id（通知下发时写入 clickId） */
+export interface SecretaryNotifyDismissPayload {
+  clickId?: string
+}
 
 /** 小秘书承接的通知载荷（复用宿主 NotifyPayload 字段，额外带接收时间） */
 export interface SecretaryNotifyPayload {

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
-import type { SecretaryCharacterId, SecretaryNotifyPayload } from '../shared/channels/secretary'
+import type { SecretaryCharacterId, SecretaryNotifyDismissPayload, SecretaryNotifyPayload } from '../shared/channels/secretary'
 import type {
   WorkspaceOpenInExplorerParams,
   WorkspaceListFilesParams,
@@ -397,6 +397,12 @@ const electronAPI = {
       const handler = (_event: any, payload: SecretaryNotifyPayload) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_NOTIFY, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_NOTIFY, handler)
+    },
+    /** 交互请求已被处理：按 clickId 撤回对应的通知条目与气泡 */
+    onNotifyDismiss: (callback: (payload: SecretaryNotifyDismissPayload) => void) => {
+      const handler = (_event: any, payload: SecretaryNotifyDismissPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_NOTIFY_DISMISS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_NOTIFY_DISMISS, handler)
     },
     /** 面板通知条目点击：聚焦主窗口并按 clickTarget/clickId 跳转（source 决定插件点击路由） */
     openNotice: (payload: { clickTarget?: string; clickId?: string; source?: string }) =>
