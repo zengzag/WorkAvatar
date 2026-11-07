@@ -37,8 +37,8 @@ const SubTaskDrawer: React.FC<SubTaskDrawerProps> = ({ open, segments, getToolDi
       }
       open={open}
       onClose={onClose}
-      width={560}
-      styles={{ body: { padding: 12, overflowY: 'auto', background: token.colorBgLayout } }}
+      width={640}
+      styles={{ body: { padding: 16, overflowY: 'auto', background: token.colorBgLayout } }}
     >
       {segments.length === 0 ? (
         <Empty description={t('workbench.delegationNoOutput')} image={Empty.PRESENTED_IMAGE_SIMPLE} />

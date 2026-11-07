@@ -21,6 +21,8 @@
   --wa-accent-hover: #3d8bff;
   --wa-accent-soft: rgba(22, 119, 255, 0.09);
   --wa-accent-line: rgba(22, 119, 255, 0.28);
+  --wa-danger: #cf222e;
+  --wa-danger-hover: #dc3d43;
 
   --wa-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.7));
   --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
@@ -69,6 +71,8 @@ html.dark {
   --wa-accent-hover: #69b1ff;
   --wa-accent-soft: rgba(64, 150, 255, 0.14);
   --wa-accent-line: rgba(64, 150, 255, 0.32);
+  --wa-danger: #c93c45;
+  --wa-danger-hover: #d95059;
 
   --wa-glass-bg: linear-gradient(180deg, rgba(23, 28, 39, 0.8), rgba(12, 15, 22, 0.72));
   --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.025);
@@ -338,6 +342,16 @@ html.dark .wa-approval-modal .ant-modal-mask {
   background: linear-gradient(180deg, color-mix(in srgb, var(--wa-accent) 80%, #fff 20%), var(--wa-accent-hover)) !important;
 }
 
+/* 高危确认按钮：沿用主按钮的层次，但使用错误色，避免被通用主按钮样式覆盖成蓝色 */
+.ant-btn-primary.ant-btn-dangerous:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-danger) 88%, #fff 12%), var(--wa-danger)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 6px 16px -12px var(--wa-danger) !important;
+}
+
+.ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-danger) 80%, #fff 20%), var(--wa-danger-hover)) !important;
+}
+
 /* 暗色下主按钮用更深的蓝底 + 纯白文字，避免亮蓝底白字/浅蓝底深字看不清 */
 html.dark .ant-btn-primary:not(:disabled) {
   background: #2b6fe8 !important;
@@ -353,6 +367,17 @@ html.dark .ant-btn-primary:not(:disabled):hover {
 
 html.dark .ant-btn-primary:not(:disabled):active {
   background: #1f5fd0 !important;
+  color: #fff !important;
+}
+
+html.dark .ant-btn-primary.ant-btn-dangerous:not(:disabled) {
+  background: var(--wa-danger) !important;
+  color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 6px 16px -12px var(--wa-danger) !important;
+}
+
+html.dark .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+  background: var(--wa-danger-hover) !important;
   color: #fff !important;
 }
 
@@ -577,6 +602,110 @@ html.dark .ant-switch .ant-switch-handle::before {
 
 .wa-topbar-workspace:active {
   background: var(--wa-accent-soft);
+}
+
+/* 任务对话中的分段行（思考/工具/委托/过程组）：统一字号、留白与悬停反馈 */
+.wa-seg-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s var(--wa-ease);
+}
+
+.wa-seg-row:hover {
+  background: var(--wa-hover);
+}
+
+.wa-seg-row-title {
+  font-size: 12px;
+  color: var(--wa-ink-2);
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.wa-seg-row-meta {
+  font-size: 11px;
+  color: var(--wa-ink-4);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.wa-seg-body {
+  margin: 0 0 6px 5px;
+  padding: 4px 8px 2px 12px;
+  border-left: 1px solid var(--wa-line-2);
+}
+
+/* 工具参数/结果、思考正文、diff 等详情块共用一套表面 */
+.wa-detail-block {
+  background: var(--wa-code-bg);
+  border: 1px solid var(--wa-line-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 消息操作按钮默认隐藏，悬停/键盘聚焦时出现，降低长对话的视觉噪音 */
+.wa-msg-actions {
+  opacity: 0;
+  transition: opacity 0.15s var(--wa-ease);
+}
+
+.wa-msg:hover .wa-msg-actions,
+.wa-msg:focus-within .wa-msg-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .wa-msg-actions {
+    opacity: 1;
+  }
+}
+
+/* 任务内联确认卡：与输入框同宽的实色卡片，左侧状态条 */
+.wa-inline-approval {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  box-shadow: 0 10px 28px -24px rgba(16, 24, 40, 0.45);
+  animation: wa-approval-in 0.18s var(--wa-ease);
+}
+
+@keyframes wa-approval-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+html.dark .wa-inline-approval {
+  box-shadow: 0 14px 32px -24px rgba(0, 0, 0, 0.9);
+}
+
+.wa-pending-approvals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 48px);
+  max-width: 820px;
+  margin: 0 auto 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--wa-line-2);
+  background: var(--wa-panel-2);
 }
 
 .wa-composer {

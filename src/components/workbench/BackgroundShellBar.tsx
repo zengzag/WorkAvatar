@@ -111,7 +111,10 @@ const BackgroundShellBar: React.FC<BackgroundShellBarProps> = ({ conversationId 
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '8px 3% 0',
+        padding: '8px 24px 0',
+        width: '100%',
+        maxWidth: 868,
+        margin: '0 auto',
         flexShrink: 0,
       }}
     >

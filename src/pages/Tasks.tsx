@@ -1332,7 +1332,7 @@ const Tasks: React.FC = () => {
                   style={{
                     flex: 1,
                     overflow: 'auto',
-                    padding: '18px 3% 8px',
+                    padding: '18px 24px 8px',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 20,

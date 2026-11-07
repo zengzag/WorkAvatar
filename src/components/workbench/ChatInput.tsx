@@ -1547,7 +1547,8 @@ const ChatInput: React.FC<{
   return (
     <div style={centerMode
       ? { padding: '0 16px', flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto' }
-      : { padding: '8px 6% 12px 6%', flexShrink: 0, maxWidth: 900, width: '100%', margin: '0 auto' }
+      // 与消息区共用同一个内容列：24px 内边距 + 820px 内容宽（868 = 820 + 左右内边距）
+      : { padding: '8px 24px 12px', flexShrink: 0, maxWidth: 868, width: '100%', margin: '0 auto' }
     }>
       {(workspaceSelector || (showEmployeeSelector && employees && employees.length > 0)) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingTop: 6, paddingBottom: 6, maxWidth: '100%' }}>

@@ -446,9 +446,10 @@ const MessageBubble: React.FC<{
     <div style={{ display: 'flex', justifyContent: 'center' }}>
       <div
         ref={bubbleRef}
+        className="wa-msg"
         style={{
           width: '100%',
-          maxWidth: 'min(92%, 820px)',
+          maxWidth: 'min(100%, 820px)',
           display: 'flex',
           gap: 10,
           flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
@@ -488,7 +489,8 @@ const MessageBubble: React.FC<{
         </div>
 
         <div style={{
-          maxWidth: '88%',
+          // 用户气泡最多占 88% 宽度保持右对齐层次；助手正文占满内容列，便于阅读与复制
+          maxWidth: msg.role === 'user' ? '88%' : '100%',
           minWidth: 0,
           width: msg.role === 'assistant' || isEditing ? '100%' : undefined,
           ...(msg.role === 'user' ? { marginLeft: -10 } : { marginRight: -10 }),
@@ -560,7 +562,7 @@ const MessageBubble: React.FC<{
               </div>
             )}
             {!msg.isStreaming && !isEditing && (
-              <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
+              <Space size={4} className="wa-msg-actions" style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
                 {msg.content && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     onClick={() => onCopy(msg.content)} />
@@ -647,7 +649,7 @@ const MessageBubble: React.FC<{
             )}
 
             {!displayIsStreaming && (
-              <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
+              <Space size={4} className="wa-msg-actions" style={{ marginTop: 2, marginLeft: 2 }}>
                 {!hideMessageActions && hasBranches && (
                   <div
                     style={{
