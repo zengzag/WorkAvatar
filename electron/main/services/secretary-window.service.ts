@@ -36,7 +36,7 @@ const MAX_PANEL_HEIGHT = 720
 const PET_PADDING_X = 140
 const PET_PADDING_Y = 110
 /** 气泡最大宽度（与 secretary.css 中 .pet-bubble 的 max-width 一致） */
-const BUBBLE_MAX_WIDTH = 220
+const BUBBLE_MAX_WIDTH = 170
 /** 挂件在窗口内距右下角的间距（必须与 secretary.css 中 .pet-anchor 的 right/bottom 一致） */
 const PET_ANCHOR_GAP = 12
 /** 挂件本体距屏幕边缘的留白 */
@@ -530,8 +530,10 @@ class SecretaryWindowService {
   }
 
   private notifyPanelVisibility(): void {
-    if (this.petWin && !this.petWin.isDestroyed()) {
-      this.petWin.webContents.send(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, this.isPanelOpen())
+    // 挂件据此切换表情，面板据此在每次打开时回到任务列表并刷新员工/模型
+    for (const win of [this.petWin, this.panelWin]) {
+      if (!win || win.isDestroyed()) continue
+      win.webContents.send(IPC_CHANNELS.SECRETARY_PANEL_VISIBILITY, this.isPanelOpen())
     }
   }
 

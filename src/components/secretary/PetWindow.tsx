@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { theme } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
@@ -35,7 +35,7 @@ const PetWindow: React.FC = () => {
   })
   const [size, setSize] = useState(INITIAL_SETTINGS.size || DEFAULT_SECRETARY_SETTINGS.size)
   const [opacity, setOpacity] = useState(INITIAL_SETTINGS.opacity || DEFAULT_SECRETARY_SETTINGS.opacity)
-  const [side, setSide] = useState<'left' | 'right'>('right')
+
   const [character, setCharacter] = useState<SecretaryCharacterId>(
     isSecretaryCharacterId(INITIAL_SETTINGS.character) ? INITIAL_SETTINGS.character : DEFAULT_SECRETARY_SETTINGS.character,
   )
@@ -46,11 +46,14 @@ const PetWindow: React.FC = () => {
   const [faceColor, setFaceColor] = useState<string | undefined>(undefined)
   const [pressed, setPressed] = useState(false)
   /** 小秘书承接的宿主通知：挂件气泡短暂展示标题 */
-  const [notice, setNotice] = useState<{ title: string; body: string } | null>(null)
+  const [notice, setNotice] = useState<{ title: string; body: string; clickId?: string } | null>(null)
   /** 3D 头部跟随：光标相对挂件中心的归一化偏移（-1..1），鼠标太远时归零 */
   const [look, setLook] = useState({ x: 0, y: 0 })
   const dragRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null)
   const petRef = useRef<HTMLDivElement>(null)
+  const bubbleRef = useRef<HTMLDivElement>(null)
+  /** 气泡水平偏移与尾巴位置：靠屏幕边缘时整体内收，尾巴仍指向挂件 */
+  const [bubbleTrim, setBubbleTrim] = useState({ shift: 0, tail: 0 })
   const playTimerRef = useRef(0)
   const noticeTimerRef = useRef(0)
   /** 睡眠态：长时间无交互且没有任务时进入，减少一切多余动作 */
@@ -61,6 +64,8 @@ const PetWindow: React.FC = () => {
   const lastActiveRef = useRef(Date.now())
   /** 面板打开时用户正在和小秘书交互，不进入睡眠 */
   const panelOpenRef = useRef(false)
+  /** 面板打开时隐藏气泡：膨胀的提示会被面板窗口挡住，状态改为在面板内展示 */
+  const [panelOpen, setPanelOpen] = useState(false)
 
   const setSleep = useCallback((value: boolean) => {
     if (sleepingRef.current === value) return
@@ -98,6 +103,29 @@ const PetWindow: React.FC = () => {
     setLook((prev) => (prev.x === qx && prev.y === qy ? prev : { x: qx, y: qy }))
   }, [])
 
+  /** 贴边时窗口有部分在屏外：气泡整体往屏内平移，尾巴仍对准挂件 */
+  const placeBubble = useCallback(() => {
+    const bubble = bubbleRef.current
+    const pet = petRef.current
+    if (!bubble || !pet) return
+    const bubbleWidth = bubble.offsetWidth
+    if (!bubbleWidth) return
+    const petBox = pet.getBoundingClientRect()
+    const petCenter = petBox.left + petBox.width / 2
+    const naturalLeft = petCenter - bubbleWidth / 2
+    const screenInfo = window.screen as Screen & { availLeft?: number }
+    const viewLeft = (screenInfo.availLeft ?? 0) - window.screenX
+    const viewRight = viewLeft + screenInfo.availWidth
+    const margin = 8
+    const left = Math.min(
+      Math.max(naturalLeft, viewLeft + margin),
+      Math.max(viewLeft + margin, viewRight - margin - bubbleWidth),
+    )
+    const shift = Math.round(left - naturalLeft)
+    const tail = Math.round(Math.max(14, Math.min(bubbleWidth - 14, petCenter - left)))
+    setBubbleTrim((prev) => (prev.shift === shift && prev.tail === tail ? prev : { shift, tail }))
+  }, [])
+
   useEffect(() => {
     document.documentElement.style.background = 'transparent'
     document.body.style.background = 'transparent'
@@ -131,8 +159,8 @@ const PetWindow: React.FC = () => {
       if (!alive) return
       setSize(s.settings.size)
       setOpacity(s.settings.opacity)
-      setSide(s.side)
       panelOpenRef.current = s.panelOpen
+      setPanelOpen(s.panelOpen)
       if (isSecretaryCharacterId(s.settings.character)) setCharacter(s.settings.character)
     }).catch(() => {})
     const offSettings = window.electronAPI.secretary.onSettingsChanged((s) => {
@@ -140,10 +168,10 @@ const PetWindow: React.FC = () => {
       setOpacity(s.opacity)
       setCharacter(isSecretaryCharacterId(s.character) ? s.character : DEFAULT_SECRETARY_SETTINGS.character)
     })
-    const offSide = window.electronAPI.secretary.onSideChanged(setSide)
     // 面板显隐也算交互：打开期间保持清醒，关闭后重新计时
     const offPanel = window.electronAPI.secretary.onPanelVisibility((open) => {
       panelOpenRef.current = open
+      setPanelOpen(open)
       touch()
     })
     // 拖动中窗口失焦（如 Alt+Tab）时结束拖动，避免窗口黏在光标上
@@ -158,7 +186,6 @@ const PetWindow: React.FC = () => {
     return () => {
       alive = false
       offSettings()
-      offSide()
       offPanel()
       window.removeEventListener('blur', resetDrag)
     }
@@ -286,6 +313,8 @@ const PetWindow: React.FC = () => {
     if (!drag) return
     // 无论是否真的移动都结束主进程的拖动：否则起点残留会一直跳过穿透判定
     window.electronAPI.secretary.dragEnd()
+    // 主进程吸附到屏幕边缘后才最终落位，稍后再按新位置校准气泡
+    if (drag.moved) window.setTimeout(placeBubble, 150)
     if (!drag.moved) {
       triggerPlay()
       window.electronAPI.secretary.togglePanel()
@@ -320,10 +349,26 @@ const PetWindow: React.FC = () => {
     ? state.bubble
     : notice?.title || (state.unreadCount > 0 ? t('secretary.bubbleUnread', { n: state.unreadCount }) : '')
 
+  // 气泡文案/挂件尺寸变化后重新贴边；首帧同理（布局效果早于绘制，不会闪）
+  useLayoutEffect(() => {
+    placeBubble()
+  }, [bubbleText, size, panelOpen, placeBubble])
+
+  // 拖动期间窗口跟着光标移动，逐帧校准气泡，避免中途越出屏幕
+  useEffect(() => {
+    if (!pressed) return
+    let raf = 0
+    const tick = () => {
+      placeBubble()
+      raf = window.requestAnimationFrame(tick)
+    }
+    raf = window.requestAnimationFrame(tick)
+    return () => window.cancelAnimationFrame(raf)
+  }, [pressed, placeBubble])
+
   return (
     <div
       className="pet-window"
-      data-side={side}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => {
         setIgnore(true)
@@ -377,14 +422,21 @@ const PetWindow: React.FC = () => {
           window.electronAPI.secretary.showContextMenu()
         }}
       >
-        {bubbleText && (
+        {!panelOpen && bubbleText && (
           <div
             className="pet-bubble"
-            title={notice?.body || undefined}
-            style={{ background: token.colorBgElevated, borderColor: token.colorBorderSecondary, color: token.colorText }}
+            ref={bubbleRef}
+            title={notice?.body || bubbleText}
+            style={{
+              background: token.colorBgElevated,
+              borderColor: token.colorBorderSecondary,
+              color: token.colorText,
+              left: `calc(50% + ${bubbleTrim.shift}px)`,
+              ['--pet-bubble-tail' as any]: `${bubbleTrim.tail}px`,
+            }}
           >
             {statusClass === 'running' && <span className="pet-bubble-spin" style={{ borderTopColor: token.colorPrimary }} />}
-            <span>{bubbleText}</span>
+            <span className="pet-bubble-text">{bubbleText}</span>
           </div>
         )}
         <SecretaryAvatar

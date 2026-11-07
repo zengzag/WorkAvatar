@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { App, Button, Dropdown, Tooltip, theme } from 'antd'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { App, Badge, Button, Dropdown, Tooltip, theme } from 'antd'
 import {
   CloseOutlined,
   PaperClipOutlined,
-  SwapOutlined,
   SendOutlined,
+  SwapOutlined,
+  PlusOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExclamationCircleOutlined,
@@ -16,6 +17,8 @@ import {
   RobotOutlined,
   CheckOutlined,
   BellOutlined,
+  UnorderedListOutlined,
+  ExportOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeAvatar, { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
@@ -31,13 +34,19 @@ import {
   type SecretaryTask,
   type SecretaryNotice,
 } from './secretary.store'
-import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState, installSecretaryRunner } from './secretary-runner'
+import {
+  startSecretaryTask,
+  continueSecretaryTask,
+  abortSecretaryTask,
+  broadcastSecretaryState,
+  installSecretaryRunner,
+} from './secretary-runner'
 import { syncRemoteTasks, abortRemoteTask, dismissRemoteTask } from './secretary-remote'
 import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KEY } from './secretary-bus'
 import { selectModalRequest, useInteractionStore } from '../../stores/interaction.store'
 import UnifiedInteractionModal from '../common/UnifiedInteractionModal'
 import SecretaryComposer, { type ComposerFile, type ComposerHandle } from './SecretaryComposer'
-import SecretaryTaskDetail from './SecretaryTaskDetail'
+import SecretaryChat from './SecretaryChat'
 import './secretary.css'
 
 const EMPLOYEE_KEY = 'wa.secretary.employeeId'
@@ -47,7 +56,7 @@ const MODEL_ID_KEY = 'wa.secretary.modelId'
 const THINKING_KEY = 'wa.secretary.thinking'
 /** 小秘书默认开启思考（支持时） */
 const DEFAULT_THINKING: ThinkingLevel = 'high'
-/** 面板最大高度：超出后卡片内部滚动（上报给主进程的高度也用这个上限） */
+/** 面板上限：对话内容超出后在对话区内部滚动，窗口随内容自适应增长 */
 const PANEL_MAX_HEIGHT = 620
 /** 左右边缘拖拽的宽度范围（与主进程 secretary-window.service 的 clamp 保持一致） */
 const PANEL_DEFAULT_WIDTH = 372
@@ -67,7 +76,28 @@ function readStoredThinking(): ThinkingLevel {
   return DEFAULT_THINKING
 }
 
-/** 面板窗：员工切换 + 发任务 + 任务区（正在执行 / 待查看）*/
+/** 面板浮层：员工切换 / 设置 / 任务清单 / 通知清单（覆盖在对话区上，不占布局高度） */
+type PanelOverlay = 'employee' | 'settings' | 'tasks' | 'notices' | null
+
+/** 上次关闭时的页面（浮层 + 正在看的对话），重新打开面板时回到这里 */
+const VIEW_KEY = 'wa.secretary.panelView'
+
+function readStoredView(): { overlay: PanelOverlay; taskId: string | null } {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null')
+    const overlay = parsed?.overlay
+    return {
+      overlay: overlay === 'employee' || overlay === 'settings' || overlay === 'tasks' || overlay === 'notices'
+        ? overlay
+        : null,
+      taskId: typeof parsed?.taskId === 'string' ? parsed.taskId : null,
+    }
+  } catch {
+    return { overlay: null, taskId: null }
+  }
+}
+
+/** 面板窗：以对话为主体，任务与通知收纳在头部入口里 */
 const SecretaryPanel: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -77,8 +107,9 @@ const SecretaryPanel: React.FC = () => {
   const [employeeId, setEmployeeId] = useState<string>(() => localStorage.getItem(EMPLOYEE_KEY) || '')
   const [sending, setSending] = useState(false)
   const [dropping, setDropping] = useState(false)
-  /** 内联展开的员工切换 / 设置菜单：展开会撑高面板，收起时必须重新上报高度 */
-  const [menu, setMenu] = useState<'employee' | 'settings' | null>(null)
+  /** 挂载时读取上次关闭时的页面，首次渲染就回到该页面，避免先闪输入框再切换 */
+  const [restoredView] = useState(readStoredView)
+  const [overlay, setOverlay] = useState<PanelOverlay>(restoredView.overlay)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modelProviderId, setModelProviderId] = useState(
     () => localStorage.getItem(MODEL_PROVIDER_KEY) || getCachedSceneDefaultModel('workbench')?.provider_id || '',
@@ -87,15 +118,22 @@ const SecretaryPanel: React.FC = () => {
     () => localStorage.getItem(MODEL_ID_KEY) || getCachedSceneDefaultModel('workbench')?.model_id || '',
   )
   const [thinking, setThinking] = useState<ThinkingLevel>(readStoredThinking)
-  /** 面板内查看的已结束任务（打开简化对话窗）；空 = 任务列表 */
-  const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
-  /** 左右边缘拖拽调整宽度时的起点（高度始终由内容自适应） */
+  /** 当前对话对应的任务；空 = 新会话（只显示输入框） */
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(restoredView.taskId)
+  /** 没有上次的对话 = 新会话；恢复的对话在任务列表里找不到时由回落逻辑纠正 */
+  const [newChat, setNewChat] = useState(!restoredView.taskId)
+  /** 左右边缘拖拽调整宽度时的起点（高度固定，宽度可调） */
   const resizeOriginRef = useRef<{ edge: 'left' | 'right'; x: number; width: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ComposerHandle>(null)
   /** 是否有待处理的权限 / ask_user 弹窗（弹窗挂在本窗口，收起面板会让它看不见） */
   const pendingRef = useRef(false)
+
+  const employee = useMemo(
+    () => employees.find((e) => e.id === employeeId) || employees[0],
+    [employees, employeeId],
+  )
 
   const tasks = useSecretaryStore((s) => s.tasks)
   const remoteTasks = useSecretaryStore((s) => s.remoteTasks)
@@ -116,38 +154,37 @@ const SecretaryPanel: React.FC = () => {
     [allTasks],
   )
   const unreadNoticeCount = useMemo(() => selectUnreadNotices(notices).length, [notices])
-  const detailTask = useMemo(
-    () => (detailTaskId ? allTasks.find((t) => t.id === detailTaskId) : undefined),
-    [allTasks, detailTaskId],
-  )
+  const activeTask = useMemo(() => {
+    const task = activeTaskId ? allTasks.find((t) => t.id === activeTaskId) : undefined
+    // 对话必须属于当前员工：切换员工后不会把上一个员工的会话挂在这个身份下
+    if (task && employee && task.employee.id !== employee.id) return undefined
+    return task
+  }, [allTasks, activeTaskId, employee])
+  /** 对话态且当前任务在跑：输入框先停下来，避免同一会话并发提问；任务/通知列表态仍可派新任务 */
+  const busy = sending
+    || (!overlay && (activeTask?.status === 'running' || activeTask?.status === 'waiting'))
 
-  /** 任务列表最多显示 5 条，超出在列表内滚动：按实际行高计算上限，适配不同字号/主题 */
-  const taskScrollRef = useRef<HTMLDivElement>(null)
-  const [taskListMaxHeight, setTaskListMaxHeight] = useState<number | undefined>(undefined)
-  useLayoutEffect(() => {
-    const el = taskScrollRef.current
-    const rows = el?.querySelectorAll<HTMLElement>('.secretary-task-row')
-    if (!el || !rows || rows.length === 0) {
-      setTaskListMaxHeight(undefined)
-      return
-    }
-    // 超过 5 条时按实际行高裁掉多出的行（保留分组标题的完整高度）
-    const hiddenRows = rows.length - 5
-    const next = hiddenRows <= 0
-      ? undefined
-      : Math.ceil(el.scrollHeight - hiddenRows * rows[0].getBoundingClientRect().height)
-    setTaskListMaxHeight((prev) => (prev === next ? prev : next))
-  }, [running.length, finished.length])
+  /** 主窗口任务镜像是否已拉取过一次：恢复的对话可能来自镜像，首帧不能急着回落 */
+  const remoteSyncedRef = useRef(false)
 
-  // 任务被移除（完成按钮 / 列表裁剪）后退出详情，回到任务列表
+  // 没有指定对话时回落到当前员工最近的任务（优先执行中），让重开面板就能接着聊
   useEffect(() => {
-    if (detailTaskId && !detailTask) setDetailTaskId(null)
-  }, [detailTaskId, detailTask])
+    if (!remoteSyncedRef.current || newChat || activeTask) return
+    const sorted = [...tasks, ...remoteTasks]
+      .filter((task) => !employee || task.employee.id === employee.id)
+      .sort((a, b) => b.startedAt - a.startedAt)
+    const next = sorted.find((task) => task.conversationId
+      && (task.status === 'running' || task.status === 'waiting'))
+      ?? sorted.find((task) => task.conversationId)
+    if (next) setActiveTaskId(next.id)
+  }, [activeTask, newChat, remoteTasks, tasks, employee])
 
   /** 主窗口任务镜像：员工信息用于头像/配色，事件回调取最新值，避免重复订阅 */
   const employeesRef = useRef<Employee[]>([])
   const syncRemote = useCallback(() => {
-    void syncRemoteTasks(employeesRef.current)
+    void syncRemoteTasks(employeesRef.current).finally(() => {
+      remoteSyncedRef.current = true
+    })
   }, [])
 
   // 主窗口任务的新增/改名/删除、以及运行会话变化时刷新镜像
@@ -233,11 +270,6 @@ const SecretaryPanel: React.FC = () => {
     return () => { cancelled = true }
   }, [])
 
-  const employee = useMemo(
-    () => employees.find((e) => e.id === employeeId) || employees[0],
-    [employees, employeeId],
-  )
-
   useEffect(() => {
     document.documentElement.style.background = 'transparent'
     document.body.style.background = 'transparent'
@@ -279,6 +311,7 @@ const SecretaryPanel: React.FC = () => {
       if (open) {
         loadEmployees()
         loadProviders()
+        // 不重置页面：面板挂载时已恢复上次关闭的浮层/对话，隐藏期间状态也一直保留
         return
       }
       // 确认框还挂着时拒绝收起（挂件点击/快捷键/托盘都可能触发），否则弹窗跟着被藏起来，任务只能等超时
@@ -286,6 +319,13 @@ const SecretaryPanel: React.FC = () => {
     })
     return () => { off() }
   }, [loadEmployees, loadProviders])
+
+  // 记住当前页面，面板隐藏或应用重启后再次打开都回到这里
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify({ overlay, taskId: activeTaskId }))
+    } catch { /* ignore */ }
+  }, [overlay, activeTaskId])
 
   // 员工信息变更（如更换头像）：面板常驻时实时刷新，避免需重启才生效
   useEffect(() => {
@@ -465,12 +505,12 @@ const SecretaryPanel: React.FC = () => {
     }
     const el = rootRef.current
     if (!el) return
+    // 高度随对话内容自适应：卡片被 max-height 夹住时 rect 只有上限高度，按内容实测自然高度
     const report = () => {
       const inner = el.firstElementChild as HTMLElement | null
       const last = inner?.lastElementChild as HTMLElement | null
       let natural = el.getBoundingClientRect().height
       if (inner && last) {
-        // 卡片被 max-height 夹住时 rect 只有上限高度，这里按内容实测自然高度
         const padBottom = parseFloat(getComputedStyle(inner).paddingBottom) || 0
         natural = last.getBoundingClientRect().bottom
           - inner.getBoundingClientRect().top
@@ -483,9 +523,9 @@ const SecretaryPanel: React.FC = () => {
     report()
     const ro = new ResizeObserver(report)
     ro.observe(el)
-    // 内容被 max-height 夹住后 el 的盒子不再变化，必须同时观察内容层，否则收起菜单时窗口不会回落
+    // 内容被 max-height 夹住后盒子不再变化，同时观察内容层，切换对话/浮层时窗口才能跟着收放
     if (el.firstElementChild) ro.observe(el.firstElementChild)
-    // 字体/头像异步加载会让高度在首帧后再变一次，补两次上报避免窗口停在初始高度
+    // 字体/头像与消息渲染会让高度在首帧后再变，补两次上报避免窗口停在初始高度
     const t1 = window.setTimeout(report, 300)
     const t2 = window.setTimeout(report, 1200)
     return () => {
@@ -493,10 +533,9 @@ const SecretaryPanel: React.FC = () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
     }
-    // 菜单展开/收起、列表与对话详情互切时卡片被 max-height 夹住，ResizeObserver 收不到盒子变化，必须重跑上报
-  }, [modalOpen, menu, detailTaskId])
+  }, [modalOpen])
 
-  /** 左右边缘拖拽柄：只调宽度，高度仍由内容决定 */
+  /** 左右边缘拖拽柄：只调宽度，高度随内容自适应 */
   const startResize = useCallback((edge: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
     e.preventDefault()
@@ -559,73 +598,93 @@ const SecretaryPanel: React.FC = () => {
       if (e.key !== 'Escape') return
       // 弹窗打开时 Esc 不能收起面板，否则确认框会被一起藏起来
       if (interactionRequest) return
-      // Esc 依次收：浮层 → 对话详情 → 面板
-      if (menu) {
-        setMenu(null)
-        return
-      }
-      if (detailTaskId) {
-        setDetailTaskId(null)
+      // Esc 依次收：浮层 → 面板
+      if (overlay) {
+        setOverlay(null)
         return
       }
       window.electronAPI.secretary.hidePanel()
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [menu, interactionRequest, detailTaskId])
+  }, [overlay, interactionRequest])
 
+  /** 新会话：清空当前对话，发送时再创建任务 */
+  const startNewChat = useCallback(() => {
+    setNewChat(true)
+    setActiveTaskId(null)
+    setOverlay(null)
+    composerRef.current?.clear()
+    window.setTimeout(() => composerRef.current?.focus(), 60)
+  }, [])
+
+  /** 在对话里发送：没有任务就创建，已有任务就在同一会话继续追问，回答直接流式显示在面板里 */
   const handleSend = useCallback(async (text: string, files: ComposerFile[]) => {
-    if (!employee || sending) return
+    if (!employee || busy) return
+    // 列表态输入当作派发新任务；只有对话态才继续当前会话
+    const continuingTask = overlay ? undefined : activeTask
+    if (continuingTask?.origin === 'main') return
     const prompt = text.trim()
     if (!prompt && files.length === 0) {
       composerRef.current?.focus()
       return
     }
     setSending(true)
-    setMenu(null)
+    setOverlay(null)
     try {
-      await startSecretaryTask({
-        employee,
-        prompt: prompt || files[0]?.name || '',
-        attachmentPaths: files.map((f) => f.path),
-        providerId: modelProviderId,
-        modelId,
-        enableThinking: thinking,
-      })
+      if (continuingTask) {
+        await continueSecretaryTask({
+          taskId: continuingTask.id,
+          prompt: prompt || files[0]?.name || '',
+          attachmentPaths: files.map((f) => f.path),
+          providerId: modelProviderId,
+          modelId,
+          enableThinking: thinking,
+        })
+      } else {
+        const taskId = await startSecretaryTask({
+          employee,
+          prompt: prompt || files[0]?.name || '',
+          attachmentPaths: files.map((f) => f.path),
+          providerId: modelProviderId,
+          modelId,
+          enableThinking: thinking,
+        })
+        setNewChat(false)
+        setActiveTaskId(taskId)
+      }
       composerRef.current?.clear()
-      // 派出去即可：任务在后台静默执行，任务列表会实时出现，点任务行才跳转主窗口查看
-      window.electronAPI.secretary.hidePanel()
+      // 面板保持打开：回答在对话区流式呈现，关掉面板也不影响任务继续执行
     } catch (err: any) {
       if (err?.message === 'NO_PROVIDER') message.warning(t('secretary.noProvider'))
-      else message.error(t('secretary.sendFailed'))
+      else message.error(continuingTask ? t('secretary.replyFailed') : t('secretary.sendFailed'))
     } finally {
       setSending(false)
     }
-  }, [employee, sending, message, t, modelProviderId, modelId, thinking])
+  }, [employee, busy, activeTask, overlay, message, t, modelProviderId, modelId, thinking])
 
-  /** 行点击：已结束任务在面板内看简化对话；执行中的任务仍跳主窗口看实时过程 */
+  /** 任务行点击：直接在面板对话区打开（执行中的任务也能实时看） */
   const openTask = useCallback((task: SecretaryTask) => {
-    setMenu(null)
+    if (!task.conversationId) return
+    // 任务可能属于其他员工：先把身份切过去，对话与头部才一致
+    if (employee && task.employee.id !== employee.id) setEmployeeId(task.employee.id)
+    setNewChat(false)
+    setActiveTaskId(task.id)
+    setOverlay(null)
     if (!task.viewed) markViewed(task.id)
-    if (task.status === 'done' || task.status === 'failed') {
-      setDetailTaskId(task.id)
-      return
-    }
-    if (task.conversationId) {
-      window.electronAPI.secretary.openTask({
-        employeeId: task.employee.id,
-        conversationId: task.conversationId,
-      })
-      window.electronAPI.secretary.hidePanel()
-    }
-  }, [markViewed])
+    if (task.origin !== 'main') window.setTimeout(() => composerRef.current?.focus(), 60)
+  }, [employee, markViewed])
 
   /** 「完成」按钮：该任务从面板消失（主窗口的任务列表不受影响） */
   const dismissTask = useCallback((task: SecretaryTask) => {
     if (task.origin === 'main') dismissRemoteTask(task)
     else removeTask(task.id)
-    setDetailTaskId((prev) => (prev === task.id ? null : prev))
-  }, [removeTask])
+    // 收掉正在看的对话后回到新会话，不要自动跳到另一条历史任务
+    if (activeTaskId === task.id) {
+      setNewChat(true)
+      setActiveTaskId(null)
+    }
+  }, [removeTask, activeTaskId])
 
   /** 停止任务：主窗口发起的任务用它的运行会话中止 */
   const stopTask = useCallback((task: SecretaryTask) => {
@@ -698,10 +757,6 @@ const SecretaryPanel: React.FC = () => {
     } catch { /* ignore */ }
   }, [insertPaths])
 
-  // 任务区全部展示（面板内部可滚动），避免超出前几条的任务无法停止或查看
-  const runningShown = running
-  const finishedShown = finished
-
   /** 通知条目点击：标记已读并跳转主窗口对应目标（无目标时仅标记已读） */
   const openNotice = useCallback((notice: SecretaryNotice) => {
     if (!notice.viewed) markNoticeViewed(notice.id)
@@ -759,17 +814,8 @@ const SecretaryPanel: React.FC = () => {
       {task.status === 'waiting' && <ExclamationCircleOutlined style={{ color: token.colorWarning }} />}
       {task.status === 'done' && <CheckCircleOutlined style={{ color: token.colorSuccess }} />}
       {task.status === 'failed' && <CloseCircleOutlined style={{ color: token.colorError }} />}
-      <span className="secretary-task-main">
-        <span className="secretary-task-title">{task.title}</span>
-        <span className="secretary-task-meta">
-          {task.employee.name} · {task.status === 'running'
-            ? (task.step || t('secretary.working'))
-            : task.status === 'waiting'
-              ? t('secretary.waiting')
-              : task.status === 'failed'
-                ? (task.error === 'aborted' ? t('secretary.stopped') : t('secretary.failed'))
-                : t('secretary.done')}
-        </span>
+      <span className="secretary-task-title" style={{ flex: 1, minWidth: 0 }} title={task.title}>
+        {task.title}
       </span>
       {!task.viewed && (task.status === 'done' || task.status === 'failed') && (
         <span className="secretary-unread-dot" />
@@ -815,277 +861,373 @@ const SecretaryPanel: React.FC = () => {
           borderColor: token.colorBorder,
           maxHeight: PANEL_MAX_HEIGHT,
         }}
-      onDragOver={(e) => { e.preventDefault(); setDropping(true) }}
-      onDragLeave={() => setDropping(false)}
-      onDrop={(e) => {
-        e.preventDefault()
-        setDropping(false)
-        // 对话详情有自己的输入框与附件按钮，避免文件被塞进被隐藏的列表输入框
-        if (!detailTask) addFiles(e.dataTransfer.files)
-      }}
-    >
+        onDragOver={(e) => { e.preventDefault(); setDropping(true) }}
+        onDragLeave={() => setDropping(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDropping(false)
+          // 主窗口任务的对话是只读的：不要把文件塞进隐藏的输入框
+          if (activeTask?.origin !== 'main') addFiles(e.dataTransfer.files)
+        }}
+      >
       <div
         className="secretary-panel-inner"
         style={{ outline: dropping ? `1px dashed ${token.colorPrimary}` : 'none', outlineOffset: -6, borderRadius: 16 }}
       >
-        {detailTask ? (
-          /* 已结束任务：面板内简化对话窗（看回答 + 二次回复 + 跳主窗口） */
-          <SecretaryTaskDetail
-            task={detailTask}
-            providerId={modelProviderId}
-            modelId={modelId}
-            thinking={thinking}
-            readOnly={detailTask.origin === 'main'}
-            onBack={() => setDetailTaskId(null)}
-            onOpenInMain={() => openInMain(detailTask)}
-          />
-        ) : (
-          <>
-        {/* 头部：员工 + 切换 + 设置 + 关闭，单行紧凑排布 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {employee && (
-            <EmployeeAvatar
-              employeeId={employee.id}
-              avatarIcon={employee.avatar_icon}
-              avatarColor={employee.avatar_color}
-              avatarImage={employee.avatar_image}
-              avatarType={employee.avatar_type}
-              source={employee.source}
-              size={24}
-              shape="square"
-            />
-          )}
-          <span
-            style={{
-              flexShrink: 0,
-              maxWidth: '50%',
-              fontSize: 13,
-              fontWeight: 600,
-              color: token.colorText,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
+        {/* 头部：员工 / 状态 / 新会话 / 任务 / 通知 / 设置 / 关闭，单行紧凑排布 */}
+        <div className="secretary-head">
+          <button
+            type="button"
+            className="secretary-head-id"
+            title={t('secretary.switchEmployee')}
+            onClick={() => setOverlay((prev) => (prev === 'employee' ? null : 'employee'))}
           >
-            {employee?.name || t('secretary.title')}
-          </span>
-          <Tooltip title={t('secretary.switchEmployee')}>
-            <Button
-              type="text"
-              size="small"
-              icon={<SwapOutlined />}
+            {employee && (
+              <EmployeeAvatar
+                employeeId={employee.id}
+                avatarIcon={employee.avatar_icon}
+                avatarColor={employee.avatar_color}
+                avatarImage={employee.avatar_image}
+                avatarType={employee.avatar_type}
+                source={employee.source}
+                size={26}
+                shape="square"
+              />
+            )}
+            <span className="secretary-head-name" style={{ color: token.colorText }}>
+              {employee?.name || t('secretary.title')}
+            </span>
+            <SwapOutlined
               style={{
-                color: menu === 'employee' ? token.colorText : token.colorTextTertiary,
-                padding: '0 4px',
-                height: 20,
-                minWidth: 20,
-                borderRadius: 4,
+                color: overlay === 'employee' ? token.colorText : token.colorTextTertiary,
+                fontSize: 12,
                 flexShrink: 0,
               }}
-              onClick={() => setMenu((prev) => (prev === 'employee' ? null : 'employee'))}
             />
-          </Tooltip>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-            <Button
-              type="text"
-              size="small"
-              icon={<SettingOutlined />}
-              style={{ color: menu === 'settings' ? token.colorText : token.colorTextTertiary }}
-              onClick={() => setMenu((prev) => (prev === 'settings' ? null : 'settings'))}
-            />
-            <Button
-              type="text"
-              size="small"
-              icon={<CloseOutlined />}
-              style={{ color: token.colorTextTertiary }}
-              onClick={() => window.electronAPI.secretary.hidePanel()}
-            />
+          </button>
+          {(activeTask?.status === 'running' || activeTask?.status === 'waiting') && (
+            <span
+              className="secretary-head-status"
+              style={{ color: activeTask.status === 'waiting' ? token.colorWarning : token.colorTextTertiary }}
+            >
+              <span
+                className="secretary-status-dot"
+                style={{ background: activeTask.status === 'waiting' ? token.colorWarning : token.colorPrimary }}
+              />
+              <span className="secretary-head-status-text">
+                {activeTask.status === 'waiting' ? t('secretary.waiting') : (activeTask.step || t('secretary.working'))}
+              </span>
+            </span>
+          )}
+          <div className="secretary-head-actions">
+            <Tooltip title={t('secretary.newChat')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<PlusOutlined />}
+                data-testid="secretary-new-chat"
+                style={{ color: token.colorTextTertiary }}
+                onClick={startNewChat}
+              />
+            </Tooltip>
+            <Tooltip title={t('secretary.tasks')}>
+              <Badge
+                count={running.length + finished.length}
+                size="small"
+                color={running.length > 0 ? token.colorPrimary : token.colorTextSecondary}
+                offset={[-3, 2]}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<UnorderedListOutlined />}
+                  data-testid="secretary-open-tasks"
+                  style={{ color: overlay === 'tasks' ? token.colorText : token.colorTextTertiary }}
+                  onClick={() => setOverlay((prev) => (prev === 'tasks' ? null : 'tasks'))}
+                />
+              </Badge>
+            </Tooltip>
+            <Tooltip title={t('secretary.notices')}>
+              <Badge
+                count={unreadNoticeCount > 0 ? unreadNoticeCount : notices.length}
+                size="small"
+                color={unreadNoticeCount > 0 ? undefined : token.colorTextSecondary}
+                offset={[-3, 2]}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<BellOutlined />}
+                  data-testid="secretary-open-notices"
+                  style={{ color: overlay === 'notices' ? token.colorText : token.colorTextTertiary }}
+                  onClick={() => setOverlay((prev) => (prev === 'notices' ? null : 'notices'))}
+                />
+              </Badge>
+            </Tooltip>
+            <Tooltip title={t('secretary.settings')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<SettingOutlined />}
+                style={{ color: overlay === 'settings' ? token.colorText : token.colorTextTertiary }}
+                onClick={() => setOverlay((prev) => (prev === 'settings' ? null : 'settings'))}
+              />
+            </Tooltip>
+            <Tooltip title={t('common.close')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<CloseOutlined />}
+                style={{ color: token.colorTextTertiary }}
+                onClick={() => window.electronAPI.secretary.hidePanel()}
+              />
+            </Tooltip>
           </div>
         </div>
 
-        {/* 员工切换 / 设置：内联展开，面板与窗口同步长高，菜单不会被裁 */}
-        {menu && (
-          <div
-            className="secretary-menu"
-            style={{ borderColor: token.colorBorderSecondary, background: token.colorBgContainer }}
-          >
-            {menu === 'employee' && employees.map((emp) => (
-              <button
-                key={emp.id}
-                className={`secretary-menu-item ${emp.id === employee?.id ? 'is-active' : ''}`}
-                onClick={() => {
-                  setEmployeeId(emp.id)
-                  setMenu(null)
-                }}
-                style={{ color: token.colorText }}
+        {/* 对话区：窗口主体；任务 / 通知 / 员工 / 设置直接替换对话区内容，窗口高度随内容自适应 */}
+        {(activeTask || overlay) && (
+          <div className="secretary-stage">
+            {overlay ? (
+              <div className="secretary-overlay">
+                <div className="secretary-overlay-head">
+                  <span className="secretary-overlay-title" style={{ color: token.colorText }}>
+                    {overlay === 'employee'
+                      ? t('secretary.switchEmployee')
+                      : overlay === 'settings'
+                        ? t('secretary.settings')
+                        : overlay === 'tasks'
+                          ? t('secretary.tasks')
+                          : t('secretary.notices')}
+                  </span>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CloseOutlined />}
+                    style={{ color: token.colorTextTertiary }}
+                    onClick={() => setOverlay(null)}
+                  />
+                </div>
+              <div
+                className={`secretary-overlay-body${overlay === 'tasks' || overlay === 'notices' || overlay === 'employee' ? ' is-fixed' : ''}`}
               >
-                <EmployeeAvatar
-                  employeeId={emp.id}
-                  avatarIcon={emp.avatar_icon}
-                  avatarColor={emp.avatar_color}
-                  avatarImage={emp.avatar_image}
-                  avatarType={emp.avatar_type}
-                  source={emp.source}
-                  size={20}
-                  shape="square"
-                />
-                <span style={{ flexShrink: 0, maxWidth: '50%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {emp.name}
-                </span>
-                <span style={{ flex: 1, minWidth: 0, marginLeft: 8, fontSize: 11, color: token.colorTextTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {emp.description}
-                </span>
-                {emp.id === employee?.id && <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 12 }} />}
-              </button>
-            ))}
+                {overlay === 'employee' && employees.map((emp) => (
+                  <button
+                    key={emp.id}
+                    className={`secretary-menu-item ${emp.id === employee?.id ? 'is-active' : ''}`}
+                    onClick={() => {
+                      setEmployeeId(emp.id)
+                      setOverlay(null)
+                      setNewChat(true)
+                      setActiveTaskId(null)
+                      composerRef.current?.clear()
+                      window.setTimeout(() => composerRef.current?.focus(), 60)
+                    }}
+                    style={{ color: token.colorText }}
+                  >
+                    <EmployeeAvatar
+                      employeeId={emp.id}
+                      avatarIcon={emp.avatar_icon}
+                      avatarColor={emp.avatar_color}
+                      avatarImage={emp.avatar_image}
+                      avatarType={emp.avatar_type}
+                      source={emp.source}
+                      size={20}
+                      shape="square"
+                    />
+                    <span style={{ flexShrink: 0, maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {emp.name}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, marginLeft: 8, fontSize: 11, color: token.colorTextTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {emp.description}
+                    </span>
+                    {emp.id === employee?.id && <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 12 }} />}
+                  </button>
+                ))}
 
-            {menu === 'settings' && (
-              <>
-                <button
-                  className="secretary-menu-item"
-                  style={{ color: token.colorText }}
-                  onClick={async () => {
-                    setMenu(null)
-                    await window.electronAPI.secretary.setSettings({ enabled: false }).catch(() => {})
-                    window.electronAPI.secretary.hidePanel()
-                  }}
-                >
-                  <EyeInvisibleOutlined style={{ color: token.colorTextTertiary }} />
-                  <span>{t('secretary.hidePet')}</span>
-                </button>
-              </>
+                {overlay === 'settings' && (
+                  <button
+                    className="secretary-menu-item"
+                    style={{ color: token.colorText }}
+                    onClick={async () => {
+                      setOverlay(null)
+                      await window.electronAPI.secretary.setSettings({ enabled: false }).catch(() => {})
+                      window.electronAPI.secretary.hidePanel()
+                    }}
+                  >
+                    <EyeInvisibleOutlined style={{ color: token.colorTextTertiary }} />
+                    <span>{t('secretary.hidePet')}</span>
+                  </button>
+                )}
+
+                {overlay === 'tasks' && (running.length === 0 && finished.length === 0 ? (
+                  <div className="secretary-empty" style={{ color: token.colorTextQuaternary }}>
+                    <UnorderedListOutlined style={{ fontSize: 18, opacity: .55 }} />
+                    <span>{t('secretary.noTasks')}</span>
+                  </div>
+                ) : (
+                  <>
+                    {running.map(taskRow)}
+                    {finished.map(taskRow)}
+                  </>
+                ))}
+
+                {overlay === 'notices' && (notices.length === 0 ? (
+                  <div className="secretary-empty" style={{ color: token.colorTextQuaternary }}>
+                    <BellOutlined style={{ fontSize: 18, opacity: .55 }} />
+                    <span>{t('secretary.noNotices')}</span>
+                  </div>
+                ) : notices.map(noticeRow))}
+                </div>
+              </div>
+            ) : (
+              <SecretaryChat task={activeTask} onOpenInMain={openInMain} />
             )}
           </div>
         )}
 
-        {/* 通知区：小秘书承接的日历提醒 / 自动化完成等 */}
-        {notices.length > 0 && (
-          <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '0 8px 3px' }}>
-              {t('secretary.notices')} {unreadNoticeCount > 0 ? `· ${unreadNoticeCount}` : ''}
-            </div>
-            {notices.map(noticeRow)}
-          </div>
-        )}
-
-        {/* 任务区：最多显示 5 条，超出在列表内滚动 */}
-        {(runningShown.length > 0 || finishedShown.length > 0) && (
-          <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
-            <div ref={taskScrollRef} className="secretary-task-scroll" style={{ maxHeight: taskListMaxHeight }}>
-              {runningShown.length > 0 && (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '0 8px 3px' }}>
-                    {t('secretary.running')} {running.length > 1 ? `· ${running.length}` : ''}
-                  </div>
-                  {runningShown.map(taskRow)}
-                </>
-              )}
-              {finishedShown.length > 0 && (
-                <>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: token.colorTextTertiary, padding: '6px 8px 3px' }}>
-                    {t('secretary.finished')} {finished.length > 1 ? `· ${finished.length}` : ''}
-                  </div>
-                  {finishedShown.map(taskRow)}
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* 输入区：与主窗口一致，文件以行内令牌显示在编辑器里 */}
-        <div style={{ marginTop: 8, paddingTop: 9, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
-          <SecretaryComposer
-            ref={composerRef}
-            placeholder={t('secretary.placeholder', { name: employee?.name || '' })}
-            onSend={handleSend}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Tooltip title={t('secretary.attach')}>
-              <Button
-                type="text"
-                size="small"
-                icon={<PaperClipOutlined />}
-                style={{ color: token.colorTextTertiary }}
-                onClick={() => fileRef.current?.click()}
-              />
-            </Tooltip>
-            <Tooltip title={t('secretary.inputHint')}>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: token.colorTextQuaternary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {t('secretary.inputHint')}
-              </span>
-            </Tooltip>
-            {/* 模型名与思考灯泡：与主窗口输入框一致的紧凑排布，中间不留额外间距 */}
-            <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-              <Dropdown trigger={['click']} placement="topRight" menu={modelMenu}>
+        {/* 底部输入条：对话态续聊 / 主窗口任务只读；任务列表态输入当作派发新任务 */}
+        {!overlay && activeTask?.origin === 'main' ? (
+          <div
+            className="secretary-composer is-readonly"
+            style={{ borderColor: token.colorBorderSecondary }}
+          >
+            <span className="secretary-readonly-hint" style={{ color: token.colorTextQuaternary }}>
+              {t('secretary.mainTaskHint')}
+            </span>
+            {(activeTask.status === 'running' || activeTask.status === 'waiting') && (
+              <Tooltip title={t('secretary.stop')}>
                 <Button
                   type="text"
                   size="small"
-                  title={currentModelLabel || undefined}
-                  style={{
-                    color: token.colorTextSecondary,
-                    padding: '0 5px',
-                    height: 18,
-                    maxWidth: 110,
-                    minWidth: 18,
-                    borderRadius: 4,
-                  }}
-                >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0, fontSize: 11 }}>
-                    {currentModelLabel
-                      ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentModelLabel}</span>
-                      : <RobotOutlined style={{ fontSize: 11 }} />}
-                  </span>
-                </Button>
-              </Dropdown>
-              {thinkingCapability.visible && (
-                thinkingCapability.effortSupported ? (
-                  <Dropdown
-                    trigger={['click']}
-                    placement="topRight"
-                    menu={{
-                      items: thinkingCapability.levels.map((level) => ({
-                        key: String(level),
-                        label: <span style={{ fontSize: 12 }}>{thinkingLevelLabel(level)}</span>,
-                        icon: thinking === level
-                          ? <CheckOutlined style={{ fontSize: 11 }} />
-                          : <span style={{ display: 'inline-block', width: 11 }} />,
-                      })),
-                      onClick: ({ key }) => handleThinkingChange(key === 'false' ? false : key as ThinkingLevel),
-                      selectable: true,
-                      selectedKeys: [String(thinking)],
-                    }}
-                  >
-                    {thinkingTrigger}
-                  </Dropdown>
-                ) : thinkingTrigger
-              )}
-            </div>
+                  danger
+                  icon={<StopOutlined />}
+                  onClick={() => stopTask(activeTask)}
+                />
+              </Tooltip>
+            )}
             <Button
               type="primary"
               size="small"
-              loading={sending}
-              icon={<SendOutlined />}
-              onClick={() => composerRef.current?.submit()}
+              icon={<ExportOutlined />}
               style={{ borderRadius: 999 }}
+              onClick={() => openInMain(activeTask)}
             >
-              {t('secretary.send')}
+              {t('secretary.openInMain')}
             </Button>
           </div>
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              addFiles(e.target.files)
-              e.target.value = ''
-            }}
-          />
-        </div>
-          </>
+        ) : (
+          <div
+            className="secretary-composer"
+            style={{ borderColor: token.colorBorderSecondary }}
+          >
+            <SecretaryComposer
+              ref={composerRef}
+              placeholder={!overlay && activeTask
+                ? t('secretary.replyPlaceholder')
+                : t('secretary.placeholder', { name: employee?.name || '' })}
+              onSend={handleSend}
+            />
+            <div className="secretary-composer-bar">
+              <Tooltip title={t('secretary.attach')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<PaperClipOutlined />}
+                  style={{ color: token.colorTextTertiary }}
+                  onClick={() => fileRef.current?.click()}
+                />
+              </Tooltip>
+              <Tooltip title={t('secretary.inputHint')}>
+                <span className="secretary-composer-hint" style={{ color: token.colorTextQuaternary }}>
+                  {!overlay && activeTask?.status === 'waiting'
+                    ? t('secretary.waiting')
+                    : busy ? t('secretary.responding') : t('secretary.inputHint')}
+                </span>
+              </Tooltip>
+              {/* 模型名与思考灯泡：与主窗口输入框一致的紧凑排布，中间不留额外间距 */}
+              <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <Dropdown trigger={['click']} placement="topRight" menu={modelMenu}>
+                  <Button
+                    type="text"
+                    size="small"
+                    title={currentModelLabel || undefined}
+                    style={{
+                      color: token.colorTextSecondary,
+                      padding: '0 5px',
+                      height: 18,
+                      maxWidth: 110,
+                      minWidth: 18,
+                      borderRadius: 4,
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0, fontSize: 11 }}>
+                      {currentModelLabel
+                        ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentModelLabel}</span>
+                        : <RobotOutlined style={{ fontSize: 11 }} />}
+                    </span>
+                  </Button>
+                </Dropdown>
+                {thinkingCapability.visible && (
+                  thinkingCapability.effortSupported ? (
+                    <Dropdown
+                      trigger={['click']}
+                      placement="topRight"
+                      menu={{
+                        items: thinkingCapability.levels.map((level) => ({
+                          key: String(level),
+                          label: <span style={{ fontSize: 12 }}>{thinkingLevelLabel(level)}</span>,
+                          icon: thinking === level
+                            ? <CheckOutlined style={{ fontSize: 11 }} />
+                            : <span style={{ display: 'inline-block', width: 11 }} />,
+                        })),
+                        onClick: ({ key }) => handleThinkingChange(key === 'false' ? false : key as ThinkingLevel),
+                        selectable: true,
+                        selectedKeys: [String(thinking)],
+                      }}
+                    >
+                      {thinkingTrigger}
+                    </Dropdown>
+                  ) : thinkingTrigger
+                )}
+              </div>
+              {!overlay && activeTask && (activeTask.status === 'running' || activeTask.status === 'waiting') && (
+                <Tooltip title={t('secretary.stop')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<StopOutlined />}
+                    onClick={() => stopTask(activeTask)}
+                  />
+                </Tooltip>
+              )}
+              <Button
+                type="primary"
+                size="small"
+                loading={sending}
+                disabled={busy}
+                icon={<SendOutlined />}
+                onClick={() => composerRef.current?.submit()}
+                style={{ borderRadius: 999 }}
+              >
+                {t('secretary.send')}
+              </Button>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                addFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </div>
         )}
       </div>
-      {/* 左右边缘拖拽柄：只调整宽度（高度由内容自适应），双击恢复默认宽度 */}
+      {/* 左右边缘拖拽柄：只调整宽度（高度固定），双击恢复默认宽度 */}
       {(['left', 'right'] as const).map((edge) => (
         <div
           key={edge}
