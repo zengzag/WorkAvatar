@@ -8,6 +8,10 @@ import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
 import BackgroundShellBar from '../components/workbench/BackgroundShellBar'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
+import { PendingApprovalsBar, TaskInteractionCard } from '../components/workbench/TaskInteractionCard'
+import { usePageVisible } from '../components/common/page-visibility'
+import { useInteractionStore } from '../stores/interaction.store'
+import { useShallow } from 'zustand/react/shallow'
 import TaskSidebar, { formatTaskTime, type TaskViewMode, type TaskWithEmployee } from '../components/tasks/TaskSidebar'
 import TaskWorkspacePanel from '../components/tasks/TaskWorkspacePanel'
 import { useTaskPanelStore } from '../stores/task-panel.store'
@@ -17,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import { getActiveBranchData } from '../hooks/chat-helpers'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
-import { subscribePendingTaskJump } from '../utils/pending-task-jump'
+import { requestPendingTaskJump, subscribePendingTaskJump } from '../utils/pending-task-jump'
 import { getDirName } from '../utils/format'
 import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
@@ -42,7 +46,7 @@ const SidePanelIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => 
 )
 
 const Tasks: React.FC = () => {
-  const { message, modal } = App.useApp()
+  const { message, modal, notification } = App.useApp()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
@@ -408,6 +412,51 @@ const Tasks: React.FC = () => {
   const statusWorkspaceOpenPath = taskMode === 'chat'
     ? (panelRootPath || undefined)
     : (statusWorkspacePath || undefined)
+  // ---- 任务级交互确认：任务页可见时由对话内联卡承接，不再弹全局模态 ----
+  const pageVisible = usePageVisible()
+  const setTaskInlineHost = useInteractionStore((s) => s.setTaskInlineHost)
+  const respondInteraction = useInteractionStore((s) => s.respondById)
+  const interactionRequests = useInteractionStore(useShallow((s) => s.requests))
+
+  // 任务页一旦挂载就作为任务级请求的内联宿主：任务确认不再弹全局模态，
+  // 页面不可见时改由桌面通知引导用户回到对应任务处理。
+  useEffect(() => {
+    setTaskInlineHost(true)
+    return () => setTaskInlineHost(false)
+  }, [setTaskInlineHost])
+
+  /** 已弹出的任务确认通知（key → 请求签名），请求处理后同步关闭 */
+  const notifiedApprovalKeysRef = useRef<Map<string, string>>(new Map())
+
+  const activeConversationRequests = useMemo(
+    () => interactionRequests.filter(r => r.conversationId === activeConversationId),
+    [interactionRequests, activeConversationId],
+  )
+
+  const pendingRequestCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const r of interactionRequests) {
+      if (!r.conversationId) continue
+      counts[r.conversationId] = (counts[r.conversationId] || 0) + 1
+    }
+    return counts
+  }, [interactionRequests])
+
+  // 其他任务的待确认提示：非弹窗，点击任务条直接切换
+  const pendingOtherApprovals = useMemo(() => {
+    const items: Array<{ conversationId: string; title: string; count: number }> = []
+    for (const [conversationId, count] of Object.entries(pendingRequestCounts)) {
+      if (conversationId === activeConversationId) continue
+      const task = globalTasks.find(item => item.id === conversationId)
+      items.push({
+        conversationId,
+        title: task?.title || t('workbench.untitledConv'),
+        count,
+      })
+    }
+    return items
+  }, [pendingRequestCounts, activeConversationId, globalTasks, t])
+
   // 终端会话按任务隔离：任务内 cd 状态与运行中命令互不干扰
   const terminalId = taskMode === 'chat' && activeConversationId
     ? `conv:${activeConversationId}`
@@ -555,6 +604,65 @@ const Tasks: React.FC = () => {
       }
     })
   }, [selectConversation])
+
+  /** 从任务确认通知/待确认条跳转到目标任务 */
+  const handleReviewApproval = useCallback(async (conversationId: string) => {
+    navigate('/tasks')
+    let employeeId = globalTasks.find(item => item.id === conversationId)?.employee_id
+    if (!employeeId) {
+      try {
+        const conv: any = await window.electronAPI.conversation.get(conversationId)
+        employeeId = conv?.employee_id
+      } catch { /* 会话可能已删除 */ }
+    }
+    if (employeeId) requestPendingTaskJump(employeeId, conversationId)
+  }, [navigate, globalTasks])
+
+  // 任务页不可见时（设置/员工/资料库等页面），用非模态通知提醒有待确认请求，
+  // 避免多个任务的确认框同时变成全局弹窗
+  useEffect(() => {
+    const activeKeys = new Set<string>()
+    if (!pageVisible) {
+      const groups = new Map<string, { count: number; firstId: string; firstTitle: string }>()
+      for (const req of interactionRequests) {
+        if (!req.conversationId) continue
+        const existing = groups.get(req.conversationId)
+        if (existing) existing.count += 1
+        else groups.set(req.conversationId, {
+          count: 1,
+          firstId: req.id,
+          firstTitle: req.title || t('interaction.defaultTitle'),
+        })
+      }
+      for (const [conversationId, group] of groups) {
+        const key = `task-approval-${conversationId}`
+        activeKeys.add(key)
+        const signature = `${group.firstId}:${group.count}`
+        if (notifiedApprovalKeysRef.current.get(key) === signature) continue
+        notifiedApprovalKeysRef.current.set(key, signature)
+        const taskTitle = globalTasks.find(item => item.id === conversationId)?.title || t('workbench.untitledConv')
+        notification.warning({
+          key,
+          title: t('interaction.taskApprovalNotifyTitle'),
+          description: group.count > 1
+            ? t('interaction.taskApprovalNotifyMore', { title: taskTitle, count: group.count })
+            : t('interaction.taskApprovalNotifyDesc', { title: taskTitle, request: group.firstTitle }),
+          placement: 'topRight',
+          duration: 10,
+          actions: (
+            <Button size="small" type="primary" onClick={() => { void handleReviewApproval(conversationId) }}>
+              {t('interaction.goReview')}
+            </Button>
+          ),
+        })
+      }
+    }
+    for (const key of Array.from(notifiedApprovalKeysRef.current.keys())) {
+      if (activeKeys.has(key)) continue
+      notification.destroy(key)
+      notifiedApprovalKeysRef.current.delete(key)
+    }
+  }, [pageVisible, interactionRequests, globalTasks, notification, t, handleReviewApproval])
 
   // 删除任务
   const handleDeleteTask = useCallback(async (taskId: string) => {
@@ -1038,6 +1146,7 @@ const Tasks: React.FC = () => {
             onRename={handleRename}
             onExtractMemory={handleExtractMemory}
             isTaskStreaming={isConversationStreaming}
+            pendingRequestCounts={pendingRequestCounts}
             hasMore={hasMore && !useFullLoad}
             loadingMore={loadingMore}
             onLoadMore={loadMoreTasks}
@@ -1143,6 +1252,12 @@ const Tasks: React.FC = () => {
               </Tooltip>
             </div>
           </div>
+          {pendingOtherApprovals.length > 0 && (
+            <PendingApprovalsBar
+              items={pendingOtherApprovals}
+              onSelect={(conversationId) => { void handleReviewApproval(conversationId) }}
+            />
+          )}
           {taskMode === 'new' ? (
             // 新任务模式：居中输入框（使用带缓存的回调，切换页面回来可恢复）
             <div style={{
@@ -1272,6 +1387,12 @@ const Tasks: React.FC = () => {
                 enableThinking={enableThinking}
                 onThinkingChange={setEnableThinking}
                 isCompacting={isCompacting}
+                approvalSlot={activeConversationRequests.length > 0 ? (
+                  <TaskInteractionCard
+                    requests={activeConversationRequests}
+                    respondById={respondInteraction}
+                  />
+                ) : null}
               />
             </>
           )}

@@ -18,6 +18,7 @@ import {
   CaretRightOutlined,
   DownOutlined,
   FolderOutlined,
+  WarningFilled,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
@@ -81,6 +82,8 @@ interface TaskSidebarProps {
   onRename?: (taskId: string, newTitle: string) => Promise<boolean> | boolean
   onExtractMemory?: (taskId: string) => void
   isTaskStreaming?: (taskId: string) => boolean
+  /** 每个任务待处理的确认请求数，用于列表内的「待确认」角标 */
+  pendingRequestCounts?: Record<string, number>
   // 增量加载
   hasMore?: boolean
   loadingMore?: boolean
@@ -223,6 +226,7 @@ const TaskItem = memo(({
   task,
   active,
   streaming,
+  pendingRequests = 0,
   onSelect,
   onDelete,
   onExport,
@@ -238,6 +242,8 @@ const TaskItem = memo(({
   task: TaskWithEmployee
   active: boolean
   streaming: boolean
+  /** 待处理确认请求数（0 时不展示角标） */
+  pendingRequests?: number
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onExport?: (id: string) => void
@@ -440,6 +446,23 @@ const TaskItem = memo(({
               <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                 {formatTaskTime(task.last_message_at ?? task.created_at, t)}
               </span>
+              {pendingRequests > 0 && (
+                <span style={{
+                  flexShrink: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  padding: '0 5px',
+                  borderRadius: 4,
+                  fontSize: 10,
+                  lineHeight: '16px',
+                  color: token.colorWarning,
+                  background: token.colorWarningBg,
+                }}>
+                  <WarningFilled style={{ fontSize: 9 }} />
+                  {t('interaction.pendingBadge')}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -513,6 +536,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   onRename,
   onExtractMemory,
   isTaskStreaming,
+  pendingRequestCounts,
   hasMore,
   loadingMore,
   onLoadMore,
@@ -711,6 +735,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       task={task}
       active={task.id === activeTaskId}
       streaming={isTaskStreaming?.(task.id) ?? false}
+      pendingRequests={pendingRequestCounts?.[task.id] ?? 0}
       selectionMode={selectionMode}
       selected={selectedIds.has(task.id)}
       onToggleSelect={toggleSelect}

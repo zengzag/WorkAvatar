@@ -85,7 +85,7 @@ export const askUserTool: ToolDefinition = {
 
       const request: any = {
         type,
-        title: title || (type === 'confirm' ? '确认' : type === 'select' ? '请选择' : '请输入'),
+        title: title || (type === 'confirm' ? '需要你确认' : type === 'select' ? '请选择一项' : '请补充信息'),
         message,
         source: 'ask_user',
       }

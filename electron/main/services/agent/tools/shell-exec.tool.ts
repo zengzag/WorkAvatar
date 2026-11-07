@@ -499,24 +499,15 @@ async function requestFullAccess(
   cwd: string,
   workspaceRoot: string,
 ): Promise<boolean> {
-  const message = [
-    '命令申请本次「完整文件访问」权限，可读写工作区外的任意路径。',
-    '',
-    `默认可写范围：${workspaceRoot} 与私有临时目录`,
-    `工作目录：${cwd}`,
-    '',
-    '命令：',
-    '```',
-    truncateOutput(command, 1200),
-    '```',
-    '',
-    '仅对本次命令生效；拒绝则命令不会执行。',
-  ].join('\n')
   try {
     const response = await UnifiedInteractionService.getInstance().request({
       type: 'confirm',
-      title: '命令申请完整访问权限',
-      message,
+      title: mainUiI18n.t('sandboxCommandAccessTitle'),
+      message: mainUiI18n.t('sandboxCommandAccessMessage', {
+        workspace: workspaceRoot,
+        cwd,
+        command: truncateOutput(command, 1200),
+      }),
       danger: true,
       forced: true,
       source: 'security:sandbox_elevation',

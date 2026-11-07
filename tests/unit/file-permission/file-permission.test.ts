@@ -130,8 +130,8 @@ describe('FilePermissionService', () => {
 
       await service.authorizeFileOperation('修改', [outside])
       const request = req.mock.calls[0][0]
-      expect(request.title).toBe('确认修改工作区外文件')
-      expect(request.message).toContain('即将修改工作区外的路径')
+      expect(request.title).toBe('允许访问工作区外的文件？')
+      expect(request.message).toContain('助手请求修改以下工作区外的路径')
 
       req.mockRestore()
     })
@@ -146,8 +146,8 @@ describe('FilePermissionService', () => {
       const result = await service.authorizeFileOperation('复制到', [outside])
       expect(result.allowed).toBe(true)
       const request = req.mock.calls[0][0]
-      expect(request.title).toBe('确认复制到工作区外文件')
-      expect(request.message).toContain('即将复制到工作区外的路径')
+      expect(request.title).toBe('允许访问工作区外的文件？')
+      expect(request.message).toContain('助手请求复制到以下工作区外的路径')
 
       req.mockRestore()
     })

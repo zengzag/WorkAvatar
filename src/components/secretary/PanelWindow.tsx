@@ -34,7 +34,7 @@ import {
 import { startSecretaryTask, abortSecretaryTask, broadcastSecretaryState, installSecretaryRunner } from './secretary-runner'
 import { syncRemoteTasks, abortRemoteTask, dismissRemoteTask } from './secretary-remote'
 import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KEY } from './secretary-bus'
-import { useInteractionStore } from '../../stores/interaction.store'
+import { selectModalRequest, useInteractionStore } from '../../stores/interaction.store'
 import UnifiedInteractionModal from '../common/UnifiedInteractionModal'
 import SecretaryComposer, { type ComposerFile, type ComposerHandle } from './SecretaryComposer'
 import SecretaryTaskDetail from './SecretaryTaskDetail'
@@ -424,7 +424,7 @@ const SecretaryPanel: React.FC = () => {
 
   // 权限 / ask_user：面板窗是发起窗口，弹窗挂在这里。
   // 面板平时是隐藏的，请求到达时必须把面板拉出来，否则用户看不到确认框（任务会一直等到超时被拒）。
-  const interactionRequest = useInteractionStore((s) => s.currentRequest)
+  const interactionRequest = useInteractionStore(selectModalRequest)
   const modalOpen = !!interactionRequest
 
   // 面板内容高度 → 主进程同步窗口高度。

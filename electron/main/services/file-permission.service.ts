@@ -37,7 +37,7 @@ function formatPathList(paths: string[]): string {
   const shown = paths.slice(0, MAX_DISPLAY_PATHS)
   const lines = shown.map((p) => `- ${p}`)
   if (paths.length > shown.length) {
-    lines.push(`- ...（共 ${paths.length} 个路径）`)
+    lines.push(mainUiI18n.t('filePermissionMorePaths', { count: paths.length }))
   }
   return lines.join('\n')
 }
@@ -200,7 +200,9 @@ class FilePermissionService {
       dirScope = undefined
     }
     const message = this.buildConfirmMessage(operation, outside, sensitive)
-    const title = outside.length > 0 ? `确认${operation}工作区外文件` : mainUiI18n.t('sensitiveFileTitle')
+    const title = outside.length > 0
+      ? mainUiI18n.t('filePermissionOutsideTitle')
+      : mainUiI18n.t('sensitiveFileTitle')
 
     try {
       const response = await UnifiedInteractionService.getInstance().request({
@@ -269,6 +271,19 @@ class FilePermissionService {
     set.add(normPath)
   }
 
+  /** 操作动词本地化（调用方传入的是中文动作名） */
+  private localizeOperation(operation: string): string {
+    const keyMap: Record<string, 'fileOperationWrite' | 'fileOperationAppend' | 'fileOperationModify' | 'fileOperationCopy' | 'fileOperationDelete'> = {
+      '写入': 'fileOperationWrite',
+      '追加': 'fileOperationAppend',
+      '修改': 'fileOperationModify',
+      '复制到': 'fileOperationCopy',
+      '删除': 'fileOperationDelete',
+    }
+    const key = keyMap[operation]
+    return key ? mainUiI18n.t(key) : operation
+  }
+
   private buildConfirmMessage(
     operation: string,
     paths: string[],
@@ -276,11 +291,15 @@ class FilePermissionService {
   ): string {
     const parts: string[] = []
     if (paths.length > 0) {
-      parts.push(`即将${operation}工作区外的路径（共 ${paths.length} 个）：\n\n${formatPathList(paths)}\n\n是否允许？可选择"始终允许此文件夹"授权以上路径所在目录的全部后续操作。`)
+      parts.push(mainUiI18n.t('filePermissionOutsideMessage', {
+        operation: this.localizeOperation(operation),
+        count: paths.length,
+        paths: formatPathList(paths),
+      }))
     }
     if (sensitive.length > 0) {
       parts.push(this.buildSensitiveSection(sensitive))
-      parts.push(`是否允许？此操作涉及敏感文件，不提供"始终允许"，需逐次确认。`)
+      parts.push(mainUiI18n.t('filePermissionSensitiveMessage'))
     }
     return parts.join('\n\n')
   }
@@ -288,7 +307,7 @@ class FilePermissionService {
   /** 敏感路径提示段落（弹窗与通知文案共用） */
   private buildSensitiveSection(sensitive: string[]): string {
     if (sensitive.length === 0) return ''
-    return `**敏感文件**（凭据 / 密钥 / 版本库内部文件，位于工作区内也需确认，且不提供"始终允许"）：\n\n${formatPathList(sensitive)}`
+    return `${mainUiI18n.t('filePermissionSensitiveSection')}\n\n${formatPathList(sensitive)}`
   }
 }
 

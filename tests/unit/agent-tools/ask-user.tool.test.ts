@@ -38,9 +38,9 @@ describe('agent/tools/ask-user.tool', () => {
     expect(interactionState.requests).toHaveLength(0)
   })
 
-  it('type 缺省为 confirm，默认标题「确认」与默认值 no', async () => {
+  it('type 缺省为 confirm，默认标题「需要你确认」与默认值 no', async () => {
     await ask({ message: '继续吗' })
-    expect(lastRequest()).toMatchObject({ type: 'confirm', title: '确认', message: '继续吗', source: 'ask_user', defaultValue: 'no' })
+    expect(lastRequest()).toMatchObject({ type: 'confirm', title: '需要你确认', message: '继续吗', source: 'ask_user', defaultValue: 'no' })
   })
 
   it('自定义标题优先于默认标题', async () => {
@@ -48,12 +48,12 @@ describe('agent/tools/ask-user.tool', () => {
     expect(lastRequest().title).toBe('选择方案')
   })
 
-  it('select/input 的默认标题分别为「请选择」「请输入」', async () => {
+  it('select/input 的默认标题分别为「请选择一项」「请补充信息」', async () => {
     await ask({ type: 'select', message: 'M', options: [{ label: 'A', value: 'a' }] })
-    expect(lastRequest().title).toBe('请选择')
+    expect(lastRequest().title).toBe('请选择一项')
     interactionState.response = { cancelled: false, inputValue: 'x' }
     await ask({ type: 'input', message: 'M' })
-    expect(lastRequest().title).toBe('请输入')
+    expect(lastRequest().title).toBe('请补充信息')
   })
 
   it('confirm：确认与拒绝分别映射为不同输出', async () => {

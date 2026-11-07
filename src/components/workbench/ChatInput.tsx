@@ -357,7 +357,9 @@ const ChatInput: React.FC<{
   isCompacting?: boolean
   /** 隐藏高级工具栏（高权限/模型对比/资料库/极简模式/技能下拉），用于轻量对话视图 */
   hideToolbar?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, workspaceSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
+  /** 输入框上方的附加区域（任务确认卡等），与输入框同宽 */
+  approvalSlot?: React.ReactNode
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, workspaceSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar, approvalSlot }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1627,6 +1629,7 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
+      {!centerMode && approvalSlot}
       <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 14, padding: '8px 8px 8px 14px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorder}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}

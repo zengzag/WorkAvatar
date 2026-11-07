@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 
 /**
- * src/stores/interaction.store 补充：队列 FIFO 顺序、响应字段完整透传、连续弹出至清空、重复 id 入队。
+ * src/stores/interaction.store 补充：请求顺序、响应字段完整透传、按 id 移除、富字段保存。
  */
 
 const respondCalls: any[] = []
@@ -21,13 +21,13 @@ const req = (id: string, extra: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   respondCalls.length = 0
-  useInteractionStore.setState({ queue: [], currentRequest: null })
+  useInteractionStore.setState({ requests: [], taskInlineHost: false })
 })
 
 describe('interaction.store / 响应字段透传', () => {
   it('完整响应字段（含 allowAlways/allowAlwaysDir/taskHighPermission）透传主进程', () => {
     useInteractionStore.getState().enqueue(req('1'))
-    useInteractionStore.getState().respond({
+    useInteractionStore.getState().respondById('1', {
       confirmed: true,
       selectedValue: 'a',
       inputValue: 'text',
@@ -48,87 +48,46 @@ describe('interaction.store / 响应字段透传', () => {
     })
   })
 
-  it('请求的富字段（options/script/dirScope/conversationId）原样保存', () => {
+  it('请求的富字段（options/dirScope/diff/conversationId）原样保存', () => {
     const rich = req('1', {
       type: 'select',
       options: [{ label: '允许', value: 'yes', danger: true }],
       dirScope: 'C:/data',
-      script: { language: 'powershell', content: 'Get-Item', truncated: false },
+      diff: { content: '@@ -1 +1 @@\n-a\n+b', truncated: false },
       conversationId: 'conv-1',
       timeout: 30000,
-      source: 'file_permission',
+      source: 'security:fs_outside_workspace:写入',
     })
     useInteractionStore.getState().enqueue(rich)
-    expect(useInteractionStore.getState().currentRequest).toEqual(rich)
+    expect(useInteractionStore.getState().requests[0]).toEqual(rich)
   })
 })
 
-describe('interaction.store / 队列顺序与弹出', () => {
-  it('FIFO：多次 respond 依次弹出', () => {
+describe('interaction.store / 顺序与按 id 消费', () => {
+  it('保持 FIFO，响应中间请求不改变其余顺序', () => {
     const s = useInteractionStore.getState()
     s.enqueue(req('1'))
     s.enqueue(req('2'))
     s.enqueue(req('3'))
-    useInteractionStore.getState().respond({ cancelled: true })
-    expect(respondCalls[0].id).toBe('1')
-    expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
-    useInteractionStore.getState().respond({ confirmed: true, cancelled: false })
-    expect(respondCalls[1].id).toBe('2')
-    expect(useInteractionStore.getState().currentRequest?.id).toBe('3')
-    useInteractionStore.getState().respond({ cancelled: false })
-    expect(respondCalls[2].id).toBe('3')
-    expect(useInteractionStore.getState().currentRequest).toBeNull()
-    expect(useInteractionStore.getState().queue).toHaveLength(0)
+    useInteractionStore.getState().respondById('2', { cancelled: true })
+    expect(respondCalls[0].id).toBe('2')
+    expect(useInteractionStore.getState().requests.map(r => r.id)).toEqual(['1', '3'])
   })
 
-  it('连续 cancelCurrent 逐个弹出直至清空', () => {
+  it('可只清理单个任务的请求，其余任务不受影响', () => {
     const s = useInteractionStore.getState()
-    s.enqueue(req('1'))
-    s.enqueue(req('2'))
-    useInteractionStore.getState().cancelCurrent()
-    useInteractionStore.getState().cancelCurrent()
-    useInteractionStore.getState().cancelCurrent() // 队列已空 → no-op
-    expect(respondCalls).toEqual([
-      { id: '1', cancelled: true },
-      { id: '2', cancelled: true },
-    ])
-    expect(useInteractionStore.getState().currentRequest).toBeNull()
-  })
-
-  it('队列中相同 id 重复入队只保留一次（按 id 去重）', () => {
-    const s = useInteractionStore.getState()
-    s.enqueue(req('a'))
-    s.enqueue(req('b'))
-    s.enqueue(req('b')) // 队列中重复，不再入队
-    expect(useInteractionStore.getState().queue.map(q => q.id)).toEqual(['b'])
-    useInteractionStore.getState().respond({ cancelled: true })
-    useInteractionStore.getState().respond({ cancelled: true })
-    expect(respondCalls.map(c => c.id)).toEqual(['a', 'b'])
-  })
-
-  it('与 currentRequest 相同 id 的请求不重复入队', () => {
-    useInteractionStore.getState().enqueue(req('dup'))
-    useInteractionStore.getState().enqueue(req('dup'))
-    expect(useInteractionStore.getState().queue).toHaveLength(0)
-    expect(useInteractionStore.getState().currentRequest?.id).toBe('dup')
+    s.enqueue(req('a1', { conversationId: 'a' }))
+    s.enqueue(req('b1', { conversationId: 'b' }))
+    s.enqueue(req('a2', { conversationId: 'a' }))
+    useInteractionStore.getState().respondById('a1', { cancelled: true })
+    expect(useInteractionStore.getState().requests.map(r => r.id)).toEqual(['b1', 'a2'])
   })
 
   it('大量入队保持顺序', () => {
     const s = useInteractionStore.getState()
     for (let i = 0; i < 50; i++) s.enqueue(req(`${i}`))
-    expect(useInteractionStore.getState().currentRequest?.id).toBe('0')
-    expect(useInteractionStore.getState().queue.map(q => q.id)).toEqual(
-      Array.from({ length: 49 }, (_, i) => `${i + 1}`),
+    expect(useInteractionStore.getState().requests.map(r => r.id)).toEqual(
+      Array.from({ length: 50 }, (_, i) => `${i}`),
     )
-  })
-
-  it('respond 后紧接 enqueue 追加到队尾', () => {
-    const s = useInteractionStore.getState()
-    s.enqueue(req('1'))
-    s.enqueue(req('2'))
-    useInteractionStore.getState().respond({ cancelled: true })
-    useInteractionStore.getState().enqueue(req('3'))
-    expect(useInteractionStore.getState().currentRequest?.id).toBe('2')
-    expect(useInteractionStore.getState().queue.map(q => q.id)).toEqual(['3'])
   })
 })
