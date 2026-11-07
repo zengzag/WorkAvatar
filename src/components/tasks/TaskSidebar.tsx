@@ -358,6 +358,9 @@ const TaskItem = memo(({
       open={selectionMode ? false : undefined}
     >
       <div
+        data-testid="task-item"
+        data-task-id={task.id}
+        data-task-title={task.title || ''}
         onClick={(e) => {
           e.stopPropagation()
           if (selectionMode) {
@@ -407,6 +410,7 @@ const TaskItem = memo(({
               <Input
                 ref={editInputRef}
                 value={editValue}
+                data-testid="task-rename-input"
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleEditKeyDown}
                 onBlur={saveEdit}
@@ -473,6 +477,7 @@ const TaskItem = memo(({
                 type="text"
                 size="small"
                 icon={<EditOutlined style={{ fontSize: 12 }} />}
+                data-testid="task-rename"
                 onClick={(e) => startEdit(e)}
                 title={t('common.rename')}
                 style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
@@ -484,6 +489,7 @@ const TaskItem = memo(({
                   type="text"
                   size="small"
                   onClick={(e) => confirmDelete(e)}
+                  data-testid="task-delete-confirm"
                   title={t('common.confirm')}
                   danger
                   style={{ padding: '0 4px', width: 'auto', height: 20, minWidth: 20, fontSize: 12 }}
@@ -494,6 +500,7 @@ const TaskItem = memo(({
                   type="text"
                   size="small"
                   onClick={() => cancelDeleteConfirm()}
+                  data-testid="task-delete-cancel"
                   title={t('common.cancel')}
                   style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
                 >
@@ -505,6 +512,7 @@ const TaskItem = memo(({
                 type="text"
                 size="small"
                 icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                data-testid="task-delete"
                 onClick={(e) => handleDeleteClick(e)}
                 title={t('common.delete')}
                 style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
@@ -751,7 +759,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   )
 
   return (
-    <div ref={sidebarRef} className="wa-task-sidebar" style={{
+    <div ref={sidebarRef} className="wa-task-sidebar" data-testid="task-sidebar" style={{
       width,
       flexShrink: 0,
       display: 'flex',
@@ -818,13 +826,14 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 size="small"
                 disabled={selectedIds.size === 0 || !onDeleteMany}
                 danger
+                data-testid="task-batch-delete"
                 icon={<DeleteOutlined style={{ fontSize: 12 }} />}
                 onClick={handleBatchDelete}
                 style={{ fontSize: 12, color: selectedIds.size > 0 ? token.colorError : token.colorTextQuaternary, padding: 0, width: 22, height: 22, minWidth: 22 }}
               />
             </div>
             {/* 搜索框 */}
-            <div style={{
+            <div data-testid="task-sidebar-search" style={{
               height: 30,
               display: selectionMode ? 'none' : 'flex',
               borderRadius: 7,
@@ -871,6 +880,8 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                       return (
                         <div
                           key={option.key}
+                          data-testid="task-view-option"
+                          data-view={option.key}
                           onClick={() => changeViewMode(option.key)}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
@@ -893,6 +904,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                     })}
                     <div style={{ height: 1, background: token.colorBorderSecondary, margin: '4px 2px' }} />
                     <div
+                      data-testid="task-multi-select"
                       onClick={() => {
                         setViewMenuVisible(false)
                         setSelectionMode(true)
@@ -920,6 +932,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                   <Button
                     type="text"
                     size="small"
+                    data-testid="task-sidebar-view"
                     icon={viewMode === 'workspace'
                       ? <FolderOutlined style={{ fontSize: 12 }} />
                       : viewMode === 'employee'
@@ -964,6 +977,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               <Button
                 type="primary"
                 size="small"
+                data-testid="task-sidebar-new"
                 icon={<PlusOutlined style={{ fontSize: 14 }} />}
                 onClick={onNewTask}
                 style={{

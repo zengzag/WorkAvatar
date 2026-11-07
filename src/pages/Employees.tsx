@@ -389,6 +389,9 @@ const Employees: React.FC = () => {
               <div
                 key={emp.id}
                 className="emp-card"
+                data-testid="employee-card"
+                data-employee-id={emp.id}
+                data-employee-name={emp.name}
                 onClick={() => handleCardClick(emp)}
                 style={{
                   border: `1px solid ${token.colorBorderSecondary}`,
@@ -500,6 +503,9 @@ const Employees: React.FC = () => {
               <div
                 key={emp.id}
                 className="emp-list-row"
+                data-testid="employee-card"
+                data-employee-id={emp.id}
+                data-employee-name={emp.name}
                 onClick={() => handleCardClick(emp)}
                 style={{
                   display: 'flex',
@@ -602,6 +608,7 @@ const Employees: React.FC = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <Input
             placeholder={t('digitalEmployees.searchPlaceholder')}
+            data-testid="employee-search"
             prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -625,7 +632,7 @@ const Employees: React.FC = () => {
               onClick={() => setProfilesOpen(true)}
             />
           </Tooltip>
-          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate} data-testid="employee-create">
             {t('digitalEmployees.createEmployee', { defaultValue: '新建员工' })}
           </Button>
         </div>
@@ -643,7 +650,7 @@ const Employees: React.FC = () => {
                 </span>
               }
             >
-              <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate} data-testid="employee-create-empty">
                 {t('digitalEmployees.createFirstEmployee', { defaultValue: '创建第一个员工' })}
               </Button>
             </Empty>

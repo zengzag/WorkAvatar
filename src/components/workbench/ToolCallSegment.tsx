@@ -387,7 +387,12 @@ const ToolCallSegmentInner: React.FC<{
   }
 
   return (
-    <div style={{ marginBottom: 2, containerType: 'inline-size' }}>
+    <div
+      data-testid="tool-call-segment"
+      data-tool-name={seg.toolName || ''}
+      data-status={seg.toolIsError || seg.toolError ? 'error' : 'ok'}
+      style={{ marginBottom: 2, containerType: 'inline-size' }}
+    >
       {header}
     </div>
   )

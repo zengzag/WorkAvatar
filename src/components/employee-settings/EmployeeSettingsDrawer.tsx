@@ -579,6 +579,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
 
   return (
     <Drawer
+      rootClassName="employee-settings-drawer"
       title={
         employee ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>

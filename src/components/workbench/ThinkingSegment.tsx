@@ -92,7 +92,7 @@ const ThinkingSegmentInner: React.FC<{
 
   if (isExpanded) {
     return (
-      <div style={{ marginBottom: 2 }}>
+      <div data-testid="thinking-segment" style={{ marginBottom: 2 }}>
         {header}
         <div className="wa-seg-body">
           <div
@@ -131,7 +131,7 @@ const ThinkingSegmentInner: React.FC<{
   }
 
   return (
-    <div style={{ marginBottom: 2 }}>
+    <div data-testid="thinking-segment" style={{ marginBottom: 2 }}>
       {header}
     </div>
   )

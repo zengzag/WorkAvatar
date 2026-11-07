@@ -288,6 +288,7 @@ const TaskTerminal: React.FC<TaskTerminalProps> = ({ terminalId, rootPath, activ
   return (
     <div
       ref={hostRef}
+      data-testid="task-terminal"
       onClick={() => xtermRef.current?.focus()}
       onContextMenu={handleContextMenu}
       style={{

@@ -447,7 +447,7 @@ const LLMSettings: React.FC = () => {
       <div>
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Title level={5} style={{ margin: 0 }}>{t('settings.llmProviders')}</Title>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd} data-testid="settings-add-provider">
             {t('settings.addProvider')}
           </Button>
         </div>
@@ -459,6 +459,8 @@ const LLMSettings: React.FC = () => {
           pagination={false}
           scroll={{ y: 400 }}
           locale={{ emptyText: t('settings.noProviders') }}
+          rowClassName={() => 'llm-provider-row'}
+          onRow={(record) => ({ 'data-testid': 'llm-provider-row', 'data-provider-id': record.id } as any)}
         />
       </div>
 

@@ -102,7 +102,7 @@ export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined; t
         </div>
       ) : undefined}
     >
-      <span style={{
+      <span data-testid="token-usage" style={{
         display: 'inline-flex',
         alignItems: 'center',
         gap: 4,

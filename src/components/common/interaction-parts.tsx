@@ -404,7 +404,7 @@ export const InteractionActions: React.FC<{
 
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
-      <Button onClick={onCancel}>
+      <Button onClick={onCancel} data-testid="interaction-reject">
         {request.type === 'confirm' ? t('interaction.reject') : t('common.cancel')}
       </Button>
       {menuItems ? (
@@ -414,6 +414,7 @@ export const InteractionActions: React.FC<{
             danger={isDanger}
             disabled={confirmDisabled}
             onClick={onConfirm}
+            data-testid="interaction-allow-once"
             style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
           >
             {t('interaction.allowOnce')}
@@ -435,7 +436,7 @@ export const InteractionActions: React.FC<{
           </Dropdown>
         </div>
       ) : (
-        <Button type="primary" danger={isDanger} disabled={confirmDisabled} onClick={onConfirm}>
+        <Button type="primary" danger={isDanger} disabled={confirmDisabled} onClick={onConfirm} data-testid="interaction-confirm">
           {request.type === 'confirm' ? t('interaction.confirm') : t('common.confirm')}
         </Button>
       )}

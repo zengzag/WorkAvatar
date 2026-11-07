@@ -40,6 +40,15 @@ process.on('uncaughtException', (error) => {
   }, 1000)
 })
 
+// E2E 测试：独立数据目录 + 独立 userData，保证多实例隔离且不污染真实数据
+const e2eDataDir = process.env.WORKAVATAR_DATA_DIR
+if (e2eDataDir) {
+  const userDataDir = path.join(e2eDataDir, 'electron')
+  fs.mkdirSync(userDataDir, { recursive: true })
+  app.setPath('userData', userDataDir)
+  app.setPath('sessionData', path.join(userDataDir, 'session'))
+}
+
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
@@ -263,6 +272,8 @@ function registerWebviewGuard(): void {
 registerWebviewGuard()
 
 const isDev = !app.isPackaged
+/** E2E 测试模式：加载已构建产物而非 dev server，且不自动打开 DevTools */
+const isE2E = process.env.WORKAVATAR_E2E === '1'
 
 // 注册 app-file:// 特权协议，让渲染进程能通过 URL 访问本地文件（用于 file-viewer 预览）
 // 注册 plugin:// 特权协议，供渲染端动态 import 插件 ESM 入口（CORS 放行跨源模块加载）
@@ -554,7 +565,7 @@ async function createWindow() {
 
   mainWindow.on('ready-to-show', () => {
     startupMark('主窗口 ready-to-show（首帧绘制）')
-    if (isDev) {
+    if (isDev && !isE2E) {
       mainWindow?.webContents.openDevTools()
     }
   })
@@ -585,7 +596,7 @@ async function createWindow() {
   // 主窗口纳入插件广播目标（插件 ctx.ipc.broadcast 推送范围）
   PluginHostService.getInstance().addTarget(mainWindow)
 
-  if (isDev) {
+  if (isDev && !isE2E) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
     mainWindow.loadFile(getDistPath('dist', 'index.html'))

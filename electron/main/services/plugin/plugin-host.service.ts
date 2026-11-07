@@ -284,7 +284,8 @@ class PluginHostService {
     const records = new Map<string, PluginRecord>()
     const userDir = this.getUserDir()
     const scanDirs: Array<{ label: string; dir: string }> = []
-    if (!app.isPackaged) {
+    const isDevRuntime = !app.isPackaged || process.env.WORKAVATAR_E2E === '1'
+    if (isDevRuntime) {
       const devDir = this.getDevPluginSourceDir()
       if (fs.existsSync(devDir)) {
         scanDirs.push({ label: 'dev', dir: devDir })
@@ -1422,7 +1423,7 @@ class PluginHostService {
     if (this.hasSystemFeature(record, 'windows')) {
       // 预加载脚本路径
       const getPreloadPath = () => {
-        if (!app.isPackaged) {
+        if (!app.isPackaged || process.env.WORKAVATAR_E2E === '1') {
           return path.join(process.cwd(), 'dist-electron', 'preload', 'index.js')
         }
         return path.join(__dirname, '..', '..', '..', 'preload', 'index.js')

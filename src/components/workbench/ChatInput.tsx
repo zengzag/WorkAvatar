@@ -1363,6 +1363,8 @@ const ChatInput: React.FC<{
                 return (
                   <div
                     key={`${provider.id}-${model.model}`}
+                    data-testid="chat-model-option"
+                    data-model-id={model.model}
                     onClick={() => {
                       onDefaultModelChange?.(provider.id, model.model)
                       setShowDefaultModelPicker(false)
@@ -1518,6 +1520,9 @@ const ChatInput: React.FC<{
           return (
             <div
               key={opt.key}
+              data-testid="chat-mode-option"
+              data-mode={opt.key}
+              data-disabled={opt.disabled ? 'true' : 'false'}
               title={opt.disabled ? t('workbench.modeLockedTip') : undefined}
               onClick={() => { if (!opt.disabled) selectExecutionMode(opt.key) }}
               style={{
@@ -1643,6 +1648,7 @@ const ChatInput: React.FC<{
             >
               <button
                 type="button"
+                data-testid="chat-workspace-trigger"
                 title={workspaceSelector.path || workspaceLabel}
                 style={selectorTriggerStyle(workspacePickerOpen)}
                 onMouseEnter={(e) => {
@@ -1689,6 +1695,8 @@ const ChatInput: React.FC<{
                       return (
                         <div
                           key={emp.id}
+                          data-testid="chat-employee-option"
+                          data-employee-id={emp.id}
                           onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 10,
@@ -1731,6 +1739,7 @@ const ChatInput: React.FC<{
             >
               <button
                 type="button"
+                data-testid="chat-employee-trigger"
                 title={activeEmployeeName || t('nav.employees')}
                 style={selectorTriggerStyle(employeePickerOpen)}
                 onMouseEnter={(e) => {
@@ -1804,7 +1813,7 @@ const ChatInput: React.FC<{
       )}
       {!centerMode && approvalSlot}
       {queuedMessages.length > 0 && (
-        <div style={{
+        <div data-testid="chat-queue" style={{
           marginBottom: 8,
           border: `1px solid ${token.colorBorderSecondary}`,
           borderRadius: 12,
@@ -1979,6 +1988,7 @@ const ChatInput: React.FC<{
           {/* contentEditable 输入框，支持在光标位置嵌入文件令牌 */}
           <div
             ref={editorRef}
+            data-testid="chat-input-editor"
             contentEditable={!isCompacting}
             suppressContentEditableWarning
             onKeyDown={handleKeyDown}
@@ -2061,6 +2071,7 @@ const ChatInput: React.FC<{
                   onOpenChange={setShowModePicker}
                 >
                   <Button type="text" size="small"
+                    data-testid="chat-mode-trigger"
                     title={`${modeLabel}\n${modeDesc}`}
                     icon={executionMode === 'pureChat'
                       ? <MessageOutlined style={{ fontSize: 12 }} />
@@ -2081,6 +2092,7 @@ const ChatInput: React.FC<{
               {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
               <Tooltip title={t('workbench.attachFile')}>
                 <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
+                  data-testid="chat-attach"
                   onClick={() => fileInputRef.current?.click()}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Tooltip>
@@ -2142,6 +2154,7 @@ const ChatInput: React.FC<{
                 >
                   <Button type="text" size="small"
                     title={defaultModelLabel || undefined}
+                    data-testid="chat-model-trigger"
                     style={{
                       color: token.colorTextSecondary,
                       padding: '0 5px', height: 18, minWidth: 18, borderRadius: 4,
@@ -2184,14 +2197,16 @@ const ChatInput: React.FC<{
             {isStreaming && (
               <Tooltip title={t('workbench.queueSendHint')}>
                 <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
+                  data-testid="chat-send"
                   disabled={isCompacting || (!hasEditorContent() && attachedImages.length === 0)}
                   size="middle" />
               </Tooltip>
             )}
-            <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" />
+            <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" data-testid="chat-stop" />
           </div>
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
+            data-testid="chat-send"
             disabled={!hasEditorContent() && attachedImages.length === 0}
             size="middle" style={{ flexShrink: 0 }} />
         )}

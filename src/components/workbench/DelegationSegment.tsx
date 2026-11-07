@@ -144,7 +144,7 @@ const DelegationSegmentInner: React.FC<{
 
   if (isExpanded) {
     return (
-      <div style={{ marginBottom: 2 }}>
+      <div data-testid="delegation-segment" data-status={status} data-target={seg.targetEmployeeName || ''} style={{ marginBottom: 2 }}>
         {header}
         <div className="wa-seg-body">
           {hasSubContent ? (
@@ -214,7 +214,7 @@ const DelegationSegmentInner: React.FC<{
   }
 
   return (
-    <div style={{ marginBottom: 2 }}>
+    <div data-testid="delegation-segment" data-status={status} data-target={seg.targetEmployeeName || ''} style={{ marginBottom: 2 }}>
       {header}
       {/* 折叠态：失败/取消显示错误信息 */}
       {(() => {

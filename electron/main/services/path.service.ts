@@ -25,8 +25,11 @@ class PathService {
     // 主线程模式：从 electron.app 读取默认目录或用户配置
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { app } = require('electron')
-    this.isDev = !app.isPackaged
-    this.dataDir = this.readConfig() || this.getDefaultDir()
+    // E2E 由 Playwright 以 electron.exe 直接拉起主进程，Electron 会把 isPackaged 判为 true；
+    // 统一按开发态解析资源目录，避免读不到 project/resources。
+    this.isDev = !app.isPackaged || process.env.WORKAVATAR_E2E === '1'
+    // E2E 测试使用独立数据目录，避免污染用户真实数据
+    this.dataDir = process.env.WORKAVATAR_DATA_DIR || this.readConfig() || this.getDefaultDir()
     this.ensureDir(this.dataDir)
   }
 

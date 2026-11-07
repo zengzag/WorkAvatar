@@ -194,7 +194,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
               label={t('employeeSettings.employeeName')}
               rules={[{ required: true, message: t('employeeSettings.enterName') }]}
             >
-              <Input placeholder={t('employeeSettings.namePlaceholder')} disabled={readonly} />
+              <Input placeholder={t('employeeSettings.namePlaceholder')} data-testid="employee-settings-name" disabled={readonly} />
             </Form.Item>
           </Col>
           <Col span={14}>
@@ -350,7 +350,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
         {!readonly && (
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
+              <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading} data-testid="employee-settings-save">
                 {t('employeeSettings.saveBasic')}
               </Button>
               <Button

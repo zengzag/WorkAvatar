@@ -102,7 +102,7 @@ const Onboarding: React.FC = () => {
             <Text strong>WorkAvatar</Text>
           </div>
           {step < 2 && (
-            <Button type="text" size="small" onClick={() => finish()}>
+            <Button type="text" size="small" onClick={() => finish()} data-testid="onboarding-skip">
               {t('onboarding.skip')}
             </Button>
           )}
@@ -127,9 +127,9 @@ const Onboarding: React.FC = () => {
             {step < 2 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 28 }}>
                 {step > 0
-                  ? <Button onClick={() => setStep(step - 1)}>{t('common.prev')}</Button>
+                  ? <Button onClick={() => setStep(step - 1)} data-testid="onboarding-prev">{t('common.prev')}</Button>
                   : <span />}
-                <Button type="primary" onClick={() => goTo(step + 1)}>{t('common.next')}</Button>
+                <Button type="primary" onClick={() => goTo(step + 1)} data-testid="onboarding-next">{t('common.next')}</Button>
               </div>
             )}
           </>

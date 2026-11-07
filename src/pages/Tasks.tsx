@@ -1182,7 +1182,7 @@ const Tasks: React.FC = () => {
               </>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-              <span title={statusConv?.title} style={{
+              <span title={statusConv?.title} data-testid="task-title" style={{
                 fontSize: 13.5, fontWeight: 620, color: token.colorText, letterSpacing: '-0.01em',
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
               }}>
@@ -1244,6 +1244,7 @@ const Tasks: React.FC = () => {
               )}
               <Tooltip title={panelOpen ? t('workbench.closePanel') : t('workbench.panelOpen')}>
                 <Button type="text" size="small"
+                  data-testid="workspace-panel-toggle"
                   icon={<SidePanelIcon style={{ fontSize: 15 }} />}
                   onClick={() => { panelOpen ? closePanel() : openPanel() }}
                   style={{
@@ -1329,6 +1330,7 @@ const Tasks: React.FC = () => {
               ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
                   className="wa-message-scroll"
+                  data-testid="message-list"
                   style={{
                     flex: 1,
                     overflow: 'auto',

@@ -61,7 +61,7 @@ const EmployeeStep: React.FC<EmployeeStepProps> = ({ onCreated }) => {
         >
           <TextArea rows={4} maxLength={2000} showCount placeholder={t('onboarding.employee.rulesPlaceholder')} />
         </Form.Item>
-        <Button type="primary" loading={creating} onClick={handleCreate}>
+        <Button type="primary" loading={creating} onClick={handleCreate} data-testid="onboarding-create-employee">
           {t('onboarding.employee.create')}
         </Button>
       </Form>

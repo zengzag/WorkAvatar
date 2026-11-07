@@ -60,8 +60,8 @@ const FinishStep: React.FC<FinishStepProps> = ({ hasProvider, hasEmployee, onGoK
       </Text>
 
       <Space size={12}>
-        <Button onClick={onGoKms}>{t('onboarding.finish.goKms')}</Button>
-        <Button type="primary" onClick={onStart}>{t('onboarding.finish.start')}</Button>
+        <Button onClick={onGoKms} data-testid="onboarding-go-kms">{t('onboarding.finish.goKms')}</Button>
+        <Button type="primary" onClick={onStart} data-testid="onboarding-start">{t('onboarding.finish.start')}</Button>
       </Space>
     </div>
   )

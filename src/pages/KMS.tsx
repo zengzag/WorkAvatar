@@ -139,6 +139,7 @@ const KMSPage: React.FC = () => {
         <Segmented
           value={viewMode}
           onChange={(v) => setViewMode(v as ViewMode)}
+          data-testid="kms-view-switch"
           options={[
             {
               label: (
@@ -183,6 +184,7 @@ const KMSPage: React.FC = () => {
             type="text"
             icon={<SettingOutlined />}
             onClick={() => setSettingsOpen(true)}
+            data-testid="kms-settings-open"
           >
             {t('kms.settings')}
           </Button>

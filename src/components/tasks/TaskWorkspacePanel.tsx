@@ -45,12 +45,14 @@ const StartCard: React.FC<{
   title: string
   description: string
   disabled?: boolean
+  testId?: string
   onClick: () => void
-}> = ({ icon, iconBg, iconColor, title, description, disabled, onClick }) => {
+}> = ({ icon, iconBg, iconColor, title, description, disabled, testId, onClick }) => {
   const { token } = theme.useToken()
   const [hovered, setHovered] = useState(false)
   return (
     <div
+      data-testid={testId}
       onClick={disabled ? undefined : onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -283,6 +285,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
             title={t('workbench.startFilesTitle')}
             description={t('workbench.startFilesDesc')}
             disabled={!rootPath}
+            testId="workspace-start-files"
             onClick={() => openView('files')}
           />
           <StartCard
@@ -292,6 +295,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
             title={t('workbench.startTerminalTitle')}
             description={t('workbench.startTerminalDesc')}
             disabled={!rootPath}
+            testId="workspace-start-terminal"
             onClick={() => openView('terminal')}
           />
           {!rootPath && (
@@ -343,6 +347,8 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
                     >
                       <div
                         title={file.path}
+                        data-testid="workspace-artifact"
+                        data-path={file.path}
                         onClick={isMissing ? undefined : () => openPreview(file)}
                         onMouseEnter={(event) => { event.currentTarget.style.background = token.colorBgTextHover }}
                         onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent' }}
@@ -419,6 +425,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
     <div
       ref={panelRef}
       className="wa-workspace-panel"
+      data-testid="workspace-panel"
       style={{
         width: expanded ? undefined : width,
         flex: expanded ? 1 : undefined,

@@ -169,7 +169,7 @@ const ModelStep: React.FC<ModelStepProps> = ({ providers, onConfigured }) => {
           <Input placeholder={t('onboarding.model.baseUrlPlaceholder')} />
         </Form.Item>
       )}
-      <Button type="primary" loading={saving} onClick={handleSaveAndTest}>
+      <Button type="primary" loading={saving} onClick={handleSaveAndTest} data-testid="onboarding-save-test">
         {t('onboarding.model.saveAndTest')}
       </Button>
     </Form>

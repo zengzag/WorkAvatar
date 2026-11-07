@@ -53,6 +53,7 @@ export const TaskInteractionCard: React.FC<{
   return (
     <div
       className="wa-inline-approval"
+      data-testid="task-interaction-card"
       style={{
         border: `1px solid ${borderColor}`,
         background: 'var(--wa-panel)',

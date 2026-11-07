@@ -29,6 +29,7 @@ const SubTaskDrawer: React.FC<SubTaskDrawerProps> = ({ open, segments, getToolDi
 
   return (
     <Drawer
+      rootClassName="subtask-drawer"
       title={
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <TeamOutlined style={{ color: token.colorPrimary }} />

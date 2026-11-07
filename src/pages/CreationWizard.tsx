@@ -402,6 +402,7 @@ const CreationWizard: React.FC = () => {
             </Text>
             <TextArea
               placeholder={t('creationWizard.businessScenePlaceholder')}
+              data-testid="wizard-business-desc"
               value={businessDescription}
               onChange={(e) => setBusinessDescription(e.target.value)}
               rows={4}
@@ -427,6 +428,7 @@ const CreationWizard: React.FC = () => {
         </Text>
         <Input
           placeholder={t('creationWizard.employeeNamePlaceholder')}
+          data-testid="wizard-employee-name"
           prefix={<UserOutlined />}
           value={employeeName}
           onChange={(e) => setEmployeeName(e.target.value)}
@@ -477,6 +479,7 @@ const CreationWizard: React.FC = () => {
           type="primary"
           icon={<CheckOutlined />}
           onClick={handleCreateEmployee}
+          data-testid="wizard-create"
           loading={creating}
           disabled={!employeeName.trim()}
           size="large"
@@ -526,6 +529,7 @@ const CreationWizard: React.FC = () => {
             icon={<ThunderboltOutlined />}
             onClick={handleQuickCreate}
             loading={creating}
+            data-testid="wizard-quick-create"
           >
             {t('creationWizard.quickCreate')}
           </Button>
@@ -533,6 +537,7 @@ const CreationWizard: React.FC = () => {
             type="primary"
             icon={<ArrowRightOutlined />}
             onClick={handleNext}
+            data-testid="wizard-next"
           >
             {t('common.next')}
           </Button>
