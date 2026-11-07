@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import type { GenericChatViewProps } from '../../../plugin-sdk/src/renderer'
 import { MessageList, ChatInput } from './index'
 import type { MessageWithThought } from './types'
-import type { AttachedImage } from './ChatInput'
+import type { AttachedImage, ModelSelection, SendOptions } from './ChatInput'
 import { ensureSegments } from './types'
 import { useChatScroll } from '../../hooks/useChatScroll'
 import { getToolDisplayName } from '../../utils/tool-display'
@@ -57,10 +57,11 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
     try { await navigator.clipboard.writeText(content) } catch { /* ignore */ }
   }, [])
 
-  const handleSend = useCallback((content: string, images: string[]) => {
+  const handleSend = useCallback((content: string, images: string[], _models?: ModelSelection[], options?: SendOptions) => {
     forceScrollToBottom()
     onSend(content, images)
-    if (images.length > 0) setAttachedImages([])
+    // 队列续发时保留用户正在编辑的新附件
+    if (images.length > 0 && !options?.fromQueue) setAttachedImages([])
   }, [onSend, forceScrollToBottom])
 
   // 通用对话不提供重生成/对比/分支等高级能力，保持受控组件的零负担

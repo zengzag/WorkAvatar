@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
@@ -27,6 +27,17 @@ export interface ModelSelection {
 
 export interface SendOptions {
   highPermission?: boolean
+  /** 由待发送队列自动触发时为 true，调用方不要清理当前输入框草稿/附件/模型选择 */
+  fromQueue?: boolean
+}
+
+/** 排队等待当前回复结束后自动发送的用户消息 */
+export interface QueuedChatMessage {
+  id: string
+  content: string
+  images: string[]
+  models: ModelSelection[]
+  options?: SendOptions
 }
 
 // 已启用的 skill 简要信息，用于斜杠菜单触发
@@ -51,6 +62,18 @@ const isEditorEffectivelyEmpty = (editor: HTMLElement): boolean => {
 
 /** 生成文件令牌唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+/** 生成排队消息唯一 id */
+const genQueueId = () => `q_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+/** 按对话缓存待发送队列：切换任务时保留各自的排队消息，切回后可继续展示 */
+const _persistentQueues = new Map<string, QueuedChatMessage[]>()
+
+/** 队列预览文本：文件令牌显示为文件名，避免暴露完整路径 */
+const formatQueuedPreview = (content: string): string =>
+  content
+    .replace(/<path>([^<]*)<\/path>/g, (_match, path: string) => path.split(/[\\/]/).pop() || path)
+    .trim()
 
 /** 生成图片附件项：data URL 先落盘为主进程附件，消息里以 wa-attachment:// 引用流转（避免 base64 进 DB/localStorage）。
  *  落盘失败（如主进程异常）时保留原 data URL，功能降级不中断。 */
@@ -380,6 +403,52 @@ const ChatInput: React.FC<{
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
 
+  // ---- 待发送队列：回复进行中按 Enter/发送时先排队，回复结束后自动发送 ----
+  // 无会话（新任务/插件临时对话）时用实例级 key，避免不同输入框共用同一队列
+  const localQueueKeyRef = useRef(`local_${Math.random().toString(36).slice(2)}`)
+  const queueKey = conversationId || localQueueKeyRef.current
+  const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>(
+    () => (conversationId ? _persistentQueues.get(conversationId) || [] : [])
+  )
+  /** 当前队列归属的 key，用于切换任务时保存/恢复各自的队列 */
+  const queueKeyRef = useRef(queueKey)
+  const queueRef = useRef(queuedMessages)
+  queueRef.current = queuedMessages
+  /** 上一轮是否处于回复/压缩中：用于识别回复结束、自动续发队列 */
+  const prevBusyRef = useRef(isStreaming || isCompacting)
+  /** 回复结束后是否还有队列待发（编辑队列项时暂缓） */
+  const drainArmedRef = useRef(false)
+  /** 正在内联编辑的队列项；编辑期间暂停自动发送，避免把用户正在修改的内容发出去 */
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null)
+  const [editingQueueText, setEditingQueueText] = useState('')
+
+  useEffect(() => {
+    if (queueKeyRef.current !== queueKey) {
+      if (!queueKeyRef.current.startsWith('local_')) {
+        if (queueRef.current.length > 0) {
+          _persistentQueues.set(queueKeyRef.current, queueRef.current)
+        } else {
+          _persistentQueues.delete(queueKeyRef.current)
+        }
+      }
+      queueKeyRef.current = queueKey
+      // 切换任务时重置续发状态：绝不能把上一个任务的队列发到当前任务
+      prevBusyRef.current = isStreaming || isCompacting
+      drainArmedRef.current = false
+      setQueuedMessages(conversationId ? _persistentQueues.get(conversationId) || [] : [])
+      setEditingQueueId(null)
+      setEditingQueueText('')
+      return
+    }
+    if (conversationId) {
+      if (queuedMessages.length > 0) {
+        _persistentQueues.set(conversationId, queuedMessages)
+      } else {
+        _persistentQueues.delete(conversationId)
+      }
+    }
+  }, [queueKey, conversationId, queuedMessages, isStreaming, isCompacting])
+
   /** 同步：内容变化后通知父组件（草稿），并更新空状态（控制 placeholder 与发送按钮） */
   const emitDraftChange = useCallback(() => {
     if (!editorRef.current) return
@@ -531,8 +600,8 @@ const ChatInput: React.FC<{
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      // 流式回复/压缩期间禁用发送：否则消息会被下游静默丢弃，而输入框已被清空导致内容丢失
-      if (isStreaming || isCompacting) return
+      // 压缩期间禁止发送（流式回复期间允许排队，由 handleSend 入队）
+      if (isCompacting) return
       const plain = getPlainText()
       // skill 命令唯一匹配且无参数：替换 /xxx 为 `/<name> ` 让用户继续输入参数
       if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
@@ -545,7 +614,7 @@ const ChatInput: React.FC<{
       }
       handleSendRef.current()
     }
-  }, [getPlainText, currentSlashItems, emitDraftChange, isStreaming, isCompacting])
+  }, [getPlainText, currentSlashItems, emitDraftChange, isCompacting])
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
   // skill 激活统一通过 activate_skill 工具；一条消息内可含多个技能命令，逐个转换
@@ -577,9 +646,15 @@ const ChatInput: React.FC<{
     return !isEditorEffectivelyEmpty(editorRef.current)
   }, [])
 
+  const clearComposer = useCallback(() => {
+    if (editorRef.current) editorRef.current.innerHTML = ''
+    emitDraftChange()
+    onDraftChange?.('')
+  }, [emitDraftChange, onDraftChange])
+
   const handleSend = useCallback(() => {
-    // 流式回复/压缩期间禁用发送，避免消息被下游丢弃后输入框仍被清空
-    if (isStreaming || isCompacting) return
+    // 压缩期间禁止发送，避免消息被下游丢弃后输入框仍被清空
+    if (isCompacting) return
     if (!hasEditorContent() && attachedImages.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
     let content = editorRef.current ? extractContentFromEditor(editorRef.current).replace(/\u200B/g, '') : ''
@@ -590,17 +665,114 @@ const ChatInput: React.FC<{
     }
     // 仅附加文件令牌、没有文字时，extractContentFromEditor 会把令牌路径写入 content，仍可正常发送；
     // 若 content 为空且无图片，上面的 hasEditorContent 已提前返回。
+    if (isStreaming) {
+      // 回复进行中：消息进入待发送队列，回复结束后自动发出
+      const item: QueuedChatMessage = {
+        id: genQueueId(),
+        content,
+        images: imageUrls,
+        models: [...selectedModels],
+        options: { highPermission: fullAllow },
+      }
+      const next = [...queueRef.current, item]
+      queueRef.current = next
+      setQueuedMessages(next)
+      // 队列项已完整保存内容/附件/模型，清空当前输入区，避免重复展示
+      clearComposer()
+      onImagesChange([])
+      onModelsChange([])
+      return
+    }
     onSend(content, imageUrls, selectedModels, { highPermission: fullAllow })
-    // 清空编辑器
-    if (editorRef.current) editorRef.current.innerHTML = ''
-    emitDraftChange()
-    onDraftChange?.('')
-  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange, isStreaming, isCompacting])
+    clearComposer()
+  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, invocableSkills, convertSkillCommand, clearComposer, onImagesChange, onModelsChange, isStreaming, isCompacting])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
   //  - 确保 handleKeyDown 调用时捕获的是最新闭包（含最新 attachedImages / content）
   handleSendRef.current = handleSend
+
+  /** 从队列取出并发送（默认队首；指定 id 时只发该条），供自动续发与「立即发送」复用 */
+  const takeQueuedAndSend = useCallback((targetId?: string) => {
+    const current = queueRef.current
+    const item = targetId ? current.find(q => q.id === targetId) : current[0]
+    if (!item) return false
+    const next = current.filter(q => q.id !== item.id)
+    queueRef.current = next
+    setQueuedMessages(next)
+    onSend(item.content, item.images, item.models, { ...item.options, fromQueue: true })
+    return true
+  }, [onSend])
+
+  /** 流式结束后自动续发：排队期间用户可能正在编辑，编辑完成/取消后再继续 */
+  useEffect(() => {
+    const busy = isStreaming || isCompacting
+    if (busy) {
+      prevBusyRef.current = true
+      return
+    }
+    if (prevBusyRef.current) {
+      prevBusyRef.current = false
+      drainArmedRef.current = queueRef.current.length > 0
+    }
+    if (drainArmedRef.current && !editingQueueId && queueRef.current.length > 0) {
+      drainArmedRef.current = false
+      takeQueuedAndSend()
+    }
+  }, [isStreaming, isCompacting, editingQueueId, queuedMessages, takeQueuedAndSend])
+
+  /** 立即发送：把目标项提到队首；正在回复时先停止当前回复，结束后优先发送该条 */
+  const handleSendQueuedNow = useCallback((id: string) => {
+    if (isCompacting) return
+    const current = queueRef.current
+    const item = current.find(q => q.id === id)
+    if (!item) return
+    setEditingQueueId(null)
+    setEditingQueueText('')
+    const next = [item, ...current.filter(q => q.id !== id)]
+    queueRef.current = next
+    setQueuedMessages(next)
+    if (isStreaming) {
+      drainArmedRef.current = true
+      void Promise.resolve(onStop()).catch(() => { /* 停止失败时保持当前回复 */ })
+      return
+    }
+    // 编辑暂停或上游未真正发起流式时兜底直接发送
+    takeQueuedAndSend(id)
+  }, [isCompacting, isStreaming, onStop, takeQueuedAndSend])
+
+  const startEditQueued = useCallback((item: QueuedChatMessage) => {
+    setEditingQueueId(item.id)
+    setEditingQueueText(item.content)
+  }, [])
+
+  const cancelEditQueued = useCallback(() => {
+    setEditingQueueId(null)
+    setEditingQueueText('')
+  }, [])
+
+  const saveEditQueued = useCallback(() => {
+    if (!editingQueueId) return
+    const current = queueRef.current
+    const target = current.find(q => q.id === editingQueueId)
+    if (!target) {
+      cancelEditQueued()
+      return
+    }
+    const content = editingQueueText.trim()
+    if (!content && target.images.length === 0) return
+    const next = current.map(q => (q.id === editingQueueId ? { ...q, content } : q))
+    queueRef.current = next
+    setQueuedMessages(next)
+    cancelEditQueued()
+  }, [editingQueueId, editingQueueText, cancelEditQueued])
+
+  const deleteQueued = useCallback((id: string) => {
+    const next = queueRef.current.filter(q => q.id !== id)
+    queueRef.current = next
+    setQueuedMessages(next)
+    if (editingQueueId === id) cancelEditQueued()
+  }, [editingQueueId, cancelEditQueued])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return
@@ -1630,6 +1802,155 @@ const ChatInput: React.FC<{
         </div>
       )}
       {!centerMode && approvalSlot}
+      {queuedMessages.length > 0 && (
+        <div style={{
+          marginBottom: 8,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: 12,
+          background: token.colorFillQuaternary,
+          overflowX: 'hidden',
+          overflowY: 'auto',
+          maxHeight: 250,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
+            fontSize: 12, color: token.colorTextTertiary,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            position: 'sticky', top: 0, zIndex: 1,
+            background: token.colorFillQuaternary,
+          }}>
+            <ClockCircleOutlined style={{ fontSize: 12 }} />
+            <span style={{ fontWeight: 500, color: token.colorTextSecondary }}>
+              {t('workbench.queueTitle', { count: queuedMessages.length })}
+            </span>
+            <span style={{ marginLeft: 'auto', textAlign: 'right' }}>{t('workbench.queueAutoSendHint')}</span>
+          </div>
+          {queuedMessages.map((item, index) => {
+            const isItemEditing = editingQueueId === item.id
+            const preview = formatQueuedPreview(item.content)
+            return (
+              <div
+                key={item.id}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  padding: '7px 10px',
+                  borderTop: index > 0 ? `1px solid ${token.colorBorderSecondary}` : undefined,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {isItemEditing ? (
+                    <Input.TextArea
+                      autoSize={{ minRows: 1, maxRows: 4 }}
+                      value={editingQueueText}
+                      onChange={(e) => setEditingQueueText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          saveEditQueued()
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault()
+                          cancelEditQueued()
+                        }
+                      }}
+                      autoFocus
+                      variant="borderless"
+                      style={{
+                        background: token.colorBgContainer,
+                        border: `1px solid ${token.colorBorder}`,
+                        borderRadius: 6,
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        padding: '4px 8px',
+                      }}
+                    />
+                  ) : (
+                    preview && (
+                      <div
+                        title={preview}
+                        style={{
+                          fontSize: 12.5,
+                          lineHeight: 1.5,
+                          color: token.colorText,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}>
+                        {preview}
+                      </div>
+                    )
+                  )}
+                  {item.images.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                      {item.images.slice(0, 5).map((src, imageIndex) => (
+                        <img
+                          key={`${src}_${imageIndex}`}
+                          src={src}
+                          alt=""
+                          style={{
+                            width: 26, height: 26, objectFit: 'cover', display: 'block',
+                            borderRadius: 4, border: `1px solid ${token.colorBorderSecondary}`,
+                          }}
+                        />
+                      ))}
+                      {item.images.length > 5 && (
+                        <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                          +{item.images.length - 5}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                  {isItemEditing ? (
+                    <>
+                      <Tooltip title={t('workbench.queueSave')}>
+                        <Button type="text" size="small" icon={<CheckOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueSave')}
+                          disabled={!editingQueueText.trim() && item.images.length === 0}
+                          onClick={saveEditQueued}
+                          style={{ color: token.colorPrimary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                      <Tooltip title={t('workbench.queueCancel')}>
+                        <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueCancel')}
+                          onClick={cancelEditQueued}
+                          style={{ color: token.colorTextTertiary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                    </>
+                  ) : (
+                    <>
+                      <Tooltip title={t('workbench.queueSendNow')}>
+                        <Button type="text" size="small" icon={<SendOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueSendNow')}
+                          disabled={isCompacting || editingQueueId !== null}
+                          onClick={() => handleSendQueuedNow(item.id)}
+                          style={{ color: token.colorTextSecondary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                      <Tooltip title={t('workbench.queueEdit')}>
+                        <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueEdit')}
+                          disabled={editingQueueId !== null}
+                          onClick={() => startEditQueued(item)}
+                          style={{ color: token.colorTextSecondary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                      <Tooltip title={t('workbench.queueDelete')}>
+                        <Button type="text" size="small" icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueDelete')}
+                          danger
+                          onClick={() => deleteQueued(item.id)}
+                          style={{ width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
       <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 14, padding: '8px 8px 8px 14px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorder}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -1858,7 +2179,16 @@ const ChatInput: React.FC<{
         </div>
         <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
         {isStreaming || isCompacting ? (
-          <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {isStreaming && (
+              <Tooltip title={t('workbench.queueSendHint')}>
+                <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
+                  disabled={isCompacting || (!hasEditorContent() && attachedImages.length === 0)}
+                  size="middle" />
+              </Tooltip>
+            )}
+            <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" />
+          </div>
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
             disabled={!hasEditorContent() && attachedImages.length === 0}

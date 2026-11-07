@@ -836,14 +836,17 @@ const Tasks: React.FC = () => {
   }, [setSelectedCollectionIds, saveNewTaskDraft])
 
   // 发送消息
-  const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
-    setAttachedImages([])
-    setSelectedModels([])
-    setInputModels([])
-    clearNewTaskDraft()
+  const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean; fromQueue?: boolean }) => {
+    // 队列自动续发时保留用户当前正在编辑的草稿/附件/模型选择
+    if (!options?.fromQueue) {
+      setAttachedImages([])
+      setSelectedModels([])
+      setInputModels([])
+      clearNewTaskDraft()
+    }
     // 新建任务时把选定的工作区目录传给会话创建（null 表示默认工作区）
-    const workspacePath = newTaskWorkspacePath || undefined
-    setNewTaskWorkspacePath(null)
+    const workspacePath = options?.fromQueue ? undefined : (newTaskWorkspacePath || undefined)
+    if (!options?.fromQueue) setNewTaskWorkspacePath(null)
     await handleSend(content, images, models, { ...options, workspacePath })
     // 发送后切换到对话模式；任务列表由 activeConversationId/taskMode 变化触发的
     // useEffect 刷新（此时 sendMessage 已完成持久化，listAll 一定能查到新任务）
