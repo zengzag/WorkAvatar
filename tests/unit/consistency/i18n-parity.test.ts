@@ -111,7 +111,14 @@ describe('插件 locale（zh-CN ↔ en-US）', () => {
       const id = path.basename(dir)
       const zhPath = path.join(dir, 'locale', 'zh-CN.json')
       const enPath = path.join(dir, 'locale', 'en-US.json')
-      if (!fs.existsSync(zhPath) || !fs.existsSync(enPath)) {
+      const zhExists = fs.existsSync(zhPath)
+      const enExists = fs.existsSync(enPath)
+      if (!zhExists || !enExists) {
+        if (!zhExists && !enExists) {
+          // 无界面插件（纯技能/后台）不提供 locale 是合法的；一旦提供就必须双语齐全
+          const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8')) as Dict
+          if (!manifest.renderer && !manifest.nav) continue
+        }
         violations.push(`${id}: 缺少 locale/zh-CN.json 或 locale/en-US.json`)
         continue
       }
