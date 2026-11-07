@@ -652,23 +652,6 @@ html.dark .ant-switch .ant-switch-handle::before {
   line-height: 1.6;
 }
 
-/* 消息操作按钮默认隐藏，悬停/键盘聚焦时出现，降低长对话的视觉噪音 */
-.wa-msg-actions {
-  opacity: 0;
-  transition: opacity 0.15s var(--wa-ease);
-}
-
-.wa-msg:hover .wa-msg-actions,
-.wa-msg:focus-within .wa-msg-actions {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .wa-msg-actions {
-    opacity: 1;
-  }
-}
-
 /* 任务内联确认卡：与输入框同宽的实色卡片，左侧状态条 */
 .wa-inline-approval {
   display: flex;

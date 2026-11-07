@@ -571,7 +571,7 @@ const MessageBubble: React.FC<{
               </div>
             )}
             {!msg.isStreaming && !isEditing && (
-              <Space size={4} className="wa-msg-actions" style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
+              <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
                 {msg.content && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     data-testid="message-copy"
@@ -661,7 +661,7 @@ const MessageBubble: React.FC<{
             )}
 
             {!displayIsStreaming && (
-              <Space size={4} className="wa-msg-actions" style={{ marginTop: 2, marginLeft: 2 }}>
+              <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
                 {!hideMessageActions && hasBranches && (
                   <div
                     style={{
