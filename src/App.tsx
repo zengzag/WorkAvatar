@@ -157,8 +157,8 @@ const App: React.FC = () => {
             width: 6,
             height: 6,
             borderRadius: '50%',
-            background: '#52c41a',
-            border: '1px solid var(--ant-color-bg-container, #fff)',
+            background: token.colorSuccess,
+            border: `1px solid ${token.colorBgContainer}`,
           }}
         />
       </span>
@@ -294,6 +294,29 @@ const App: React.FC = () => {
   // 侧边栏右键菜单：独立窗口打开/回到主窗口 + 上移/下移 tab 顺序（含插件 tab）
   const [navContextMenu, setNavContextMenu] = useState<{ x: number; y: number; key: string } | null>(null)
 
+  // 导航选中态的滑动玻璃块：跟随当前选中项，路由切换时只移动滑块
+  const navThumbRef = useRef<HTMLSpanElement>(null)
+  const [navThumbReady, setNavThumbReady] = useState(false)
+  useLayoutEffect(() => {
+    if (!siderVisible) return
+    const sider = document.querySelector<HTMLElement>('.app-sider')
+    const thumb = navThumbRef.current
+    if (!sider || !thumb) return
+    const measure = () => {
+      const activeItem = sider.querySelector<HTMLElement>('.ant-menu-item-selected')
+      if (!activeItem) return
+      const siderRect = sider.getBoundingClientRect()
+      const rect = activeItem.getBoundingClientRect()
+      thumb.style.height = `${Math.round(rect.height)}px`
+      thumb.style.transform = `translateY(${Math.round(rect.top - siderRect.top)}px)`
+      setNavThumbReady(true)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(sider)
+    return () => ro.disconnect()
+  }, [location.pathname, siderVisible, mainMenuHeight, navConfig, detachedTabs])
+
   const handleNavContextMenu = useCallback((e: React.MouseEvent) => {
     const target = (e.target as HTMLElement).closest('[data-nav-key]') as HTMLElement | null
     const navKey = target?.getAttribute('data-nav-key')
@@ -385,12 +408,9 @@ const App: React.FC = () => {
           collapsible={false}
           trigger={null}
           className="app-sider"
-          style={{
-            borderRight: `1px solid ${token.colorBorderSecondary}`,
-            background: 'transparent',
-          }}
         >
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <span ref={navThumbRef} className={`wa-nav-thumb${navThumbReady ? ' is-ready' : ''}`} aria-hidden />
             <div ref={mainMenuRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <Menu
                 mode="inline"
