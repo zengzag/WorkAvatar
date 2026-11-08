@@ -6,11 +6,14 @@ import {
   SettingOutlined,
   RobotOutlined,
   GlobalOutlined,
+  AppstoreAddOutlined,
   AppstoreOutlined,
   ToolOutlined,
   ControlOutlined,
   BulbOutlined,
   SmileOutlined,
+  DatabaseOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -38,10 +41,10 @@ const Settings: React.FC = () => {
   const [searchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
 
-  // 内容区容器：统一顶部留白 + 滚动
+  // 内容区容器：统一留白 + 滚动，内容收进一块可读性更好的设置面板
   const contentWrap = (node: React.ReactNode) => (
-    <div style={{ padding: '24px 24px 20px', height: '100%', overflow: 'auto' }}>
-      {node}
+    <div className="wa-settings-scroll">
+      <div className="wa-settings-panel">{node}</div>
     </div>
   )
 
@@ -86,7 +89,7 @@ const Settings: React.FC = () => {
       key: 'kmsMcp',
       label: (
         <span>
-          <ApiOutlined /> {t('settings.tabKmsMcp')}
+          <DatabaseOutlined /> {t('settings.tabKmsMcp')}
         </span>
       ),
       children: contentWrap(<KMSMCPSettings />),
@@ -131,7 +134,7 @@ const Settings: React.FC = () => {
       key: 'plugins',
       label: (
         <span>
-          <ApiOutlined /> {t('settings.tabPlugins')}
+          <AppstoreAddOutlined /> {t('settings.tabPlugins')}
         </span>
       ),
       children: contentWrap(<PluginsSection />),
@@ -156,12 +159,16 @@ const Settings: React.FC = () => {
     },
     {
       key: 'about',
-      label: t('settings.tabAbout'),
+      label: (
+        <span>
+          <InfoCircleOutlined /> {t('settings.tabAbout')}
+        </span>
+      ),
       children: contentWrap(<AboutSection />),
     },
   ]
 
-  const validTabs = ['general', 'llm', 'defaultModel', 'kmsMcp', 'globalMemory', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
+  const validTabs = ['general', 'secretary', 'llm', 'defaultModel', 'kmsMcp', 'globalMemory', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
 
   // 插件设置注入点：至少一个插件注册 settings.tab 视野时，追加聚合 Tab
   const pluginSettingsViews = getPluginViews('settings.tab')
@@ -172,7 +179,7 @@ const Settings: React.FC = () => {
           key: 'plugins-config',
           label: (
             <span>
-              <ToolOutlined /> {t('settings.tabPlugins')}
+              <SettingOutlined /> {t('settings.tabPluginConfig')}
             </span>
           ),
           children: contentWrap(<PluginViewSlot view="settings.tab" />),
@@ -188,7 +195,7 @@ const Settings: React.FC = () => {
   }, [tabParam]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="wa-settings-page">
       <Tabs
         activeKey={activeKey}
         onChange={setActiveKey}
@@ -196,49 +203,13 @@ const Settings: React.FC = () => {
         tabPlacement="start"
         style={{ flex: 1, minHeight: 0, height: '100%' }}
         tabBarStyle={{
-          width: 150,
-          minWidth: 150,
+          width: 208,
+          minWidth: 208,
           margin: 0,
-          paddingTop: 8,
+          paddingTop: 0,
         }}
-        className="settings-tabs"
+        className="wa-settings-tabs settings-tabs"
       />
-      <style>{`
-        .settings-tabs.ant-tabs {
-          height: 100%;
-        }
-        .settings-tabs .ant-tabs-nav-list {
-          padding: 0 8px;
-        }
-        .settings-tabs .ant-tabs-tab {
-          margin: 2px 0 !important;
-          padding: 7px 10px !important;
-          border-radius: 7px;
-          transition: background 0.15s ease;
-        }
-        .settings-tabs .ant-tabs-tab:hover {
-          background: var(--wa-hover);
-        }
-        .settings-tabs .ant-tabs-tab-active {
-          background: var(--wa-accent-soft);
-        }
-        .settings-tabs .ant-tabs-body-holder {
-          border-left: 1px solid var(--border-color, #f0f0f0);
-          flex: auto;
-          min-width: 0;
-          min-height: 0;
-          overflow: hidden;
-        }
-        .settings-tabs .ant-tabs-body {
-          height: 100%;
-        }
-        .settings-tabs .ant-tabs-content {
-          height: 100%;
-        }
-        .settings-tabs .ant-tabs-tabpane {
-          height: 100%;
-        }
-      `}</style>
     </div>
   )
 }

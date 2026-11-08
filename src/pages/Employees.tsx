@@ -5,13 +5,14 @@ import type { MenuProps } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, MessageOutlined, ClockCircleOutlined,
   FolderOpenOutlined, SettingOutlined, SearchOutlined, EllipsisOutlined,
-  AppstoreOutlined, BarsOutlined, CopyOutlined, DatabaseOutlined, SolutionOutlined,
+  AppstoreOutlined, BarsOutlined, CopyOutlined, DatabaseOutlined, SolutionOutlined, SendOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import DeleteConversationOptions from '../components/employee-settings/DeleteConversationOptions'
 import SubAgentProfilesDrawer from '../components/workbench/SubAgentProfilesDrawer'
 import EmployeeAvatar from '../components/common/EmployeeAvatar'
+import { useNavConfigStore } from '../stores/nav.store'
 import type { DeleteConversationState } from '../components/employee-settings/DeleteConversationOptions'
 import type { Employee } from '../types'
 
@@ -46,6 +47,7 @@ const Employees: React.FC = () => {
   const { token } = theme.useToken()
   const navigate = useNavigate()
   const location = useLocation()
+  const pluginNavItems = useNavConfigStore((s) => s.pluginItems)
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
@@ -249,6 +251,13 @@ const Employees: React.FC = () => {
     setSelectedEmployeeId(undefined)
   }, [])
 
+  /** 插件员工来源名：优先宿主导航里的本地化插件名，回退 manifest 名称 */
+  const pluginLabel = useCallback((pluginId?: string, fallback?: string): string => {
+    const item = pluginId ? pluginNavItems.find((p) => p.key === pluginId) : undefined
+    if (item && pluginId) return t(item.label, { ns: pluginId, defaultValue: fallback || pluginId })
+    return fallback || pluginId || 'Plugin'
+  }, [pluginNavItems, t])
+
   /** 按来源分组：我的 → 内置 → 按插件逐一分组；每组内应用搜索过滤 */
   const groups = useMemo<EmployeeGroup[]>(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -272,10 +281,10 @@ const Employees: React.FC = () => {
       pluginMap.get(pid)!.push(e)
     }
     for (const [pid, list] of pluginMap) {
-      result.push({ key: pid, title: list[0].plugin_name || pid, employees: list })
+      result.push({ key: pid, title: pluginLabel(pid, list[0].plugin_name), employees: list })
     }
     return result
-  }, [employees, searchQuery, t])
+  }, [employees, searchQuery, t, pluginLabel])
 
   const totalCount = employees.length
 
@@ -318,58 +327,59 @@ const Employees: React.FC = () => {
       return { label: t('digitalEmployees.sourceOfficial', { defaultValue: '官方' }) }
     }
     if (emp.source === 'plugin') {
-      return { label: emp.plugin_name || emp.plugin_id || 'Plugin' }
+      return { label: pluginLabel(emp.plugin_id, emp.plugin_name) }
     }
     return null
-  }, [t])
+  }, [t, pluginLabel])
 
   const pageStyle = useMemo(() => `
     .emp-grid .emp-card {
-      transition: box-shadow 0.2s ease, border-color 0.2s ease;
-      cursor: pointer;
-      position: relative;
+      transition: box-shadow 0.2s var(--wa-ease), border-color 0.2s var(--wa-ease), transform 0.2s var(--wa-spring);
     }
     .emp-grid .emp-card:hover {
-      box-shadow: ${token.boxShadowTertiary};
-      border-color: ${token.colorPrimaryBorder};
+      transform: translateY(-2px);
+      border-color: var(--wa-accent-line) !important;
+      box-shadow: var(--wa-glass-shadow), inset 0 1px 0 var(--wa-glass-rim-top) !important;
     }
     .emp-grid .emp-card .emp-card-actions {
-      opacity: 0;
-      transition: opacity 0.15s ease;
+      opacity: 0.55;
+      transition: opacity 0.15s var(--wa-ease);
     }
     .emp-grid .emp-card:hover .emp-card-actions {
       opacity: 1;
     }
     .emp-list-row {
-      transition: background 0.15s ease;
-      cursor: pointer;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      transition: background 0.15s var(--wa-ease), border-color 0.15s var(--wa-ease);
     }
     .emp-list-row:hover {
-      background: ${token.colorBgTextHover} !important;
+      background: var(--wa-surface-inset) !important;
+      border-color: var(--wa-line-2) !important;
     }
-  `, [token])
+  `, [])
 
   if (loading) {
     return (
-      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Spin size="large" />
+      <div className="wa-module-page">
+        <div className="wa-module-shell">
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Spin size="large" />
+          </div>
+        </div>
       </div>
     )
   }
 
   /** 分组标题 + 组内员工卡片（grid/list 两视图） */
   const renderGroup = (group: EmployeeGroup) => (
-    <div key={group.key} style={{ marginBottom: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingLeft: 2 }}>
-        <Text strong style={{ fontSize: 13 }}>
-          {group.title}
-        </Text>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {group.employees.length}
-        </Text>
+    <div key={group.key} style={{ marginBottom: 26 }}>
+      <div className="wa-section-heading">
+        <span className="wa-section-heading-title">{group.title}</span>
+        <span className="wa-section-heading-count">{group.employees.length}</span>
         {group.key === 'builtin' && (
           <Tooltip title={t('digitalEmployees.builtinHint', { defaultValue: '随应用发布的官方员工，只读；可另存副本后个性化' })}>
-            <DatabaseOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
+            <DatabaseOutlined style={{ fontSize: 12, color: 'var(--wa-ink-4)' }} />
           </Tooltip>
         )}
       </div>
@@ -394,14 +404,16 @@ const Employees: React.FC = () => {
                 data-employee-name={emp.name}
                 onClick={() => handleCardClick(emp)}
                 style={{
-                  border: `1px solid ${token.colorBorderSecondary}`,
-                  borderRadius: 10,
-                  background: token.colorBgContainer,
-                  boxShadow: 'var(--wa-glass-sheen)',
+                  border: '1px solid var(--wa-glass-border)',
+                  borderRadius: 14,
+                  background: 'var(--wa-card-bg)',
+                  boxShadow: 'inset 0 1px 0 var(--wa-glass-rim-top)',
                   padding: 16,
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 10,
+                  cursor: 'pointer',
+                  position: 'relative',
                 }}
               >
                 {/* 头部：头像 + 名称 + 来源角标 */}
@@ -450,7 +462,7 @@ const Employees: React.FC = () => {
                 <Paragraph
                   type="secondary"
                   ellipsis={{ rows: 2 }}
-                  style={{ fontSize: 12, margin: 0, minHeight: 34, color: token.colorTextTertiary }}
+                  style={{ fontSize: 12.5, margin: 0, minHeight: 36, lineHeight: 1.6, color: 'var(--wa-ink-3)' }}
                 >
                   {emp.description || t('common.noDescription', { defaultValue: '暂无描述' })}
                 </Paragraph>
@@ -460,10 +472,10 @@ const Employees: React.FC = () => {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 12,
-                  paddingTop: 8,
-                  borderTop: `1px solid ${token.colorBorderSecondary}`,
-                  fontSize: 12,
-                  color: token.colorTextTertiary,
+                  paddingTop: 9,
+                  borderTop: '1px solid var(--wa-line-2)',
+                  fontSize: 11.5,
+                  color: 'var(--wa-ink-4)',
                 }}>
                   <Tooltip title={t('digitalEmployees.conversationCount', { count: convCount, defaultValue: '{{count}} 个对话' })}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -511,9 +523,8 @@ const Employees: React.FC = () => {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 12,
-                  padding: '10px 12px',
-                  borderRadius: 6,
-                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                  padding: '9px 10px',
+                  cursor: 'pointer',
                 }}
               >
                 <EmployeeAvatar
@@ -556,7 +567,8 @@ const Employees: React.FC = () => {
                     <Button
                       type="text"
                       size="small"
-                      icon={<MessageOutlined />}
+                      className="wa-icon-btn"
+                      icon={<SendOutlined />}
                       disabled={emp.is_enabled === false}
                       onClick={(e) => { e.stopPropagation(); handleStartTask(emp) }}
                     />
@@ -571,6 +583,7 @@ const Employees: React.FC = () => {
                     <Button
                       type="text"
                       size="small"
+                      className="wa-icon-btn"
                       icon={<EllipsisOutlined />}
                       onClick={(e) => e.stopPropagation()}
                     />
@@ -585,36 +598,26 @@ const Employees: React.FC = () => {
   )
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="wa-module-page">
+      <div className="wa-module-shell">
       {/* 工具栏 */}
-      <div className="wa-workbench-topbar" style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 16px',
-        height: 46,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        flexShrink: 0,
-        gap: 12,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 15, flexShrink: 0 }}>
-            {t('digitalEmployees.title')}
-          </Text>
-          <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
-            {totalCount}
-          </Text>
+      <div className="wa-module-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+          <span className="wa-module-title">{t('digitalEmployees.title')}</span>
+          <span className="wa-module-count">{totalCount}</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
           <Input
             placeholder={t('digitalEmployees.searchPlaceholder')}
             data-testid="employee-search"
+            className="wa-field"
             prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             allowClear
             size="small"
-            style={{ width: 180 }}
+            variant="borderless"
+            style={{ width: 190, height: 30, paddingInline: 10 }}
           />
           <Segmented
             size="small"
@@ -627,7 +630,9 @@ const Employees: React.FC = () => {
           />
           <Tooltip title={t('subagentProfiles.title')}>
             <Button
+              type="text"
               size="small"
+              className="wa-icon-btn"
               icon={<SolutionOutlined />}
               onClick={() => setProfilesOpen(true)}
             />
@@ -639,7 +644,7 @@ const Employees: React.FC = () => {
       </div>
 
       {/* 主内容区 */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 16 }}>
+      <div className="wa-module-body">
         {employees.length === 0 ? (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Empty
@@ -669,6 +674,7 @@ const Employees: React.FC = () => {
         ) : (
           groups.map(renderGroup)
         )}
+      </div>
       </div>
 
       <SubAgentProfilesDrawer open={profilesOpen} onClose={() => setProfilesOpen(false)} />

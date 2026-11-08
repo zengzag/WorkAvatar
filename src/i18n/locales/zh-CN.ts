@@ -955,6 +955,7 @@ export default {
     tabAbout: '关于',
     tabNav: '导航',
     tabPlugins: '插件',
+    tabPluginConfig: '插件配置',
     tabRuntime: '运行时环境',
     plugins: {
       hint: '插件支持导入 zip 安装包，也可直接放入用户插件目录后点击「刷新」；启用/禁用/导入/删除均即时生效，无需重启。',
@@ -1425,6 +1426,7 @@ export default {
     hybridSearch: '混合搜索',
     searchResults: '搜索结果',
     noResults: '未找到相关结果',
+    searchIdle: '输入关键词，搜索本地资料库中的文件',
     resultCount: '{{count}} 个结果',
     matchType: '匹配类型',
     matchFileTitle: '文件标题',

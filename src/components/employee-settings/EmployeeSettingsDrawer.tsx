@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Drawer, Tabs, Form, App, theme, Typography, Tooltip, Button, Spin, Tag, Switch,
+  Drawer, Segmented, Form, App, theme, Typography, Tooltip, Button, Spin, Tag, Switch,
 } from 'antd'
 import {
-  IdcardOutlined, ToolOutlined, ApiOutlined, AppstoreOutlined,
-  DatabaseOutlined, BarChartOutlined, ImportOutlined, TeamOutlined,
   FolderOutlined, FolderOpenOutlined, EyeOutlined, PoweroffOutlined,
 } from '@ant-design/icons'
 import {
@@ -86,6 +84,13 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const [updatingEnabled, setUpdatingEnabled] = useState(false)
   /** 删除员工确认弹窗中的对话处理选择（供 onOk 读取最新值） */
   const deleteStateRef = useRef<DeleteConversationState>({ conversationAction: 'keep', transferToEmployeeId: undefined, deleteWorkspace: true })
+
+  /** 抽屉内容区：切换 Tab 时回到顶部，避免不同页保留各自滚动位置 */
+  const drawerContentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    drawerContentRef.current?.scrollTo({ top: 0 })
+  }, [activeTab])
 
   /** 注册员工（内置/插件）：与正常员工一致展示，但仅记忆开关可编辑 */
   const readonly = employee?.source === 'builtin' || employee?.source === 'plugin'
@@ -471,17 +476,13 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     }
   }
 
-  // 内容区容器：统一顶部留白 + 滚动
-  const contentWrap = (node: React.ReactNode) => (
-    <div style={{ padding: '0 0 20px', height: '100%', overflow: 'auto' }}>
-      {node}
-    </div>
-  )
+  // 内容滚动与留白统一由抽屉内容容器负责
+  const contentWrap = (node: React.ReactNode) => node
 
   const tabItems = [
     {
       key: 'basic',
-      label: <span><IdcardOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabBasic')}</span>,
+      label: t('employeeSettings.tabBasic'),
       children: contentWrap(
         <BasicInfoSection
           form={form}
@@ -496,7 +497,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     },
     {
       key: 'tools',
-      label: <span><ToolOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabTools')}</span>,
+      label: t('employeeSettings.tabTools'),
       children: contentWrap(
         <ToolsSection
           toolCategories={toolCategories}
@@ -508,7 +509,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     },
     {
       key: 'delegation',
-      label: <span><TeamOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabDelegation')}</span>,
+      label: t('employeeSettings.tabDelegation'),
       children: contentWrap(
         <DelegationSection
           employeeId={employeeId || ''}
@@ -520,12 +521,12 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     },
     {
       key: 'mcp',
-      label: <span><ApiOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMcp')}</span>,
+      label: t('employeeSettings.tabMcp'),
       children: contentWrap(<McpSection employeeId={employeeId || ''} readonly={readonly} />),
     },
     {
       key: 'skills-market',
-      label: <span><AppstoreOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabSkills')}</span>,
+      label: t('employeeSettings.tabSkills'),
       children: contentWrap(
         <SkillsSection
           installedSkills={installedSkills}
@@ -541,7 +542,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     },
     {
       key: 'memory',
-      label: <span><DatabaseOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMemory')}</span>,
+      label: t('employeeSettings.tabMemory'),
       children: contentWrap(
         <MemorySection
           employeeId={employeeId || ''}
@@ -553,7 +554,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     },
     {
       key: 'stats',
-      label: <span><BarChartOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMonitor')}</span>,
+      label: t('employeeSettings.tabMonitor'),
       children: contentWrap(
         employee ? <ProfileSection employee={employee} /> : (
           <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
@@ -567,7 +568,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       ? []
       : [{
           key: 'export-import',
-          label: <span><ImportOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabExportImport')}</span>,
+          label: t('employeeSettings.tabExportImport'),
           children: contentWrap(
             <ExportImportSection
               employeeId={employeeId || ''}
@@ -615,35 +616,17 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         ) : undefined
       }
     >
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        className="employee-settings-drawer-tabs"
-        style={{ height: '100%', padding: '0 16px' }}
-        items={tabItems}
-        size="small"
-        tabBarStyle={{ marginBottom: 16 }}
-      />
-      <style>{`
-        .employee-settings-drawer-tabs.ant-tabs {
-          height: 100%;
-        }
-        .employee-settings-drawer-tabs .ant-tabs-body-holder {
-          flex: auto;
-          min-width: 0;
-          min-height: 0;
-          overflow: hidden;
-        }
-        .employee-settings-drawer-tabs .ant-tabs-body {
-          height: 100%;
-        }
-        .employee-settings-drawer-tabs .ant-tabs-content {
-          height: 100%;
-        }
-        .employee-settings-drawer-tabs .ant-tabs-tabpane {
-          height: 100%;
-        }
-      `}</style>
+      <div className="employee-settings-body">
+        <Segmented
+          className="employee-settings-segmented"
+          options={tabItems.map((item) => ({ label: item.label as string, value: item.key }))}
+          value={activeTab}
+          onChange={(value) => setActiveTab(String(value))}
+        />
+        <div className="employee-settings-content" ref={drawerContentRef}>
+          {tabItems.find((item) => item.key === activeTab)?.children}
+        </div>
+      </div>
     </Drawer>
   )
 }

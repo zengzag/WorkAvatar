@@ -955,6 +955,7 @@ export default {
     tabAbout: 'About',
     tabNav: 'Navigation',
     tabPlugins: 'Plugins',
+    tabPluginConfig: 'Plugin Options',
     tabRuntime: 'Runtime Environment',
     plugins: {
       hint: 'Import a plugin zip package, or drop it into the user plugins folder and click Refresh. Enable/disable/import/delete take effect immediately without restarting.',
@@ -1423,6 +1424,7 @@ export default {
     hybridSearch: 'Hybrid',
     searchResults: 'Search Results',
     noResults: 'No results found',
+    searchIdle: 'Enter keywords to search files in your local knowledge base',
     resultCount: '{{count}} results',
     matchType: 'Match Type',
     matchFileTitle: 'File Title',

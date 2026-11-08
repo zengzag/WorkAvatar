@@ -343,9 +343,10 @@ const CreationWizard: React.FC = () => {
   ]
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="wa-module-page">
+      <div className="wa-module-shell">
       {/* 页头：核心操作固定可见 */}
-      <div style={{ flexShrink: 0, padding: '16px 16px 0' }}>
+      <div style={{ flexShrink: 0, padding: '16px 20px 0' }}>
         <PageHeader
           title={t('creationWizard.title')}
           subTitle={t('creationWizard.subtitle')}
@@ -377,7 +378,7 @@ const CreationWizard: React.FC = () => {
         />
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 16px 16px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 20px 20px' }}>
         <div className="wizard-grid">
           {/* 需求描述 */}
           <Card
@@ -523,7 +524,7 @@ const CreationWizard: React.FC = () => {
               </>
             ) : !loading ? (
               <div style={{ padding: '64px 0', textAlign: 'center' }}>
-                <RobotOutlined style={{ fontSize: 40, color: token.colorPrimary }} />
+                <RobotOutlined style={{ fontSize: 40, color: 'var(--wa-ink-4)' }} />
                 <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 8 }}>
                   {t('creationWizard.resultEmpty')}
                 </Paragraph>
@@ -536,6 +537,7 @@ const CreationWizard: React.FC = () => {
         </div>
 
         <style>{pageStyle}</style>
+      </div>
       </div>
     </div>
   )

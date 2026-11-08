@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Steps, Button, Typography, theme, Spin } from 'antd'
-import { RobotOutlined } from '@ant-design/icons'
+import { Steps, Button, Typography, Spin } from 'antd'
 import type { LLMProvider } from '../types'
 import ModelStep from './onboarding/ModelStep'
 import EmployeeStep from './onboarding/EmployeeStep'
@@ -15,7 +14,6 @@ const ONBOARDING_COMPLETED_KEY = 'onboarding_completed'
 const Onboarding: React.FC = () => {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { token } = theme.useToken()
   const [step, setStep] = useState(0)
   const [maxVisited, setMaxVisited] = useState(0)
   const [initializing, setInitializing] = useState(true)
@@ -88,18 +86,12 @@ const Onboarding: React.FC = () => {
   }
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', background: token.colorBgLayout }}>
-      <div
-        style={{
-          maxWidth: 480, margin: '0 auto', padding: '32px 24px 40px',
-          minHeight: '100%', boxSizing: 'border-box',
-          display: 'flex', flexDirection: 'column',
-        }}
-      >
+    <div className="wa-onboarding-page">
+      <div className="wa-onboarding-shell">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <RobotOutlined style={{ color: token.colorPrimary, fontSize: 16 }} />
-            <Text strong>WorkAvatar</Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span className="wa-brand-mark" style={{ width: 20, height: 20, borderRadius: 6, fontSize: 10 }}>W</span>
+            <Text strong style={{ letterSpacing: '-0.01em' }}>WorkAvatar</Text>
           </div>
           {step < 2 && (
             <Button type="text" size="small" onClick={() => finish()} data-testid="onboarding-skip">
