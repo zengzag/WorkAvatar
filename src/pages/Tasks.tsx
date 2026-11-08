@@ -462,6 +462,25 @@ const Tasks: React.FC = () => {
     ? `conv:${activeConversationId}`
     : `emp:${currentEmployeeId || 'none'}`
 
+  // 输入区浮层高度会随行数/排队卡片变化，消息区底部留白跟随，避免最后一条被遮挡
+  const composerDockRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const dock = composerDockRef.current
+    const scroll = chatContainerRef.current
+    if (!dock || !scroll) return
+    const sync = () => {
+      scroll.style.paddingBottom = `${dock.offsetHeight + 28}px`
+    }
+    const observer = new ResizeObserver(sync)
+    observer.observe(dock)
+    sync()
+    return () => {
+      observer.disconnect()
+      // 命令式写入的内联留白需手动清掉：切换模式时 DOM 节点可能被复用，残留值会把新任务页撑开
+      scroll.style.paddingBottom = ''
+    }
+  }, [taskMode, isComparisonMode, chatContainerRef])
+
   // 侧边栏产物列表：聚合本任务消息中产物工具声明的文件，按最新调用倒序，同路径只保留最新一次
   const taskArtifacts = useMemo(() => {
     const latest = new Map<string, { file: GeneratedFileInfo; order: number; index: number }>()
@@ -1125,9 +1144,9 @@ const Tasks: React.FC = () => {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
+    <div className="wa-tasks-page">
       {/* 主体 */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div className="wa-tasks-body">
         {/* 全屏预览模式下隐藏任务列表与对话栏，侧边栏占满 */}
         {!panelFullscreen && showSidePanel && (
           <TaskSidebar
@@ -1157,40 +1176,35 @@ const Tasks: React.FC = () => {
         )}
 
         {!panelFullscreen && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div className="wa-task-stage">
           {/* 顶部状态栏：侧边栏展开/新建任务 + 任务标题/员工/时间 + 右侧操作区 */}
-          <div className="wa-workbench-topbar" style={{
-            flexShrink: 0, height: 46, display: 'flex', alignItems: 'center', gap: 8,
-            padding: '0 14px',
-          }}>
+          <div className="wa-workbench-topbar">
             {!showSidePanel && (
               <>
                 <Tooltip title={t('workbench.historyConv')}>
                   <Button type="text" size="small"
+                    className="wa-icon-btn"
                     icon={<MenuUnfoldOutlined style={{ fontSize: 14 }} />}
                     onClick={() => setShowSidePanel(true)}
-                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                   />
                 </Tooltip>
                 <Tooltip title={t('tasks.newTask')}>
                   <Button type="text" size="small"
+                    className="wa-icon-btn"
                     icon={<PlusOutlined style={{ fontSize: 14 }} />}
                     onClick={handleNewTask}
-                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                   />
                 </Tooltip>
               </>
             )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-              <span title={statusConv?.title} data-testid="task-title" style={{
-                fontSize: 13.5, fontWeight: 620, color: token.colorText, letterSpacing: '-0.01em',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
-              }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+              <span title={statusConv?.title} data-testid="task-title" className="wa-topbar-title">
                 {statusConv?.title || t('tasks.newTask')}
               </span>
+              {(statusEmployeeName || statusTimeText) && <span className="wa-topbar-divider" />}
               {statusEmployeeName && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-                  {statusEmployee ? (
+                <span className="wa-topbar-meta wa-topbar-employee">
+                  {statusEmployee && statusConv && (
                     <EmployeeAvatar
                       avatarIcon={statusEmployee.avatar_icon}
                       avatarColor={statusEmployee.avatar_color}
@@ -1198,38 +1212,28 @@ const Tasks: React.FC = () => {
                       avatarType={statusEmployee.avatar_type}
                       employeeId={statusEmployee.id}
                       source={statusEmployee.source}
-                      size={15}
+                      size={16}
                     />
-                  ) : (
-                    <RobotOutlined style={{ fontSize: 12, color: token.colorTextSecondary }} />
                   )}
-                  <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{statusEmployeeName}</span>
+                  <span className="wa-topbar-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{statusEmployeeName}</span>
                 </span>
               )}
               {statusTimeText && (
-                <span style={{ fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }}>{statusTimeText}</span>
+                <>
+                  {statusEmployeeName && <span style={{ color: 'var(--wa-line)' }}>·</span>}
+                  <span className="wa-topbar-meta wa-topbar-time" style={{ color: 'var(--wa-ink-4)' }}>{statusTimeText}</span>
+                </>
               )}
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-              {/* 工作区目录：点击打开对应文件夹 */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+              {/* 工作区目录：纯文字 + 前置图标，点击打开对应文件夹 */}
               <Tooltip title={statusWorkspaceOpenPath || statusWorkspaceLabel}>
                 <span
-                  className={statusWorkspaceOpenPath ? 'wa-topbar-workspace' : undefined}
+                  className={`wa-topbar-workspace${statusWorkspaceOpenPath ? ' is-clickable' : ''}`}
                   onClick={handleOpenStatusWorkspace}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 200,
-                    height: 22, padding: '0 8px', borderRadius: 6, lineHeight: 1,
-                    border: `1px solid ${token.colorBorderSecondary}`,
-                    color: token.colorTextSecondary, fontSize: 12,
-                    cursor: statusWorkspaceOpenPath ? 'pointer' : 'default',
-                    flexShrink: 0,
-                  }}
                 >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {statusWorkspaceLabel}
-                  </span>
-                  <span style={{ width: 1, height: 12, background: token.colorBorderSecondary, flexShrink: 0 }} />
-                  <FolderOutlined style={{ fontSize: 12 }} />
+                  <FolderOutlined style={{ fontSize: 12, flexShrink: 0 }} />
+                  <span className="wa-topbar-workspace-text">{statusWorkspaceLabel}</span>
                 </span>
               </Tooltip>
               {/* 插件视图注入点：任务对话页头部操作区 */}
@@ -1237,21 +1241,17 @@ const Tasks: React.FC = () => {
               {taskMode === 'chat' && (
                 <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
                   <Button type="text" size="small"
+                    className="wa-icon-btn"
                     icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}
-                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                   />
                 </Dropdown>
               )}
               <Tooltip title={panelOpen ? t('workbench.closePanel') : t('workbench.panelOpen')}>
                 <Button type="text" size="small"
                   data-testid="workspace-panel-toggle"
+                  className={`wa-icon-btn${panelOpen ? ' is-active' : ''}`}
                   icon={<SidePanelIcon style={{ fontSize: 15 }} />}
                   onClick={() => { panelOpen ? closePanel() : openPanel() }}
-                  style={{
-                    color: panelOpen ? token.colorPrimary : token.colorTextSecondary,
-                    background: panelOpen ? token.colorFillSecondary : undefined,
-                    width: 28, height: 28, minWidth: 28, borderRadius: 6,
-                  }}
                 />
               </Tooltip>
             </div>
@@ -1264,15 +1264,11 @@ const Tasks: React.FC = () => {
           )}
           {taskMode === 'new' ? (
             // 新任务模式：居中输入框（使用带缓存的回调，切换页面回来可恢复）
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '20px',
-              overflowY: 'auto',
-            }}>
+            <div className="wa-newtask" key="new-task">
+              <div className="wa-newtask-brand">
+                <div className="wa-newtask-title">{t('tasks.newTaskTitle')}</div>
+                <div className="wa-newtask-sub">{t('tasks.newTaskHint')}</div>
+              </div>
               <ChatInput
                 onSend={handleSendWithReset}
                 onStop={handleStop}
@@ -1315,8 +1311,8 @@ const Tasks: React.FC = () => {
               />
             </div>
           ) : (
-            // 对话模式
-            <>
+            // 对话模式：消息在浮层输入区下方滚动
+            <div className="wa-chat-area" key="chat-area">
               {isComparisonMode ? (
                 <MultiChatPanel
                   comparisonMessages={getComparisonMessages()}
@@ -1329,16 +1325,8 @@ const Tasks: React.FC = () => {
                 />
               ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
-                  className="wa-message-scroll"
+                  className="wa-chat-scroll wa-message-scroll"
                   data-testid="message-list"
-                  style={{
-                    flex: 1,
-                    overflow: 'auto',
-                    padding: '18px 24px 8px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 20,
-                  }}
                 >
                   <MessageList
                     messages={messages}
@@ -1364,42 +1352,44 @@ const Tasks: React.FC = () => {
                   />
                 </div>
               )}
-              {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}
-              <BackgroundShellBar conversationId={activeConversationId ?? undefined} />
-              <ChatInput
-                onSend={handleSendWithReset}
-                onStop={handleStop}
-                isStreaming={isStreaming}
-                placeholder={t('workbench.inputPlaceholder')}
-                providers={providers}
-                attachedImages={attachedImages}
-                onImagesChange={setAttachedImages}
-                selectedModels={selectedModels}
-                onModelsChange={handleChatModelsChange}
-                selectedCollectionIds={selectedCollectionIds}
-                onSelectedCollectionIdsChange={setPersistentCollectionIds}
-                allCollections={allCollections}
-                minimalMode={minimalMode}
-                onMinimalModeChange={handleToggleMinimalMode}
-                canToggleMinimalMode={messages.length === 0}
-                conversationId={activeConversationId}
-                getInitialDraft={getInputDraft}
-                onDraftChange={setInputDraft}
-                availableSkills={availableSkills}
-                defaultProviderId={inputDefaultModel?.providerId || sceneDefaultModel?.provider_id || ''}
-                defaultModelId={inputDefaultModel?.modelId || sceneDefaultModel?.model_id || ''}
-                onDefaultModelChange={setInputDefaultModel}
-                enableThinking={enableThinking}
-                onThinkingChange={setEnableThinking}
-                isCompacting={isCompacting}
-                approvalSlot={activeConversationRequests.length > 0 ? (
-                  <TaskInteractionCard
-                    requests={activeConversationRequests}
-                    respondById={respondInteraction}
-                  />
-                ) : null}
-              />
-            </>
+              <div ref={composerDockRef} className="wa-composer-dock">
+                {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}
+                <BackgroundShellBar conversationId={activeConversationId ?? undefined} />
+                <ChatInput
+                  onSend={handleSendWithReset}
+                  onStop={handleStop}
+                  isStreaming={isStreaming}
+                  placeholder={t('workbench.inputPlaceholder')}
+                  providers={providers}
+                  attachedImages={attachedImages}
+                  onImagesChange={setAttachedImages}
+                  selectedModels={selectedModels}
+                  onModelsChange={handleChatModelsChange}
+                  selectedCollectionIds={selectedCollectionIds}
+                  onSelectedCollectionIdsChange={setPersistentCollectionIds}
+                  allCollections={allCollections}
+                  minimalMode={minimalMode}
+                  onMinimalModeChange={handleToggleMinimalMode}
+                  canToggleMinimalMode={messages.length === 0}
+                  conversationId={activeConversationId}
+                  getInitialDraft={getInputDraft}
+                  onDraftChange={setInputDraft}
+                  availableSkills={availableSkills}
+                  defaultProviderId={inputDefaultModel?.providerId || sceneDefaultModel?.provider_id || ''}
+                  defaultModelId={inputDefaultModel?.modelId || sceneDefaultModel?.model_id || ''}
+                  onDefaultModelChange={setInputDefaultModel}
+                  enableThinking={enableThinking}
+                  onThinkingChange={setEnableThinking}
+                  isCompacting={isCompacting}
+                  approvalSlot={activeConversationRequests.length > 0 ? (
+                    <TaskInteractionCard
+                      requests={activeConversationRequests}
+                      respondById={respondInteraction}
+                    />
+                  ) : null}
+                />
+              </div>
+            </div>
           )}
           </div>
         )}

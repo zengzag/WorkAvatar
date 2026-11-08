@@ -102,7 +102,7 @@ const TaskTerminal: React.FC<TaskTerminalProps> = ({ terminalId, rootPath, activ
       cursorBlink: true,
       scrollback: SCROLLBACK,
       convertEol: true,
-      theme: buildXtermTheme(dark, dark ? '#171717' : (token.colorBgLayout ?? '#f5f5f5'), dark ? '#d4d4d4' : (token.colorText ?? '#1f1f1f')),
+      theme: buildXtermTheme(dark, dark ? '#0b0e14' : '#f7f9fd', dark ? '#d6deeb' : (token.colorText ?? '#1f1f1f')),
     })
     const fit = new FitAddon()
     xterm.loadAddon(fit)
@@ -209,8 +209,8 @@ const TaskTerminal: React.FC<TaskTerminalProps> = ({ terminalId, rootPath, activ
     const xterm = xtermRef.current
     if (!xterm) return
     const dark = effectiveTheme === 'dark'
-    xterm.options.theme = buildXtermTheme(dark, dark ? '#171717' : (token.colorBgLayout ?? '#f5f5f5'), dark ? '#d4d4d4' : (token.colorText ?? '#1f1f1f'))
-  }, [effectiveTheme, token.colorBgLayout, token.colorText])
+    xterm.options.theme = buildXtermTheme(dark, dark ? '#0b0e14' : '#f7f9fd', dark ? '#d6deeb' : (token.colorText ?? '#1f1f1f'))
+  }, [effectiveTheme, token.colorText])
 
   // 视图重新可见时重新适配（display:none 期间尺寸为 0）
   useEffect(() => {
@@ -294,10 +294,10 @@ const TaskTerminal: React.FC<TaskTerminalProps> = ({ terminalId, rootPath, activ
       style={{
         flex: 1,
         minHeight: 0,
-        margin: '8px 10px 10px',
-        borderRadius: 8,
+        margin: '10px 12px 12px',
+        borderRadius: 10,
         overflow: 'hidden',
-        border: `1px solid ${token.colorBorderSecondary}`,
+        border: '1px solid var(--wa-line-2)',
       }}
     />
   )

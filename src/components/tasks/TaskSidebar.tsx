@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import type { Conversation } from '../../types'
 import { getDirName } from '../../utils/format'
+import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 
 const { Text } = Typography
 
@@ -361,6 +362,7 @@ const TaskItem = memo(({
         data-testid="task-item"
         data-task-id={task.id}
         data-task-title={task.title || ''}
+        className={`wa-task-item${active && !selectionMode ? ' is-active' : ''}${selected ? ' is-selected' : ''}`}
         onClick={(e) => {
           e.stopPropagation()
           if (selectionMode) {
@@ -373,15 +375,8 @@ const TaskItem = memo(({
         onMouseLeave={() => { setHovered(false); setDeleteConfirm(false) }}
         onDoubleClick={(e) => { if (!selectionMode) startEdit(e) }}
         style={{
-          padding: '6px 9px',
-          borderRadius: 7,
+          padding: '7px 9px',
           cursor: isEditing ? 'text' : 'pointer',
-          background: selectionMode
-            ? (selected ? 'var(--wa-accent-soft)' : (hovered ? 'var(--wa-hover)' : 'transparent'))
-            : (active ? 'var(--wa-panel-3)' : (hovered ? 'var(--wa-hover)' : 'transparent')),
-          border: active && !selectionMode ? '1px solid var(--wa-line)' : (selected ? '1px solid var(--wa-accent-line)' : '1px solid transparent'),
-          boxShadow: active && !selectionMode ? 'var(--wa-glass-sheen)' : 'none',
-          transition: 'all 0.15s',
           display: 'flex',
           alignItems: 'center',
           gap: 8,
@@ -398,11 +393,12 @@ const TaskItem = memo(({
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 21 }}>
             {streaming && (
               <span style={{
                 width: 6, height: 6, borderRadius: '50%',
                 background: token.colorPrimary, flexShrink: 0,
+                boxShadow: `0 0 0 3px ${token.colorPrimaryBg}`,
                 animation: 'pulse 1.5s infinite',
               }} />
             )}
@@ -417,13 +413,19 @@ const TaskItem = memo(({
                 size="small"
                 variant="filled"
                 onClick={(e) => e.stopPropagation()}
-                style={{ flex: 1, minWidth: 0, fontSize: 14, padding: '0 8px', height: 24 }}
+                style={{ flex: 1, minWidth: 0, fontSize: 13, padding: '0 8px', height: 24, borderRadius: 7 }}
               />
             ) : (
               <Text
                 strong={active}
                 ellipsis
-                style={{ fontSize: 13, flex: 1, minWidth: 0 }}
+                style={{
+                  fontSize: 13,
+                  flex: 1,
+                  minWidth: 0,
+                  color: token.colorText,
+                  letterSpacing: active ? '-0.005em' : undefined,
+                }}
               >
                 {task.title || t('workbench.untitledConv')}
               </Text>
@@ -435,6 +437,7 @@ const TaskItem = memo(({
               alignItems: 'center',
               gap: 5,
               marginTop: 1,
+              paddingLeft: streaming ? 12 : 0,
               fontSize: 11,
               color: token.colorTextTertiary,
               minWidth: 0,
@@ -457,7 +460,7 @@ const TaskItem = memo(({
                   alignItems: 'center',
                   gap: 3,
                   padding: '0 5px',
-                  borderRadius: 4,
+                  borderRadius: 999,
                   fontSize: 10,
                   lineHeight: '16px',
                   color: token.colorWarning,
@@ -471,7 +474,7 @@ const TaskItem = memo(({
           )}
         </div>
         {hovered && !isEditing && !selectionMode && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
             {!deleteConfirm && (
               <Button
                 type="text"
@@ -559,6 +562,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const glassRef = useLiquidGlass<HTMLDivElement>()
 
   // 侧栏宽度：支持拖拽调整并持久化
   const [width, setWidth] = useState<number>(() => {
@@ -572,6 +576,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const sidebarRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
+
+  // 同一个根节点既服务于拖宽计算，也作为玻璃折射的宿主
+  const setSidebarNode = useCallback((node: HTMLDivElement | null) => {
+    sidebarRef.current = node
+    glassRef.current = node
+  }, [glassRef])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -759,47 +769,37 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   )
 
   return (
-    <div ref={sidebarRef} className="wa-task-sidebar" data-testid="task-sidebar" style={{
+    <div ref={setSidebarNode} className="wa-task-sidebar" data-testid="task-sidebar" style={{
       width,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',
-      borderRight: `1px solid ${token.colorBorderSecondary}`,
-      background: 'transparent',
       height: '100%',
       position: 'relative',
       userSelect: resizing ? 'none' : undefined,
     }}>
       {/* 顶部操作区：单行整合 - 关闭面板 | 搜索框(内嵌视图菜单) | 新建任务 */}
       <div style={{
-        padding: '8px 10px',
+        padding: '10px 10px 9px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 6,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        gap: 7,
+        borderBottom: '1px solid var(--wa-line-2)',
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* 最左侧：面板隐藏按钮（弱样式，框架控件） */}
           {onCollapse && (
             <Tooltip title={t('workbench.closePanel')}>
               <Button
                 type="text"
                 size="small"
+                className="wa-icon-btn"
                 icon={<MenuFoldOutlined style={{ fontSize: 14 }} />}
                 onClick={onCollapse}
-                style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  minWidth: 28,
-                  borderRadius: 6,
-                  color: token.colorTextQuaternary,
-                  opacity: 0.5,
-                  transition: 'opacity 0.15s',
-                }}
+                style={{ opacity: 0.55 }}
                 onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.55' }}
               />
             </Tooltip>
           )}
@@ -808,14 +808,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           {/* 搜索框和批量操作条都常驻DOM，通过display切换，避免条件渲染导致的闪烁 */}
           <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
             {/* 多选模式批量操作条 */}
-            <div style={{
-              height: 28,
+            <div className="wa-field" style={{
+              height: 30,
               display: selectionMode ? 'flex' : 'none',
               alignItems: 'center',
               gap: 6,
               padding: '0 8px',
-              borderRadius: 6,
-              background: token.colorFillQuaternary,
             }}>
               <Checkbox checked={allSelected} indeterminate={selectedIds.size > 0 && !allSelected} onChange={handleToggleSelectAll} />
               <span style={{ flex: 1, fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -833,20 +831,13 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               />
             </div>
             {/* 搜索框 */}
-            <div data-testid="task-sidebar-search" style={{
+            <div data-testid="task-sidebar-search" className="wa-field" style={{
               height: 30,
               display: selectionMode ? 'none' : 'flex',
-              borderRadius: 7,
-              border: '1px solid var(--wa-line)',
-              background: 'var(--wa-panel-2)',
               alignItems: 'center',
-              padding: '0 4px 0 8px',
-              transition: 'border-color 0.15s',
+              padding: '0 3px 0 9px',
               minWidth: 0,
-            }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary }}
-            >
+            }}>
               <DebouncedSearchInput
                 value={searchQuery}
                 onChange={onSearchChange}
@@ -861,13 +852,9 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 onOpenChange={setViewMenuVisible}
                 trigger={['click']}
                 dropdownRender={() => (
-                  <div style={{
-                    width: 160,
+                  <div className="wa-glass-menu" style={{
+                    width: 168,
                     padding: 6,
-                    background: token.colorBgContainer,
-                    borderRadius: 8,
-                    border: `1px solid ${token.colorBorderSecondary}`,
-                    boxShadow: token.boxShadowSecondary,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
@@ -890,7 +877,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                             cursor: 'pointer',
                             fontSize: 12,
                             background: active ? token.colorPrimaryBg : 'transparent',
-                            color: active ? token.colorPrimary : token.colorText,
+                            color: token.colorText,
                             transition: 'all 0.15s',
                           }}
                           onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = token.colorBgTextHover }}
@@ -960,16 +947,9 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               <Button
                 type="text"
                 size="small"
+                className="wa-icon-btn"
                 icon={<CloseOutlined style={{ fontSize: 14 }} />}
                 onClick={exitSelectionMode}
-                style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  minWidth: 28,
-                  borderRadius: 6,
-                  color: token.colorTextTertiary,
-                }}
               />
             </Tooltip>
           ) : (
@@ -982,11 +962,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 onClick={onNewTask}
                 style={{
                   flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  minWidth: 28,
-                  borderRadius: 6,
+                  width: 30,
+                  height: 30,
+                  minWidth: 30,
+                  borderRadius: '50%',
                   padding: 0,
+                  boxShadow: '0 8px 18px -10px var(--wa-accent), inset 0 1px 0 rgba(255,255,255,.35)',
                 }}
               />
             </Tooltip>
@@ -1005,7 +986,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '6px 8px',
+          padding: '7px 8px 14px',
           display: 'flex',
           flexDirection: 'column',
           gap: 2,
@@ -1023,14 +1004,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
             {viewMode === 'list'
               ? groupedTasks.map((group, groupIdx) => (
                 <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <div style={{
-                    padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: '0.05em',
-                    color: token.colorTextTertiary,
-                    userSelect: 'none',
-                  }}>
+                  <div className="wa-task-group-label" style={{ paddingTop: groupIdx === 0 ? 4 : 12 }}>
                     {group.label}
                   </div>
                   {group.tasks.map(renderTask)}
@@ -1044,20 +1018,10 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 return (
                   <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <div
+                      className="wa-task-group-label is-clickable"
                       onClick={() => toggleGroupCollapsed(group.key)}
                       title={group.hint}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        letterSpacing: '0.05em',
-                        color: token.colorTextTertiary,
-                        userSelect: 'none',
-                        cursor: 'pointer',
-                      }}
+                      style={{ paddingTop: groupIdx === 0 ? 4 : 12 }}
                     >
                       <CaretRightOutlined
                         rotate={collapsed ? 0 : 90}
@@ -1129,12 +1093,14 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
         }}
         style={{
           position: 'absolute',
-          top: 0,
-          right: -2,
-          width: 5,
-          height: '100%',
+          top: 8,
+          bottom: 8,
+          right: 0,
+          width: 6,
+          height: 'auto',
           cursor: 'col-resize',
           zIndex: 10,
+          borderRadius: 3,
           background: resizing ? token.colorPrimaryBorder : 'transparent',
           transition: resizing ? 'none' : 'background 0.15s',
         }}
