@@ -222,7 +222,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   ]
 
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div className="wa-kms-searchbar" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Select
           value={searchMode}

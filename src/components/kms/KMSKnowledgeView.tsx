@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Space, Typography, Tag, Spin, Input, Select, Table, Button, theme, Tabs,
-  Statistic, Row, App,
+  App,
 } from 'antd'
 import {
   FolderOpenOutlined, FileTextOutlined, FireOutlined,
@@ -16,6 +16,9 @@ const { Text, Title } = Typography
 
 /** 关键词搜索防抖延迟（毫秒） */
 const KEYWORD_DEBOUNCE_MS = 400
+
+/** 表格内非滚动区域高度（小尺寸表头 + 底部分页） */
+const TABLE_CHROME_HEIGHT = 96
 
 interface IndexDir {
   id: string
@@ -71,6 +74,8 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [activeTab, setActiveTab] = useState<'files' | 'stats'>('files')
+  const [tableBodyHeight, setTableBodyHeight] = useState<number>()
+  const tableWrapRef = useRef<HTMLDivElement>(null)
   const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
   // ref 镜像：供 columns 的 render 闭包读取最新值，避免将 Set 引用放入 useMemo 依赖导致每次变更都重算列定义
   const processingFileIdsRef = useRef<Set<string>>(new Set())
@@ -82,6 +87,19 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onLoadFileSummaries({ page: 1, pageSize: 20 })
     onLoadStats()
   }, [onLoadFileSummaries, onLoadStats])
+
+  // 按容器实际高度计算表格滚动区，避免分页被挤出可视区
+  useEffect(() => {
+    const el = tableWrapRef.current
+    if (!el) return
+    const update = () => {
+      setTableBodyHeight(Math.max(el.clientHeight - TABLE_CHROME_HEIGHT, 120))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [activeTab])
 
   const handleTabChange = useCallback((key: string) => {
     setActiveTab(key as 'files' | 'stats')
@@ -201,48 +219,66 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onRebuildFileIndex,
   })
 
-  const renderStatsBar = () => (
-    <Row
-      gutter={16}
-      style={{
-        padding: '8px 12px',
-        background: token.colorFillQuaternary,
-        borderRadius: 6,
-        marginBottom: 12,
-        flexShrink: 0,
-      }}
-    >
-      <Statistic
-        title={t('kms.knowledge.statsDirs')}
-        value={overviewStats.totalDirs}
-        prefix={<FolderOpenOutlined style={{ color: token.colorPrimary }} />}
-        styles={{ content: { fontSize: 16, color: token.colorText } }}
-      />
-      <div style={{ width: 1, background: token.colorBorderSecondary, margin: '0 16px' }} />
-      <Statistic
-        title={t('kms.knowledge.statsFiles')}
-        value={overviewStats.totalFiles}
-        prefix={<FileTextOutlined style={{ color: token.colorTextSecondary }} />}
-        styles={{ content: { fontSize: 16, color: token.colorText } }}
-      />
-      <div style={{ width: 1, background: token.colorBorderSecondary, margin: '0 16px' }} />
-      <Statistic
-        title={t('kms.knowledge.statsHot')}
-        value={overviewStats.hotFiles}
-        prefix={<FireOutlined style={{ color: token.colorError }} />}
-        styles={{ content: { fontSize: 16, color: token.colorText } }}
-      />
-      <div style={{ flex: 1 }} />
-      <Button
-        size="small"
-        icon={<ReloadOutlined />}
-        onClick={handleReload}
-        loading={isLoadingSummaries}
+  const renderStatsBar = () => {
+    const statItemStyle: React.CSSProperties = {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      lineHeight: '20px',
+    }
+    const statLabelStyle: React.CSSProperties = { fontSize: 12, color: token.colorTextSecondary }
+    const statValueStyle: React.CSSProperties = {
+      fontSize: 15,
+      fontWeight: 600,
+      color: token.colorText,
+      fontVariantNumeric: 'tabular-nums',
+    }
+    const divider = <div style={{ width: 1, height: 12, background: token.colorBorderSecondary }} />
+
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 16,
+          padding: '6px 12px',
+          background: token.colorFillQuaternary,
+          borderRadius: 6,
+          marginBottom: 8,
+          flexShrink: 0,
+        }}
       >
-        {t('common.refresh')}
-      </Button>
-    </Row>
-  )
+        <Space size={16} align="center" wrap={false}>
+          <span style={statItemStyle}>
+            <FolderOpenOutlined style={{ color: token.colorPrimary }} />
+            <span style={statLabelStyle}>{t('kms.knowledge.statsDirs')}</span>
+            <span style={statValueStyle}>{overviewStats.totalDirs}</span>
+          </span>
+          {divider}
+          <span style={statItemStyle}>
+            <FileTextOutlined style={{ color: token.colorTextSecondary }} />
+            <span style={statLabelStyle}>{t('kms.knowledge.statsFiles')}</span>
+            <span style={statValueStyle}>{overviewStats.totalFiles}</span>
+          </span>
+          {divider}
+          <span style={statItemStyle}>
+            <FireOutlined style={{ color: token.colorError }} />
+            <span style={statLabelStyle}>{t('kms.knowledge.statsHot')}</span>
+            <span style={statValueStyle}>{overviewStats.hotFiles}</span>
+          </span>
+        </Space>
+        <div style={{ flex: 1 }} />
+        <Button
+          size="small"
+          icon={<ReloadOutlined />}
+          onClick={handleReload}
+          loading={isLoadingSummaries}
+        >
+          {t('common.refresh')}
+        </Button>
+      </div>
+    )
+  }
 
   const renderFilesTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -287,7 +323,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
       </div>
 
       {/* 文件摘要表格 */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <div ref={tableWrapRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <Spin spinning={isLoadingSummaries} size="small">
           <Table
             size="small"
@@ -305,7 +341,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
               onChange: (p, ps) => { setPage(p); setPageSize(ps) },
               size: 'small',
             }}
-            scroll={{ x: 1000, y: 'calc(100vh - 370px)' }}
+            scroll={{ x: 1000, y: tableBodyHeight }}
           />
         </Spin>
       </div>
@@ -342,7 +378,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     const valueStyle: React.CSSProperties = { fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }
 
     return (
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 4 }}>
+      <div style={{ height: '100%', overflow: 'auto', padding: 4 }}>
         {/* 统计概览：两列紧凑表格 */}
         <Card size="small" variant="borderless" style={{ background: token.colorFillQuaternary }}>
           <div style={{
@@ -446,7 +482,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
           onChange={handleTabChange}
           size="small"
           style={{ height: '100%' }}
-          className="kms-knowledge-tabs"
+          className="wa-fill-tabs"
           tabBarStyle={{ marginBottom: 12 }}
           items={[
             {
@@ -476,16 +512,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
             },
           ]}
         />
-        {/* antd Tabs 默认 .ant-tabs-tabpane 高度为 content-based，会导致
-            renderFilesTab 根节点的 height:100% 失效，Table 因无 scroll.y
-            而撑高，把分页挤出可视区。强制 content/tabpane 撑满高度以恢复
-            内层 flex+overflow 布局，让分页常驻底部可见。 */}
-        <style>{`
-          .kms-knowledge-tabs.ant-tabs { height: 100%; }
-          .kms-knowledge-tabs .ant-tabs-content-holder { flex: auto; min-height: 0; overflow: hidden; }
-          .kms-knowledge-tabs .ant-tabs-content { height: 100%; }
-          .kms-knowledge-tabs .ant-tabs-tabpane { height: 100%; }
-        `}</style>
       </div>
     </div>
   )

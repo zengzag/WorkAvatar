@@ -255,7 +255,7 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onPreview
         </span>
       ),
       children: (
-        <>
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           {/* 操作栏 */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', flexShrink: 0, alignItems: 'center' }}>
             <Input.Search
@@ -368,7 +368,7 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onPreview
               </div>
             )}
           </div>
-        </>
+        </div>
       ),
     },
     {
@@ -398,7 +398,8 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onPreview
         defaultActiveKey="cards"
         items={tabItems}
         size="small"
-        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+        className="wa-fill-tabs"
+        style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
         tabBarStyle={{ marginBottom: 12, flexShrink: 0 }}
       />
 
