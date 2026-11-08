@@ -111,14 +111,14 @@ const BackgroundShellBar: React.FC<BackgroundShellBarProps> = ({ conversationId 
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        padding: '8px 24px 0',
+        padding: '2px 24px 4px',
         width: '100%',
         maxWidth: 868,
         margin: '0 auto',
         flexShrink: 0,
       }}
     >
-      <Tag color="processing" icon={<LoadingOutlined />} style={{ marginInlineEnd: 0 }}>
+      <Tag color="processing" icon={<LoadingOutlined />} style={{ marginInlineEnd: 0, borderRadius: 999 }}>
         {t('workbench.bgShellRunning', { count: tasks.length })}
       </Tag>
       <Popover

@@ -62,10 +62,10 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
       minWidth: 320,
       display: 'flex',
       flexDirection: 'column',
-      border: `2px solid ${color.border}`,
-      borderRadius: 12,
+      border: `1px solid ${color.border}`,
+      borderRadius: 14,
       overflow: 'hidden',
-      background: token.colorBgContainer,
+      background: 'var(--wa-card-bg)',
     }}>
       <div style={{
         padding: '8px 14px',

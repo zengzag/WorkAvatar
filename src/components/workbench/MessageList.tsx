@@ -162,9 +162,11 @@ const MessageList: React.FC<MessageListProps> = ({
   return (
     <>
       {messages.length === 0 && activeConversationId && (
-        <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
-          <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
-          <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
+        <div style={{ textAlign: 'center', paddingTop: '18vh' }}>
+          <div className="wa-msg-avatar" style={{ width: 52, height: 52, borderRadius: 16, margin: '0 auto 14px' }}>
+            <RobotOutlined style={{ fontSize: 22, color: token.colorTextTertiary }} />
+          </div>
+          <Paragraph type="secondary" style={{ fontSize: 13.5 }}>{t('workbench.startConvHint')}</Paragraph>
         </div>
       )}
 
@@ -174,7 +176,7 @@ const MessageList: React.FC<MessageListProps> = ({
             type="link"
             size="small"
             onClick={handleLoadMoreOlder}
-            style={{ fontSize: 13, color: token.colorTextSecondary }}
+            style={{ fontSize: 12.5, color: token.colorTextTertiary }}
           >
             {t('workbench.loadOlderMessages', { count: visibleStartIndex })}
           </Button>
@@ -189,30 +191,14 @@ const MessageList: React.FC<MessageListProps> = ({
         return (
           <Fragment key={msg.id}>
             {msg.isCompactSummary && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                margin: '12px 0',
-                color: token.colorTextQuaternary,
-                fontSize: 11,
-                userSelect: 'none',
-              }}>
-                <div style={{ flex: 1, height: 1, background: token.colorBorderSecondary }} />
-                <CompressOutlined style={{ fontSize: 12 }} />
-                <span>{t('workbench.compressed', { defaultValue: '已压缩' })}</span>
-                <div style={{ flex: 1, height: 1, background: token.colorBorderSecondary }} />
+              <div className="wa-time-sep">
+                <CompressOutlined style={{ fontSize: 11, flexShrink: 0 }} />
+                <span style={{ flexShrink: 0 }}>{t('workbench.compressed', { defaultValue: '已压缩' })}</span>
               </div>
             )}
             {showTime && (
-              <div style={{
-                textAlign: 'center',
-                padding: '4px 0',
-                color: token.colorTextQuaternary,
-                fontSize: 12,
-                userSelect: 'none',
-              }}>
-                {formatMessageTime(msg.timestamp, t)}
+              <div className="wa-time-sep">
+                <span style={{ flexShrink: 0 }}>{formatMessageTime(msg.timestamp, t)}</span>
               </div>
             )}
             {(() => {

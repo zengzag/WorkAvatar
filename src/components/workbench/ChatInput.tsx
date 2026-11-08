@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
@@ -7,6 +7,7 @@ import { getDirName } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import EmployeeAvatar from '../common/EmployeeAvatar'
+import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -400,6 +401,7 @@ const ChatInput: React.FC<{
     if (conversationId) setDraftFullAllow(false)
   }, [conversationId])
   const editorRef = useRef<HTMLDivElement>(null)
+  const composerGlassRef = useLiquidGlass<HTMLDivElement>()
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
 
@@ -1312,7 +1314,7 @@ const ChatInput: React.FC<{
           : undefined}
         style={{
           color: token.colorTextSecondary,
-          padding: '0 4px 0 0', height: 18, minWidth: 18, borderRadius: 4,
+          padding: '0 2px', height: 22, minWidth: 22, borderRadius: 6,
         }}>
         {enableThinking ? <BulbFilled style={{ fontSize: 12 }} /> : <BulbOutlined style={{ fontSize: 12 }} />}
       </Button>
@@ -1415,6 +1417,10 @@ const ChatInput: React.FC<{
     () => (employees || []).find(e => e.id === selectedEmployeeId)?.name,
     [employees, selectedEmployeeId]
   )
+  const activeEmployee = useMemo(
+    () => (employees || []).find(e => e.id === selectedEmployeeId),
+    [employees, selectedEmployeeId]
+  )
 
   // 工作区触发器文案：指定目录取目录名，否则为默认工作区
   const workspaceLabel = workspaceSelector?.path
@@ -1429,14 +1435,14 @@ const ChatInput: React.FC<{
     return list.filter(ws => ws.label.toLowerCase().includes(search) || ws.path.toLowerCase().includes(search))
   }, [workspaceSelector?.recent, workspaceSearch])
 
-  /** 选择器触发器样式：无边框文字按钮，悬停/展开时高亮 */
+  /** 选择器触发器样式：玻璃胶囊，展开/悬停时加深底色 */
   const selectorTriggerStyle = (open: boolean): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center', gap: 6,
-    padding: '3px 8px', borderRadius: 6, maxWidth: 200, minWidth: 0,
-    border: '1px solid transparent', background: open ? token.colorFillTertiary : 'transparent',
-    color: open ? token.colorPrimary : token.colorText,
+    padding: '3px 9px', borderRadius: 999, maxWidth: 200, minWidth: 0,
+    border: '1px solid transparent', background: open ? 'var(--wa-surface-inset-hover)' : 'transparent',
+    color: open ? token.colorPrimary : 'var(--wa-ink-2)',
     cursor: 'pointer', userSelect: 'none', fontFamily: 'inherit',
-    fontSize: 13, lineHeight: '20px',
+    fontSize: 12.5, lineHeight: '18px',
     transition: 'background 0.15s ease, color 0.15s ease',
   })
 
@@ -1553,7 +1559,7 @@ const ChatInput: React.FC<{
     <div style={centerMode
       ? { padding: '0 16px', flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto' }
       // 与消息区共用同一个内容列：24px 内边距 + 820px 内容宽（868 = 820 + 左右内边距）
-      : { padding: '8px 24px 12px', flexShrink: 0, maxWidth: 868, width: '100%', margin: '0 auto' }
+      : { padding: '4px 24px 0', flexShrink: 0, maxWidth: 868, width: '100%', margin: '0 auto' }
     }>
       {(workspaceSelector || (showEmployeeSelector && employees && employees.length > 0)) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingTop: 6, paddingBottom: 6, maxWidth: '100%' }}>
@@ -1653,7 +1659,7 @@ const ChatInput: React.FC<{
                 style={selectorTriggerStyle(workspacePickerOpen)}
                 onMouseEnter={(e) => {
                   if (workspacePickerOpen) return
-                  e.currentTarget.style.background = token.colorFillTertiary
+                  e.currentTarget.style.background = 'var(--wa-surface-inset)'
                 }}
                 onMouseLeave={(e) => {
                   if (workspacePickerOpen) return
@@ -1744,14 +1750,26 @@ const ChatInput: React.FC<{
                 style={selectorTriggerStyle(employeePickerOpen)}
                 onMouseEnter={(e) => {
                   if (employeePickerOpen) return
-                  e.currentTarget.style.background = token.colorFillTertiary
+                  e.currentTarget.style.background = 'var(--wa-surface-inset)'
                 }}
                 onMouseLeave={(e) => {
                   if (employeePickerOpen) return
                   e.currentTarget.style.background = 'transparent'
                 }}
               >
-                <RobotOutlined style={{ fontSize: 14 }} />
+                {activeEmployee ? (
+                  <EmployeeAvatar
+                    employeeId={activeEmployee.id}
+                    avatarType={activeEmployee.avatar_type}
+                    avatarIcon={activeEmployee.avatar_icon}
+                    avatarColor={activeEmployee.avatar_color}
+                    avatarImage={activeEmployee.avatar_image}
+                    source={activeEmployee.source}
+                    size={16}
+                  />
+                ) : (
+                  <RobotOutlined style={{ fontSize: 14 }} />
+                )}
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {activeEmployeeName || t('nav.employees')}
                 </span>
@@ -1764,7 +1782,7 @@ const ChatInput: React.FC<{
       {attachedImages.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 6px', flexWrap: 'wrap' }}>
           {attachedImages.map(img => (
-            <div key={img.id} style={{ position: 'relative', borderRadius: 6, overflow: 'hidden', border: `1px solid ${token.colorBorderSecondary}` }}>
+            <div key={img.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--wa-glass-border)' }}>
               <img src={img.dataUrl} alt={img.name} style={{ width: 72, height: 72, objectFit: 'cover', display: 'block' }} />
               <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 10 }} />}
                 onClick={() => removeImage(img.id)}
@@ -1776,7 +1794,7 @@ const ChatInput: React.FC<{
       {modelTags.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
           {modelTags.map(tag => (
-            <div key={tag.key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: token.colorPrimaryBg, border: `1px solid ${token.colorPrimaryBorder}`, fontSize: 12, color: token.colorPrimary }}>
+            <div key={tag.key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 999, background: 'var(--wa-accent-soft)', border: '1px solid var(--wa-accent-line)', fontSize: 12, color: token.colorPrimary }}>
               <span>@</span>
               <span>{tag.providerName} / {tag.label}</span>
               <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onModelsChange(selectedModels.filter((_, i) => i !== tag.key))} />
@@ -1790,7 +1808,7 @@ const ChatInput: React.FC<{
             const col = allCollections.find((c: any) => c.id === colId)
             if (!col) return null
             return (
-              <div key={colId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
+              <div key={colId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 999, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
                 <DatabaseOutlined style={{ fontSize: 10 }} />
                 <span>{col.name}</span>
                 <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedCollectionIdsChange(selectedCollectionIds.filter((id: string) => id !== colId))} />
@@ -1813,21 +1831,19 @@ const ChatInput: React.FC<{
       )}
       {!centerMode && approvalSlot}
       {queuedMessages.length > 0 && (
-        <div data-testid="chat-queue" style={{
+        <div data-testid="chat-queue" className="wa-glass-menu" style={{
           marginBottom: 8,
-          border: `1px solid ${token.colorBorderSecondary}`,
-          borderRadius: 12,
-          background: token.colorFillQuaternary,
+          borderRadius: 14,
           overflowX: 'hidden',
           overflowY: 'auto',
           maxHeight: 250,
         }}>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
+            display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px',
             fontSize: 12, color: token.colorTextTertiary,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            borderBottom: '1px solid var(--wa-line-2)',
             position: 'sticky', top: 0, zIndex: 1,
-            background: token.colorFillQuaternary,
+            background: 'color-mix(in srgb, var(--wa-glass-menu-surface) 96%, transparent)',
           }}>
             <ClockCircleOutlined style={{ fontSize: 12 }} />
             <span style={{ fontWeight: 500, color: token.colorTextSecondary }}>
@@ -1961,25 +1977,25 @@ const ChatInput: React.FC<{
           })}
         </div>
       )}
-      <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 14, padding: '8px 8px 8px 14px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorder}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
+      <div ref={composerGlassRef} className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 20, padding: '10px 10px 10px 16px', border: `1px solid ${isDragOver ? token.colorPrimary : 'var(--wa-glass-border)'}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorder }}>
+        onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimaryBorder }}
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = 'var(--wa-glass-border)' }}>
         {isDragOver && (
           <div style={{
-            position: 'absolute', inset: 0,
-            borderRadius: 13,
-            background: token.colorPrimaryBg,
-            border: `2px dashed ${token.colorPrimary}`,
+            position: 'absolute', inset: 3,
+            borderRadius: 17,
+            background: 'color-mix(in srgb, var(--wa-accent-soft) 80%, transparent)',
+            boxShadow: `inset 0 0 0 1.5px ${token.colorPrimary}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             pointerEvents: 'none',
             zIndex: 10,
           }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-              <FileTextOutlined style={{ fontSize: 28, color: token.colorPrimary }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <PaperClipOutlined style={{ fontSize: 16, color: token.colorPrimary }} />
               <Text style={{ color: token.colorPrimary, fontWeight: 500, fontSize: 13 }}>{t('workbench.dropFileHint')}</Text>
             </div>
           </div>
@@ -2003,11 +2019,11 @@ const ChatInput: React.FC<{
               border: 'none',
               outline: 'none',
               resize: 'none',
-              fontSize: 13,
+              fontSize: 14,
               lineHeight: 1.6,
-              padding: '4px 0',
-              minHeight: centerMode ? (5 * 1.6 * 13) : (2 * 1.6 * 13),
-              maxHeight: 8 * 1.6 * 13,
+              padding: '3px 0',
+              minHeight: centerMode ? (5 * 1.6 * 14) : (2 * 1.6 * 14),
+              maxHeight: 8 * 1.6 * 14,
               overflowY: 'auto',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
@@ -2024,9 +2040,9 @@ const ChatInput: React.FC<{
                 zIndex: 1,
                 pointerEvents: 'none',
                 color: token.colorTextTertiary,
-                fontSize: 13,
+                fontSize: 14,
                 lineHeight: 1.6,
-                padding: '4px 0',
+                padding: '3px 0',
                 left: 0,
                 right: 0,
                 top: 0,
@@ -2046,9 +2062,9 @@ const ChatInput: React.FC<{
                 zIndex: 1,
                 pointerEvents: 'none',
                 color: token.colorTextTertiary,
-                fontSize: 13,
+                fontSize: 14,
                 lineHeight: 1.6,
-                padding: '4px 0',
+                padding: '3px 0',
                 left: 0,
                 top: 0,
               }}
@@ -2058,7 +2074,7 @@ const ChatInput: React.FC<{
           )}
           {/* 插件视图注入点：对话输入框上方快捷建议区 */}
           <PluginViewSlot view="chat.quick" />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingTop: 6, borderTop: '1px solid var(--wa-line-2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {!hideToolbar && (
                 <Popover
@@ -2082,7 +2098,7 @@ const ChatInput: React.FC<{
                       color: executionMode === 'pureChat'
                         ? token.colorPrimary
                         : executionMode === 'fullAllow' ? token.colorWarning : token.colorTextQuaternary,
-                      padding: '0 6px', height: 20, gap: 4,
+                      padding: '0 8px', height: 24, gap: 5, borderRadius: 7,
                       background: executionMode === 'fullAllow' ? token.colorWarningBg : 'transparent',
                     }}>
                     <span style={{ fontSize: 11 }}>{modeLabel}</span>
@@ -2094,7 +2110,7 @@ const ChatInput: React.FC<{
                 <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
                   data-testid="chat-attach"
                   onClick={() => fileInputRef.current?.click()}
-                  style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                  style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }} />
               </Tooltip>
               {/* 插件视图注入点：对话输入框工具栏 */}
               <PluginViewSlot view="chat.toolbar" />
@@ -2113,7 +2129,7 @@ const ChatInput: React.FC<{
                     open={showModelPicker}
                   >
                     <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
-                      style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                      style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }}
                       title={t('workbench.compareModels')} />
                   </Popover>
                   <Popover
@@ -2126,13 +2142,13 @@ const ChatInput: React.FC<{
                     open={showKbPicker}
                   >
                     <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
-                      style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                      style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }}
                       title={t('workbench.knowledgeBase')} />
                   </Popover>
                   <Tooltip title={t('workbench.selectSkillToExecute')}>
                     <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
                       <Button type="text" size="small" icon={<ToolOutlined style={{ fontSize: 12 }} />}
-                        style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                        style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }} />
                     </Dropdown>
                   </Tooltip>
                 </>
@@ -2157,7 +2173,7 @@ const ChatInput: React.FC<{
                     data-testid="chat-model-trigger"
                     style={{
                       color: token.colorTextSecondary,
-                      padding: '0 5px', height: 18, minWidth: 18, borderRadius: 4,
+                      padding: '0 6px', height: 22, minWidth: 22, borderRadius: 6,
                     }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11 }}>
                       {defaultModelLabel ? (
@@ -2199,22 +2215,30 @@ const ChatInput: React.FC<{
                 <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
                   data-testid="chat-send"
                   disabled={isCompacting || (!hasEditorContent() && attachedImages.length === 0)}
+                  style={{ width: 32, height: 32, minWidth: 32, borderRadius: 16, padding: 0, flexShrink: 0 }}
                   size="middle" />
               </Tooltip>
             )}
-            <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" data-testid="chat-stop" />
+            <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop}
+              style={{ width: 32, height: 32, minWidth: 32, borderRadius: 16, padding: 0, flexShrink: 0 }}
+              size="middle" data-testid="chat-stop" />
           </div>
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
             data-testid="chat-send"
             disabled={!hasEditorContent() && attachedImages.length === 0}
-            size="middle" style={{ flexShrink: 0 }} />
+            size="middle"
+            style={{
+              width: 32, height: 32, minWidth: 32, borderRadius: 16, padding: 0, flexShrink: 0,
+              boxShadow: '0 10px 22px -14px var(--wa-accent), inset 0 1px 0 rgba(255,255,255,.28)',
+            }} />
         )}
       </div>
       {editorContextMenu && (
         <div
           ref={editorMenuRef}
           onMouseDown={(e) => e.preventDefault()}
+          className="wa-glass-menu"
           style={{
             position: 'fixed',
             left: editorContextMenu.x,
@@ -2222,10 +2246,6 @@ const ChatInput: React.FC<{
             zIndex: 1060,
             minWidth: 136,
             padding: 4,
-            background: token.colorBgElevated,
-            border: `1px solid ${token.colorBorderSecondary}`,
-            borderRadius: 8,
-            boxShadow: token.boxShadowSecondary,
           }}
         >
           {editorContextMenuItems.map(item => (

@@ -464,18 +464,12 @@ const MessageBubble: React.FC<{
           alignItems: 'flex-start',
         }}
       >
-        <div style={{
-          width: 30,
-          height: 30,
-          borderRadius: 8,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          background: msg.role === 'assistant'
-            ? (assistantEmployee ? 'transparent' : token.colorPrimaryBg)
-            : 'var(--wa-panel-3)',
-        }}>
+        <div
+          className="wa-msg-avatar"
+          style={msg.role === 'assistant' && assistantEmployee
+            ? { background: 'transparent', border: 'none', boxShadow: 'none' }
+            : undefined}
+        >
           {msg.role === 'assistant' ? (
             assistantEmployee ? (
               <EmployeeAvatar
@@ -531,16 +525,7 @@ const MessageBubble: React.FC<{
                 </Space>
               </div>
             ) : (
-              <div style={{
-                padding: '9px 13px',
-                borderRadius: 12,
-                background: 'var(--wa-user-bubble)',
-                border: '1px solid var(--wa-line-2)',
-                color: token.colorText,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                lineHeight: 1.72,
-              }}>
+              <div className="wa-user-bubble">
                 {userContentParts.map((part, index) => (
                   part.type === 'text'
                     ? <Text key={index} style={{ color: token.colorText, fontSize: 15 }}>{part.value}</Text>
@@ -571,7 +556,7 @@ const MessageBubble: React.FC<{
               </div>
             )}
             {!msg.isStreaming && !isEditing && (
-              <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
+              <Space size={4} className="wa-msg-actions" style={{ marginTop: 4, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
                 {msg.content && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     data-testid="message-copy"
@@ -661,7 +646,7 @@ const MessageBubble: React.FC<{
             )}
 
             {!displayIsStreaming && (
-              <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
+              <Space size={4} className="wa-msg-actions" style={{ marginTop: 4, marginLeft: 2 }}>
                 {!hideMessageActions && hasBranches && (
                   <div
                     style={{
@@ -763,10 +748,9 @@ const MessageBubble: React.FC<{
               flexWrap: 'wrap',
             }}>
                 {currentBranchModelLabel && (
-                  <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, cursor: 'pointer' }}
-                    onClick={() => onOpenComparison(msg.id)}>
+                  <span style={{ fontSize: 10.5, lineHeight: 1, color: token.colorTextTertiary }}>
                     {currentBranchModelLabel}
-                  </Tag>
+                  </span>
                 )}
                 <TokenUsageDisplay tokenUsage={displayTokenUsage} tokensPerSec={conversationTokensPerSec} />
                 {isLastAssistantMessage && (
