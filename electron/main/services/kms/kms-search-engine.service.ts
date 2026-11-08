@@ -2221,7 +2221,7 @@ class KMSSearchEngineService {
             file_name: fileInfo.name,
             file_path: fileInfo.path,
             modified_time: fileInfo.modified_time,
-            text: `文件标题匹配: ${row.title}`,
+            text: row.title,
             match_type: 'file_title',
           }
           break

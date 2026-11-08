@@ -894,6 +894,12 @@ class PluginHostService {
     return text
   }
 
+  /** 插件 locale 缺失该 key 时回退 manifest 原文 */
+  private localizedPluginText(record: PluginRecord, key: string, fallback: string): string {
+    const text = this.translatePluginText(record, key)
+    return text === key ? fallback : text
+  }
+
   private buildContext(record: PluginRecord): PluginContext {
     const { manifest } = record
     const pluginLogger = createLogger(`Plugin:${manifest.id}`)
@@ -1697,9 +1703,11 @@ class PluginHostService {
   listPlugins(): PluginInfo[] {
     return Array.from(this.records.values()).map(r => ({
       id: r.manifest.id,
-      name: r.manifest.name,
+      name: this.localizedPluginText(r, 'name', r.manifest.name),
       version: r.manifest.version,
-      description: r.manifest.description,
+      description: r.manifest.description
+        ? this.localizedPluginText(r, 'description', r.manifest.description)
+        : undefined,
       author: r.manifest.author,
       source: r.source,
       enabled: r.enabled,

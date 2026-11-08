@@ -121,3 +121,4 @@ Directory.ps1
 ehthumbs.db
 *.pyc
 .workbuddy
+/design
