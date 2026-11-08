@@ -1,26 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { App, Alert, Button, Card, Collapse, Input, Space, Tooltip, Typography, theme } from 'antd'
 import {
-  Card,
-  Button,
-  Steps,
-  Typography,
-  Space,
-  Input,
-  Alert,
-  Collapse,
-  Modal,
-  theme,
-  App,
-} from 'antd'
-import {
-  DatabaseOutlined,
-  RobotOutlined,
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
+  BulbOutlined,
   CheckOutlined,
-  UserOutlined,
+  FileAddOutlined,
+  RobotOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
@@ -30,11 +16,10 @@ import { getCachedSceneDefaultModel } from '../utils/default-model'
 import {
   CollectionSelector,
   PromptFileSelector,
-  AnalysisProgress,
-  AnalysisStreaming,
-  ProfileDisplay,
-  ToolCheckboxes,
+  GenerationProgress,
+  ProfileEditor,
   type EmployeeProfile,
+  type ToolCategoryDef,
   STAGE_PROGRESS_MAP,
   DEFAULT_TOOL_NAMES,
   matchSuggestedToolIds,
@@ -49,28 +34,38 @@ const CreationWizard: React.FC = () => {
   const { message } = App.useApp()
   const navigate = useNavigate()
   const { token } = theme.useToken()
-  const [currentStep, setCurrentStep] = useState(0)
+
+  const [brief, setBrief] = useState('')
+  const [contextFile, setContextFile] = useState<{ name: string; content: string } | null>(null)
   const [allCollections, setAllCollections] = useState<any[]>([])
   const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([])
-  const [profile, setProfile] = useState<EmployeeProfile | null>(null)
+
+  const [employeeName, setEmployeeName] = useState('')
+  const [rules, setRules] = useState('')
+  const [description, setDescription] = useState('')
+  const [profileReady, setProfileReady] = useState(false)
+  const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
+  const [refineInput, setRefineInput] = useState('')
+
+  const [builtinTools, setBuiltinTools] = useState<any[]>([])
+  const [toolCategories, setToolCategories] = useState<ToolCategoryDef[]>([])
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
+
   const [providers, setProviders] = useState<LLMProvider[]>([])
-  const [loading, setLoading] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [employeeName, setEmployeeName] = useState<string>('')
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
     return localStorage.getItem('creationWizard:selectedProviderId') || getCachedSceneDefaultModel('creation')?.provider_id || ''
   })
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
     return localStorage.getItem('creationWizard:selectedModelId') || getCachedSceneDefaultModel('creation')?.model_id || ''
   })
-  const [businessDescription, setBusinessDescription] = useState<string>('')
-  const [contextFile, setContextFile] = useState<{ name: string; content: string } | null>(null)
-  const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
-  const [refineModalOpen, setRefineModalOpen] = useState(false)
-  const [refineFeedback, setRefineFeedback] = useState('')
-  const [builtinTools, setBuiltinTools] = useState<any[]>([])
-  const [toolCategories, setToolCategories] = useState<any[]>([])
-  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
+
+  const [loading, setLoading] = useState(false)
+  const [creating, setCreating] = useState(false)
+
+  const [analyzeStage, setAnalyzeStage] = useState('')
+  const [analyzeChunks, setAnalyzeChunks] = useState<string[]>([])
+  const [analyzeProgress, setAnalyzeProgress] = useState(0)
+  const progressCleanupRef = useRef<(() => void) | null>(null)
 
   const handleLlmChange = (pId: string, mId: string) => {
     setSelectedProviderId(pId)
@@ -82,32 +77,11 @@ const CreationWizard: React.FC = () => {
     localStorage.setItem('creationWizard:selectedModelId', selectedModelId)
   }, [selectedProviderId, selectedModelId])
 
-  const [analyzeStage, setAnalyzeStage] = useState<string>('')
-  const [analyzeDetail, setAnalyzeDetail] = useState<string>('')
-  const [analyzeChunks, setAnalyzeChunks] = useState<string[]>([])
-  const [analyzeThinkChunks, setAnalyzeThinkChunks] = useState<string[]>([])
-  const [analyzeProgress, setAnalyzeProgress] = useState<number>(0)
-  const progressCleanupRef = useRef<(() => void) | null>(null)
-
-  useEffect(() => {
-    return () => {
-      if (progressCleanupRef.current) {
-        progressCleanupRef.current()
-        progressCleanupRef.current = null
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (currentStep === 1 && profile) {
-      setEmployeeName(profile.roleName)
-    }
-  }, [currentStep, profile])
-
   useEffect(() => {
     loadProviders()
     loadAllCollections()
     loadBuiltinTools()
+    return () => { cleanupProgress() }
   }, [])
 
   const loadAllCollections = async () => {
@@ -136,7 +110,7 @@ const CreationWizard: React.FC = () => {
           setSelectedProviderId(defaultProvider.id)
         }
       }
-    } catch {}
+    } catch { /* 无可用 LLM 时后端会降级为启发式生成 */ }
   }
 
   const loadBuiltinTools = async () => {
@@ -147,59 +121,24 @@ const CreationWizard: React.FC = () => {
         .filter((tool: any) => DEFAULT_TOOL_NAMES.includes(tool.name))
         .map((tool: any) => tool.id)
       setSelectedToolIds(defaultToolIds)
-    } catch {}
+    } catch { /* ignore */ }
     try {
-      const cats = await window.electronAPI.tool.getCategories()
-      setToolCategories(cats)
-    } catch {}
+      setToolCategories(await window.electronAPI.tool.getCategories())
+    } catch { /* ignore */ }
   }
 
-  /** 设置进度回调，返回清理函数 */
+  /** 注册生成进度回调，返回清理函数 */
   const setupProgressCallback = () => {
-    if (progressCleanupRef.current) {
-      progressCleanupRef.current()
-    }
+    cleanupProgress()
     progressCleanupRef.current = window.electronAPI.employee.onProfileProgress((data) => {
       setAnalyzeStage(data.stage)
-      if (data.detail) setAnalyzeDetail(data.detail)
-      if (data.chunk) {
-        if (data.stage === 'thinking') {
-          setAnalyzeThinkChunks((prev) => [...prev, data.chunk!])
-        } else {
-          setAnalyzeChunks((prev) => [...prev, data.chunk!])
-        }
+      if (data.chunk && data.stage !== 'thinking') {
+        setAnalyzeChunks((prev) => [...prev, data.chunk!])
       }
       setAnalyzeProgress(STAGE_PROGRESS_MAP[data.stage] ?? 50)
     })
   }
 
-  /** 重置分析状态 */
-  const resetAnalyzeState = () => {
-    setAnalyzeStage('')
-    setAnalyzeDetail('')
-    setAnalyzeChunks([])
-    setAnalyzeThinkChunks([])
-    setAnalyzeProgress(0)
-  }
-
-  /** 处理分析结果：更新 profile、消息、工具匹配 */
-  const handleAnalysisResult = (result: any) => {
-    if (result.success && result.profile) {
-      setProfile(result.profile)
-      if (result.messages) {
-        setAnalysisMessages(result.messages)
-      }
-      const matchedIds = matchSuggestedToolIds(result.profile.suggestedTools || [], builtinTools)
-      if (matchedIds.length > 0) {
-        setSelectedToolIds((prev) => mergeToolIds(prev, matchedIds))
-      }
-      return true
-    }
-    message.error(result.error || t('creationWizard.analysisFailed'))
-    return false
-  }
-
-  /** 清理进度回调 */
   const cleanupProgress = () => {
     if (progressCleanupRef.current) {
       progressCleanupRef.current()
@@ -207,31 +146,59 @@ const CreationWizard: React.FC = () => {
     }
   }
 
-  const analyzeKBs = async () => {
+  const resetAnalyzeState = () => {
+    setAnalyzeStage('')
+    setAnalyzeChunks([])
+    setAnalyzeProgress(0)
+  }
+
+  /** 用生成的画像填充可编辑方案 */
+  const applyProfile = (profile: EmployeeProfile) => {
+    setEmployeeName(profile.roleName || '')
+    setRules(profile.roleDescription || '')
+    setDescription(profile.description || '')
+    setProfileReady(true)
+    const matchedIds = matchSuggestedToolIds(profile.suggestedTools || [], builtinTools)
+    if (matchedIds.length > 0) {
+      setSelectedToolIds((prev) => mergeToolIds(prev, matchedIds))
+    }
+  }
+
+  const handleAnalysisResult = (result: any): boolean => {
+    if (!result?.success || !result.profile) {
+      message.error(result?.error || t('creationWizard.analysisFailed'))
+      return false
+    }
+    applyProfile(result.profile)
+    if (Array.isArray(result.messages)) {
+      setAnalysisMessages(result.messages)
+    }
+    return true
+  }
+
+  const canGenerate = !!brief.trim() || !!contextFile || selectedCollectionIds.length > 0
+
+  const handleGenerate = async () => {
+    if (!canGenerate) {
+      message.warning(t('creationWizard.briefRequired'))
+      return
+    }
     setLoading(true)
     resetAnalyzeState()
     setupProgressCallback()
-
     try {
       const result = await window.electronAPI.employee.analyzeProfile({
         collection_ids: selectedCollectionIds,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
-        additional_context: businessDescription || undefined,
+        additional_context: brief.trim() || undefined,
         context_file: contextFile || undefined,
       })
-
       if (handleAnalysisResult(result)) {
         if (result.analysisMethod === 'llm') {
-          message.success(t('creationWizard.llmAnalysisComplete'))
-        } else if (result.analysisMethod === 'heuristic') {
-          if (result.error) {
-            message.warning(result.error)
-          } else {
-            message.info(t('creationWizard.heuristicAnalysis'))
-          }
+          message.success(t('creationWizard.generateComplete'))
         } else {
-          message.info(t('creationWizard.defaultConfig'))
+          message.warning(t('creationWizard.heuristicFallback'))
         }
       }
     } catch {
@@ -242,41 +209,39 @@ const CreationWizard: React.FC = () => {
     }
   }
 
-  const handleRefineProfile = async () => {
-    if (!refineFeedback.trim()) {
-      message.warning(t('creationWizard.enterRefineFeedback'))
-      return
-    }
-    if (!profile) return
+  /** 已选工具 ID → 工具名（回传给画像优化接口） */
+  const getSelectedToolNames = (): string[] =>
+    selectedToolIds
+      .map((id) => builtinTools.find((tool: any) => tool.id === id)?.name)
+      .filter((name): name is string => !!name)
 
+  const handleRefine = async () => {
+    if (!refineInput.trim() || !profileReady) return
     const providerId = selectedProviderId || providers[0]?.id
     if (!providerId) {
       message.warning(t('creationWizard.noProviderForRefine'))
       return
     }
-
-    setRefineModalOpen(false)
     setLoading(true)
     resetAnalyzeState()
     setupProgressCallback()
-
     try {
       const result = await window.electronAPI.employee.refineProfile({
         previous_messages: analysisMessages,
         previous_profile: {
-          roleName: profile.roleName,
-          roleDescription: profile.roleDescription,
-          description: profile.description,
-          suggestedTools: profile.suggestedTools,
+          roleName: employeeName,
+          roleDescription: rules,
+          description,
+          suggestedTools: getSelectedToolNames(),
         },
-        feedback: refineFeedback,
+        feedback: refineInput.trim(),
         provider_id: providerId,
         model_id: selectedModelId || undefined,
       })
-
       if (handleAnalysisResult(result)) {
-        if (result.error) {
-          message.warning(result.error)
+        setRefineInput('')
+        if (result.warning) {
+          message.warning(t('creationWizard.refineFailed'))
         } else {
           message.success(t('creationWizard.refineComplete'))
         }
@@ -285,21 +250,20 @@ const CreationWizard: React.FC = () => {
       message.error(t('creationWizard.refineFailed'))
     } finally {
       setLoading(false)
-      setRefineFeedback('')
       cleanupProgress()
     }
   }
 
   /** 创建员工并分配工具 */
-  const createEmployeeWithTools = async (name: string, description: string, profileJson?: string, rules?: string) => {
+  const createEmployeeWithTools = async (name: string, desc: string, profileJson?: string, employeeRules?: string) => {
     const employee = await window.electronAPI.employee.create({
       name,
-      description,
-      rules,
+      description: desc,
+      rules: employeeRules,
       profile_json: profileJson,
     })
 
-    const onDemandMap = new Map(builtinTools.map((t: any) => [t.id, !!t.onDemand]))
+    const onDemandMap = new Map(builtinTools.map((tool: any) => [tool.id, !!tool.onDemand]))
     for (const toolId of selectedToolIds) {
       try {
         await window.electronAPI.tool.assignToEmployee({
@@ -307,46 +271,30 @@ const CreationWizard: React.FC = () => {
           tool_id: toolId,
           mode: onDemandMap.get(toolId) ? 'on_demand' : 'on',
         })
-      } catch {}
+      } catch { /* 单个工具分配失败不阻塞创建 */ }
     }
-
     return employee
   }
 
-  const handleQuickCreate = async () => {
-    setCreating(true)
-    try {
-      await createEmployeeWithTools(
-        t('creationWizard.quickCreateDefaultName'),
-        '',
-      )
-      navigate('/employees')
-    } catch (error) {
-      message.error(t('creationWizard.createFailed'))
-      console.error(error)
-    } finally {
-      setCreating(false)
-    }
-  }
-
   const handleCreateEmployee = async () => {
+    const finalRules = rules.trim() || brief.trim()
     if (!employeeName.trim()) {
       message.warning(t('creationWizard.enterName'))
       return
     }
+    if (!finalRules) {
+      message.warning(t('creationWizard.rulesRequired'))
+      return
+    }
     setCreating(true)
-
     try {
-      const profileJson = profile ? JSON.stringify({
-        roleName: profile.roleName,
-        roleDescription: profile.roleDescription,
-        suggestedTools: profile.suggestedTools,
-      }) : undefined
-      // 规则（系统提示词）取画像 roleDescription；描述为画像生成的简短描述
-      const rules = profile?.roleDescription || businessDescription || ''
-      const description = profile?.description || ''
-
-      await createEmployeeWithTools(employeeName, description, profileJson, rules)
+      const profileJson = JSON.stringify({
+        roleName: employeeName.trim(),
+        roleDescription: finalRules,
+        description,
+        suggestedTools: getSelectedToolNames(),
+      })
+      await createEmployeeWithTools(employeeName.trim(), description.trim(), profileJson, finalRules)
       navigate('/employees')
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
@@ -356,150 +304,38 @@ const CreationWizard: React.FC = () => {
     }
   }
 
-  const steps = [
-    { title: t('creationWizard.stepBasicConfig'), icon: <DatabaseOutlined /> },
-    { title: t('creationWizard.stepConfirmCreate'), icon: <CheckOutlined /> },
-  ]
-
-  const renderStep1 = () => (
-    <div>
-      {providers.length === 0 && (
-        <Alert
-          title={t('creationWizard.noLlmAlert')}
-          description={t('creationWizard.noLlmAlertDesc')}
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-      )}
-
-      <Card style={{ marginBottom: 16 }}>
-        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <CollectionSelector
-            collections={allCollections}
-            selectedIds={selectedCollectionIds}
-            onChange={setSelectedCollectionIds}
-          />
-
-          <PromptFileSelector value={contextFile} onChange={setContextFile} />
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text strong>{t('creationWizard.llmModelLabel')}</Text>
-              <Space>
-                <LLMSelector
-                  providerId={selectedProviderId}
-                  modelId={selectedModelId}
-                  onChange={handleLlmChange}
-                />
-              </Space>
-            </div>
-          </div>
-
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 8 }}>
-              {t('creationWizard.businessSceneDesc')}
-            </Text>
-            <TextArea
-              placeholder={t('creationWizard.businessScenePlaceholder')}
-              data-testid="wizard-business-desc"
-              value={businessDescription}
-              onChange={(e) => setBusinessDescription(e.target.value)}
-              rows={4}
-            />
-          </div>
-        </Space>
-      </Card>
-    </div>
-  )
-
-  const renderStep2 = () => (
-    <div>
-      <Alert
-        title={t('creationWizard.confirmCreateDesc')}
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-
-      <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ display: 'block', marginBottom: 8 }}>
-          {t('creationWizard.employeeNameLabel')} <Text type="danger">*</Text>
-        </Text>
-        <Input
-          placeholder={t('creationWizard.employeeNamePlaceholder')}
-          data-testid="wizard-employee-name"
-          prefix={<UserOutlined />}
-          value={employeeName}
-          onChange={(e) => setEmployeeName(e.target.value)}
-        />
-      </div>
-
-      {loading ? (
-        <div style={{ padding: '0 0 16px' }}>
-          <AnalysisProgress progress={analyzeProgress} stage={analyzeStage} detail={analyzeDetail} />
-          <AnalysisStreaming thinkChunks={analyzeThinkChunks} contentChunks={analyzeChunks} />
-        </div>
-      ) : profile ? (
-        <ProfileDisplay
-          profile={profile}
-          builtinTools={builtinTools}
-          hasAnalysisMessages={analysisMessages.length > 0}
-          onReAnalyze={analyzeKBs}
-          onRefine={() => setRefineModalOpen(true)}
-        />
-      ) : (
-        <div style={{ textAlign: 'center', padding: 40 }}>
-          <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: token.colorPrimary }} />
-          <Paragraph>{t('creationWizard.clickToAnalyze')}</Paragraph>
-          <Button type="primary" size="large" onClick={analyzeKBs} icon={<RobotOutlined />}>
-            {t('creationWizard.startAnalysis')}
-          </Button>
-        </div>
-      )}
-
-      <Collapse
-        style={{ marginBottom: 16 }}
-        items={[
-          {
-            key: 'tools',
-            label: t('creationWizard.toolSettings'),
-            children: <ToolCheckboxes
-              tools={builtinTools}
-              categories={toolCategories}
-              selectedIds={selectedToolIds}
-              onChange={setSelectedToolIds}
-            />,
-          },
-        ]}
-      />
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          type="primary"
-          icon={<CheckOutlined />}
-          onClick={handleCreateEmployee}
-          data-testid="wizard-create"
-          loading={creating}
-          disabled={!employeeName.trim()}
-          size="large"
-        >
-          {t('creationWizard.createButton')}
-        </Button>
-      </div>
-    </div>
-  )
-
-  const handleNext = async () => {
-    if (currentStep === 0) {
-      setCurrentStep(1)
-      analyzeKBs()
+  const handleBlankCreate = async () => {
+    setCreating(true)
+    try {
+      await createEmployeeWithTools(employeeName.trim() || t('creationWizard.quickCreateDefaultName'), '')
+      navigate('/employees')
+    } catch (error) {
+      message.error(t('creationWizard.createFailed'))
+      console.error(error)
+    } finally {
+      setCreating(false)
     }
   }
 
-  const handlePrev = () => {
-    setCurrentStep((prev) => Math.max(prev - 1, 0))
+  /** 跳过 AI 生成，直接在右侧手写系统提示词 */
+  const handleManualEdit = () => {
+    if (!rules.trim() && brief.trim()) {
+      setRules(brief.trim())
+    }
+    setProfileReady(true)
   }
+
+  const pageStyle = `
+    .wizard-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 1000px) {
+      .wizard-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+  `
 
   const breadcrumbItems = [
     { title: t('creationWizard.breadcrumbDigitalEmployees'), onClick: () => navigate('/employees') },
@@ -507,75 +343,200 @@ const CreationWizard: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
-      <PageHeader
-        title={t('creationWizard.title')}
-        onBack={() => navigate('/employees')}
-        breadcrumb={breadcrumbItems}
-      />
-
-      <Card style={{ marginBottom: 16 }}>
-        <Steps current={currentStep} items={steps} />
-      </Card>
-
-      <Card style={{ marginBottom: 12, minHeight: 400 }}>
-        {currentStep === 0 && renderStep1()}
-        {currentStep === 1 && renderStep2()}
-      </Card>
-
-      {currentStep === 0 && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Button
-            icon={<ThunderboltOutlined />}
-            onClick={handleQuickCreate}
-            loading={creating}
-            data-testid="wizard-quick-create"
-          >
-            {t('creationWizard.quickCreate')}
-          </Button>
-          <Button
-            type="primary"
-            icon={<ArrowRightOutlined />}
-            onClick={handleNext}
-            data-testid="wizard-next"
-          >
-            {t('common.next')}
-          </Button>
-        </div>
-      )}
-
-      {currentStep === 1 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={handlePrev}
-          >
-            {t('common.prev')}
-          </Button>
-        </div>
-      )}
-
-      <Modal
-        title={t('creationWizard.refineModalTitle')}
-        open={refineModalOpen}
-        onOk={handleRefineProfile}
-        onCancel={() => { setRefineModalOpen(false); setRefineFeedback('') }}
-        okText={t('creationWizard.refineSubmit')}
-        cancelText={t('common.cancel')}
-        okButtonProps={{ disabled: !refineFeedback.trim() }}
-        width={600}
-      >
-        <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-          {t('creationWizard.refineModalDesc')}
-        </Paragraph>
-        <TextArea
-          placeholder={t('creationWizard.refinePlaceholder')}
-          value={refineFeedback}
-          onChange={(e) => setRefineFeedback(e.target.value)}
-          rows={6}
-          autoFocus
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* 页头：核心操作固定可见 */}
+      <div style={{ flexShrink: 0, padding: '16px 16px 0' }}>
+        <PageHeader
+          title={t('creationWizard.title')}
+          subTitle={t('creationWizard.subtitle')}
+          onBack={() => navigate('/employees')}
+          breadcrumb={breadcrumbItems}
+          extra={(
+            <Space size={8}>
+              <Tooltip title={t('creationWizard.quickCreateHint')}>
+                <Button
+                  icon={<FileAddOutlined />}
+                  onClick={handleBlankCreate}
+                  loading={creating}
+                  data-testid="wizard-quick-create"
+                >
+                  {t('creationWizard.quickCreate')}
+                </Button>
+              </Tooltip>
+              <Button
+                type="primary"
+                icon={<CheckOutlined />}
+                onClick={handleCreateEmployee}
+                loading={creating}
+                data-testid="wizard-create"
+              >
+                {t('creationWizard.createButton')}
+              </Button>
+            </Space>
+          )}
         />
-      </Modal>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 16px 16px' }}>
+        <div className="wizard-grid">
+          {/* 需求描述 */}
+          <Card
+            title={<span><BulbOutlined style={{ marginRight: 6 }} />{t('creationWizard.describeTitle')}</span>}
+            extra={(
+              <LLMSelector
+                providerId={selectedProviderId}
+                modelId={selectedModelId}
+                onChange={handleLlmChange}
+              />
+            )}
+            styles={{ body: { padding: 16 } }}
+          >
+            {providers.length === 0 && (
+              <Alert
+                title={t('creationWizard.noLlmAlert')}
+                description={t('creationWizard.noLlmAlertDesc')}
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+              />
+            )}
+
+            <TextArea
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              placeholder={t('creationWizard.briefPlaceholder')}
+              rows={4}
+              data-testid="wizard-business-desc"
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  e.preventDefault()
+                  handleGenerate()
+                }
+              }}
+            />
+
+            <Collapse
+              ghost
+              style={{ marginTop: 4 }}
+              items={[
+                {
+                  key: 'references',
+                  label: (
+                    <span>
+                      {t('creationWizard.referencesTitle')}
+                      {(contextFile ? 1 : 0) + selectedCollectionIds.length > 0 && (
+                        <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                          {t('creationWizard.referencesSelected', {
+                            count: (contextFile ? 1 : 0) + selectedCollectionIds.length,
+                          })}
+                        </Text>
+                      )}
+                    </span>
+                  ),
+                  children: (
+                    <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+                      <div>
+                        <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 8 }}>
+                          {t('creationWizard.referencesHint')}
+                        </Text>
+                        <PromptFileSelector value={contextFile} onChange={setContextFile} />
+                      </div>
+                      <CollectionSelector
+                        collections={allCollections}
+                        selectedIds={selectedCollectionIds}
+                        onChange={setSelectedCollectionIds}
+                      />
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+
+            <Button
+              type="primary"
+              ghost
+              block
+              icon={<ThunderboltOutlined />}
+              onClick={handleGenerate}
+              loading={loading}
+              disabled={!canGenerate}
+              style={{ marginTop: 8 }}
+            >
+              {profileReady ? t('creationWizard.regenerate') : t('creationWizard.generate')}
+            </Button>
+          </Card>
+
+          {/* 员工方案 */}
+          <Card title={t('creationWizard.planTitle')} style={{ minHeight: 420 }}>
+            {loading && (
+              <div style={{ marginBottom: profileReady ? 20 : 0 }}>
+                <GenerationProgress
+                  progress={analyzeProgress}
+                  stage={analyzeStage}
+                  contentChunks={analyzeChunks}
+                />
+              </div>
+            )}
+
+            {profileReady ? (
+              <>
+                <ProfileEditor
+                  name={employeeName}
+                  onNameChange={setEmployeeName}
+                  description={description}
+                  onDescriptionChange={setDescription}
+                  rules={rules}
+                  onRulesChange={setRules}
+                  builtinTools={builtinTools}
+                  toolCategories={toolCategories}
+                  selectedToolIds={selectedToolIds}
+                  onToolIdsChange={setSelectedToolIds}
+                  disabled={loading}
+                />
+
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+                  <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                    {t('creationWizard.refineTitle')}
+                  </Text>
+                  <TextArea
+                    value={refineInput}
+                    onChange={(e) => setRefineInput(e.target.value)}
+                    placeholder={t('creationWizard.refinePlaceholder')}
+                    rows={2}
+                    disabled={loading}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                    <Button
+                      icon={<ThunderboltOutlined />}
+                      onClick={handleRefine}
+                      loading={loading}
+                      disabled={!refineInput.trim()}
+                    >
+                      {t('creationWizard.applyRefine')}
+                    </Button>
+                  </div>
+                </div>
+
+                <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 12 }}>
+                  {t('creationWizard.createHint')}
+                </Text>
+              </>
+            ) : !loading ? (
+              <div style={{ padding: '64px 0', textAlign: 'center' }}>
+                <RobotOutlined style={{ fontSize: 40, color: token.colorPrimary }} />
+                <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 8 }}>
+                  {t('creationWizard.resultEmpty')}
+                </Paragraph>
+                <Button type="link" onClick={handleManualEdit} data-testid="wizard-manual-edit">
+                  {t('creationWizard.manualEdit')}
+                </Button>
+              </div>
+            ) : null}
+          </Card>
+        </div>
+
+        <style>{pageStyle}</style>
+      </div>
     </div>
   )
 }

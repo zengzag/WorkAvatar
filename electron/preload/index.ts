@@ -87,8 +87,6 @@ import type {
   ShellBgKillResult,
   ShellBgTaskItem,
   SubAgentProfile,
-  SubAgentProfileCreateParams,
-  SubAgentProfileUpdateParams,
   SubAgentProfileResult,
   SearchApiStatus,
   SearchApiSetKeyParams,
@@ -698,10 +696,6 @@ const electronAPI = {
   // 子智能体模板（SubAgentProfile）管理
   subagent: {
     listProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_LIST) as Promise<SubAgentProfile[]>,
-    createProfile: (params: SubAgentProfileCreateParams) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_CREATE, params) as Promise<SubAgentProfileResult>,
-    updateProfile: (params: SubAgentProfileUpdateParams) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_UPDATE, params) as Promise<SubAgentProfileResult>,
     deleteProfile: (id: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_DELETE, id) as Promise<SubAgentProfileResult>,
   },
