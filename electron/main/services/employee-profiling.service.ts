@@ -95,6 +95,9 @@ class EmployeeProfilingService {
       if (collectionContents.length > 0) {
         return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
       }
+      if (additionalContext?.trim()) {
+        return { profile: this.getBriefHeuristicProfile(additionalContext), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，已将你的需求直接作为系统提示词' }
+      }
       return { profile: this.getDefaultProfile(), analysisMethod: 'default' }
     }
 
@@ -118,6 +121,9 @@ class EmployeeProfilingService {
       if (collectionContents.length > 0) {
         return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
       }
+      if (additionalContext?.trim()) {
+        return { profile: this.getBriefHeuristicProfile(additionalContext), analysisMethod: 'heuristic', error: `LLM 调用失败，已将你的需求直接作为系统提示词: ${errorMsg}` }
+      }
       return { profile: this.getDefaultProfile(), analysisMethod: 'default', error: `LLM 调用失败: ${errorMsg}` }
     }
   }
@@ -140,7 +146,7 @@ class EmployeeProfilingService {
 
       const refinePrompt = `Revise the digital-employee profile below using the user's feedback. Return JSON only.
 
-Current result:
+Current result (authoritative; it may differ from earlier messages because the user edited it):
 \`\`\`json
 ${profileJson}
 \`\`\`
@@ -152,20 +158,22 @@ Available system tools (suggestedTools may only use a name from this list):
 ${this.getSystemToolsList().map(t => `- ${t.name} (${t.title})`).join('\n')}
 
 Output fields:
-- roleName: concise role name
-- roleDescription: complete role rules (duties, cautions, workflow); used as the system prompt
-- description: capability summary of at most 150 characters, explaining what this employee can do so users and other employees can decide whether to delegate
+- roleName: concise professional job title
+- roleDescription: a ready-to-use system prompt written in the second person ("You are ..."); it must be detailed and structured, covering role and positioning, core responsibilities, standard workflow, output format and quality bar, constraints and boundaries, and communication style, with short section headings and bullet points; it is used directly as the employee's system prompt
+- description: capability summary of at most 150 characters, explaining what this employee can do so users and other employees can decide whether to delegate; plain text, not a list
 - suggestedTools: tool names to enable, taken only from the list above
 
-Write every field in the language of the user's feedback.`
+Write every field in the language of the user's feedback, and keep every rule that the feedback does not contradict.`
 
       onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 优化分析结果...' })
 
-      const messages = [
-        ...previousMessages,
-        { role: 'assistant', content: profileJson },
-        { role: 'user', content: refinePrompt },
-      ]
+      // 已有分析历史时直接追加反馈，避免出现连续两条 assistant 消息被部分模型拒绝
+      const messages = previousMessages.length > 0
+        ? [...previousMessages, { role: 'user', content: refinePrompt }]
+        : [
+            { role: 'system', content: 'You revise digital-employee plans. Return JSON only. roleDescription must be a complete, detailed, ready-to-use system prompt; description at most 150 characters; suggestedTools only from the provided list.' },
+            { role: 'user', content: refinePrompt },
+          ]
 
       const fullResponse = await this.streamLLMWithProgress(providerId, messages, modelId, 'profiling_refine', onProgress)
 
@@ -303,7 +311,7 @@ Write every field in the language of the user's feedback.`
     const toolsListText = allTools.map(t => `- ${t.name} (${t.title}): ${t.description}`).join('\n')
 
     let prompt: string
-    const toolsSection = `\nAvailable system tools (suggestedTools may only use a name from this list):\n${toolsListText}\n\nOutput fields (JSON only):\n- roleName: concise role name\n- roleDescription: complete role rules (duties, cautions, workflow); used as the system prompt\n- description: capability summary of at most 150 characters, explaining what this employee can do and is good at so users and other employees can decide whether to delegate; plain text, not a list\n- suggestedTools: tool names to enable, taken only from the list above (e.g. "file", "date_time")`
+    const toolsSection = `\nAvailable system tools (suggestedTools may only use a name from this list):\n${toolsListText}\n\nOutput fields (JSON only):\n- roleName: concise professional job title\n- roleDescription: a ready-to-use system prompt written in the second person ("You are ..."); it must be detailed and structured, covering role and positioning, core responsibilities, standard workflow, output format and quality bar, constraints and boundaries, and communication style, with short section headings and bullet points; it is used directly as the employee's system prompt\n- description: capability summary of at most 150 characters, explaining what this employee can do and is good at so users and other employees can decide whether to delegate; plain text, not a list\n- suggestedTools: tool names to enable, taken only from the list above (e.g. "file", "date_time")`
     if (hasFile && contextFile) {
       const fileMaxLength = 20000
       const fileContent = contextFile.content.length > fileMaxLength
@@ -331,23 +339,23 @@ Requirements:
 1. Determine the business domain from the collection's subject matter, document types, and key topics.
 2. Choose roleName and the role's position from that domain.
 3. Derive the duties the employee should own (answering related questions, handling corresponding business requests).
-4. Define the workflow and cautions from the business characteristics.
+4. Define the workflow, output format, constraints, and cautions from the business characteristics, and write them into a detailed, ready-to-use system prompt.
 
 Write every field in the language of the collection material.
 ${toolsSection}`
     } else {
-      prompt = `Design a digital-employee role from the business description below. Return JSON only.
+      prompt = `Design a digital employee from the user's brief. Return JSON only.
 
-Business description:
-${userGuidance}
+User brief:
+${additionalContext || '(empty; design a general-purpose digital employee)'}
 
 Requirements:
-1. Determine the business domain, request types, and work content from the description.
-2. Choose roleName and the role's position from that domain.
-3. Derive the duties the employee should own.
-4. Define the workflow and cautions from the business characteristics.
+1. Infer the domain, the recurring work, expected deliverables, and audience from the brief. Do not invent company-specific facts, tools, or policies that the brief does not mention.
+2. roleName: a concise professional job title (2-8 words).
+3. roleDescription: write a complete, production-ready system prompt that is specific to this brief rather than generic filler; it must cover role and positioning, core responsibilities, standard workflow, output format and quality bar, constraints and boundaries (including when to ask the user for clarification), and communication style.
+4. description: summarize the capability in one plain-text paragraph of at most 150 characters.
 
-Write every field in the language of the business description.
+Write every field in the language of the user's brief.
 ${toolsSection}`
     }
 
@@ -358,7 +366,7 @@ ${toolsSection}`
         role: 'system',
         content: hasFile
           ? 'Design a digital-employee role from the provided prompt file. Return JSON only. Preserve every rule from the file in roleDescription; description at most 150 characters; suggestedTools only from the provided list.'
-          : 'Design a digital-employee role from the knowledge-base collection or business description. Return JSON only. roleDescription is the complete role rule set; description at most 150 characters; suggestedTools only from the provided list.'
+          : 'Design a digital employee from the knowledge-base collection or the user brief. Return JSON only. roleDescription is a detailed, ready-to-use system prompt (role, responsibilities, workflow, output format, constraints, style); description at most 150 characters; suggestedTools only from the provided list.'
       },
       { role: 'user', content: prompt },
     ]
@@ -602,6 +610,19 @@ Rules: use only collection content; state clearly when evidence is missing; cite
       roleName: name || '数字员工',
       roleDescription: contextFile.content.trim() || '基于提示词文件自动创建的数字员工',
       description: `基于提示词文件「${name || contextFile.name}」创建的数字员工。`,
+      suggestedSkills: [],
+      suggestedTools: [],
+    }
+  }
+
+  /** 无 LLM 时把用户需求原文作为系统提示词，保证需求不丢失 */
+  private getBriefHeuristicProfile(brief: string): EmployeeProfile {
+    const text = brief.trim()
+    const summary = text.replace(/\s+/g, ' ')
+    return {
+      roleName: '数字员工',
+      roleDescription: text,
+      description: summary.length > 150 ? summary.slice(0, 150) : summary,
       suggestedSkills: [],
       suggestedTools: [],
     }

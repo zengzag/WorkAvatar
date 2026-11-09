@@ -1,38 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { App, Button, Tooltip, theme } from 'antd'
-import {
-  ArrowLeftOutlined,
-  ExportOutlined,
-  PaperClipOutlined,
-  SendOutlined,
-  StopOutlined,
-} from '@ant-design/icons'
+import { App, Button, theme, Tooltip } from 'antd'
+import { ExportOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import type { GeneratedFileInfo, ThinkingLevel } from '../../types'
+import type { GeneratedFileInfo } from '../../types'
 import AnswerSegment from '../workbench/AnswerSegment'
 import { useSecretaryStore, type SecretaryTask } from './secretary.store'
-import { abortSecretaryTask, continueSecretaryTask, subscribeSecretaryStream } from './secretary-runner'
-import SecretaryComposer, { type ComposerFile, type ComposerHandle } from './SecretaryComposer'
+import { subscribeSecretaryStream } from './secretary-runner'
 
-interface SecretaryTaskDetailProps {
-  task: SecretaryTask
-  providerId: string
-  modelId: string
-  thinking: ThinkingLevel
-  onBack: () => void
-  onOpenInMain: () => void
+interface SecretaryChatProps {
+  task?: SecretaryTask
+  onOpenInMain: (task: SecretaryTask) => void
 }
 
-interface DetailMessage {
+interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   /** 工具产出的文件：小窗只露文件名，点击用系统软件打开 */
   files: GeneratedFileInfo[]
-}
-
-function baseName(p: string): string {
-  return p.split(/[\\/]/).pop() || p
 }
 
 /** 汇总消息段里的工具产物，按路径去重（后写覆盖先写） */
@@ -48,45 +33,46 @@ function collectGeneratedFiles(segments: unknown): GeneratedFileInfo[] {
 }
 
 /**
- * 面板内的简化对话窗：
- * 展示任务会话里的问答，并允许在同一会话上继续追问（流式输出），
- * 需要完整过程/工具卡片时再跳主窗口。
+ * 面板主体：对话窗。
+ * 有任务时渲染该任务的问答（可实时接入流式输出）；没有任务时不渲染，
+ * 让默认窗口保持「头部 + 输入框」的精简形态。
  */
-const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
-  task,
-  providerId,
-  modelId,
-  thinking,
-  onBack,
-  onOpenInMain,
-}) => {
+const SecretaryChat: React.FC<SecretaryChatProps> = ({ task, onOpenInMain }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const { message } = App.useApp()
 
-  const [messages, setMessages] = useState<DetailMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
   const [live, setLive] = useState<{ id: string; content: string } | null>(null)
   const liveRef = useRef<{ id: string; content: string } | null>(null)
   /** 主窗口在同一任务上发起的运行中会话（实时接入展示） */
   const [remote, setRemote] = useState<{ sessionId: string; content: string } | null>(null)
   const remoteRef = useRef<{ sessionId: string; content: string } | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
-  const composerRef = useRef<ComposerHandle>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
   const markViewed = useSecretaryStore((s) => s.markViewed)
 
-  const conversationId = task.conversationId
-  const busy = sending || !!remote || task.status === 'running' || task.status === 'waiting'
+  const taskId = task?.id
+  const conversationId = task?.conversationId
+  /** 已做过首次定位的任务：再次同步消息时不再强制拉到底部，避免打断用户上滚查看 */
+  const loadedTaskRef = useRef<string | undefined>(undefined)
 
-  const load = useCallback(async (): Promise<DetailMessage[]> => {
+  /** 跟随到底部；用户主动上滚后不再强行拉回 */
+  const scrollToBottom = useCallback((force = false) => {
+    const el = bodyRef.current
+    if (!el) return
+    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 80) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [])
+
+  const load = useCallback(async (): Promise<ChatMessage[]> => {
     if (!conversationId) {
       setMessages([])
       setLoading(false)
       return []
     }
-    let list: DetailMessage[] = []
+    let list: ChatMessage[] = []
     try {
       const conversation = await window.electronAPI.conversation.get(conversationId)
       const parsed = conversation?.messages_json ? JSON.parse(conversation.messages_json) : []
@@ -106,8 +92,17 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
     } finally {
       setLoading(false)
     }
+    // 首次进入该任务：等消息渲染与 Markdown 排版完成后再强制滚到最新一条
+    const firstLoad = loadedTaskRef.current !== taskId
+    if (firstLoad) {
+      loadedTaskRef.current = taskId
+      window.requestAnimationFrame(() => {
+        scrollToBottom(true)
+        window.requestAnimationFrame(() => scrollToBottom(true))
+      })
+    }
     return list
-  }, [conversationId])
+  }, [conversationId, taskId, scrollToBottom])
 
   const applyLive = useCallback((next: { id: string; content: string } | null) => {
     liveRef.current = next
@@ -119,7 +114,7 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
     setRemote(next)
   }, [])
 
-  // 切换任务时重新拉取会话（同一面板内可来回查看多条已结束任务）
+  // 切换任务时重新拉取会话
   useEffect(() => {
     setLoading(true)
     applyLive(null)
@@ -127,8 +122,14 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
     void load()
   }, [load, applyLive, applyRemote])
 
+  /** 任务落到已结束状态即为已查看（面板主体已经展示了内容） */
+  useEffect(() => {
+    if (!taskId) return
+    if (task?.status === 'done' || task?.status === 'failed') markViewed(taskId)
+  }, [taskId, task?.status, markViewed])
+
   /**
-   * 外部变更/收尾落库后从 DB 重新同步。
+   * 收尾后从 DB 重新同步。
    * 库里最后一条已是助手消息即代表该轮回答已落库：收起流式临时展示，
    * 以 DB（主窗口任务）为准，避免同一段回答显示两遍。
    */
@@ -140,16 +141,17 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
     if (remoteRef.current) applyRemote(null)
   }, [load, applyLive, applyRemote])
 
-  // 继续追问的流式增量：只接受当前任务的 session
-  useEffect(() => subscribeSecretaryStream((snapshot) => {
-    if (snapshot.taskId !== task.id) return
-    applyLive({ id: snapshot.assistantMessageId, content: snapshot.content })
-    if (snapshot.streaming) return
-    setSending(false)
-    // 主窗口接入时由它收尾落库，可能晚于 done：库里还没同步到就继续显示流式内容
-    void reloadAndSettleRemote()
-    markViewed(task.id)
-  }), [task.id, applyLive, reloadAndSettleRemote, markViewed])
+  // 本地任务流式增量：只接受当前任务的 session
+  useEffect(() => {
+    if (!taskId) return
+    return subscribeSecretaryStream((snapshot) => {
+      if (snapshot.taskId !== taskId) return
+      applyLive({ id: snapshot.assistantMessageId, content: snapshot.content })
+      if (snapshot.streaming) return
+      // 主窗口接入时由它收尾落库，可能晚于 done：库里还没同步到就继续显示流式内容
+      void reloadAndSettleRemote()
+    })
+  }, [taskId, applyLive, reloadAndSettleRemote])
 
   // 主窗口（或其他窗口）在同一任务上发起会话：接入并在面板内实时展示
   useEffect(() => {
@@ -187,7 +189,7 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
     }
   }, [conversationId, reloadAndSettleRemote, applyRemote])
 
-  // 任务在任一窗口产生写入（用户消息/收尾落库）后同步消息；主窗口发送时面板同步可见
+  // 任务在任一窗口产生写入（用户消息/收尾落库）后同步消息
   useEffect(() => {
     if (!conversationId) return
     let timer = 0
@@ -205,57 +207,11 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
     }
   }, [conversationId, reloadAndSettleRemote])
 
-  // 新的问答/流式增量后滚到底部
+  // 新的问答/流式增量后跟随到底部
   useEffect(() => {
-    const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages, live?.content, remote?.content])
-
-  const handleSend = useCallback(async (text: string, files: ComposerFile[]) => {
-    if (busy || !conversationId) return
-    const prompt = text.trim()
-    if (!prompt && files.length === 0) {
-      composerRef.current?.focus()
-      return
-    }
-    setSending(true)
-    try {
-      await continueSecretaryTask({
-        taskId: task.id,
-        prompt: prompt || files[0]?.name || '',
-        attachmentPaths: files.map((f) => f.path),
-        providerId,
-        modelId,
-        enableThinking: thinking,
-      })
-      composerRef.current?.clear()
-      // 用户消息已落库，先展示出来；回答通过流式订阅补上
-      await load()
-    } catch (err: any) {
-      setSending(false)
-      if (err?.message === 'NO_PROVIDER') message.warning(t('secretary.noProvider'))
-      else message.error(t('secretary.replyFailed'))
-    }
-  }, [busy, conversationId, task.id, providerId, modelId, thinking, load, message, t])
-
-  const insertPaths = useCallback((paths: string[]) => {
-    const files: ComposerFile[] = paths
-      .filter((p) => typeof p === 'string' && p.length > 0)
-      .map((p) => ({ path: p, name: baseName(p) }))
-    if (files.length > 0) composerRef.current?.insertFiles(files)
-  }, [])
-
-  const addFiles = (fileList: FileList | null) => {
-    if (!fileList) return
-    const paths: string[] = []
-    for (let i = 0; i < fileList.length; i++) {
-      try {
-        const p = window.electronAPI.getPathForFile(fileList[i])
-        if (p) paths.push(p)
-      } catch { /* ignore */ }
-    }
-    insertPaths(paths)
-  }
+    const raf = window.requestAnimationFrame(() => scrollToBottom())
+    return () => window.cancelAnimationFrame(raf)
+  }, [messages, live?.content, remote?.content, scrollToBottom])
 
   /** 文件产物：交给系统默认软件打开 */
   const openFile = useCallback(async (filePath: string) => {
@@ -265,32 +221,15 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
 
   const rows = useMemo(() => messages.filter((m) => m.content.trim().length > 0), [messages])
 
+  // 没有活动对话时不占任何高度：默认窗口保持「头部 + 输入框」的精简形态
+  if (!task) return null
+
   return (
-    <div className="secretary-detail">
-      <div className="secretary-detail-head">
-        <Tooltip title={t('secretary.back')}>
-          <Button
-            type="text"
-            size="small"
-            icon={<ArrowLeftOutlined />}
-            style={{ color: token.colorTextTertiary }}
-            onClick={onBack}
-          />
-        </Tooltip>
-        <span className="secretary-detail-title" style={{ color: token.colorText }} title={task.title}>
+    <div className="secretary-chat">
+      <div className="secretary-chat-meta">
+        <span className="secretary-chat-title" title={task.title} style={{ color: token.colorTextTertiary }}>
           {task.title}
         </span>
-        {(task.status === 'running' || task.status === 'waiting') && (
-          <Tooltip title={t('secretary.stop')}>
-            <Button
-              type="text"
-              size="small"
-              icon={<StopOutlined />}
-              style={{ color: token.colorTextTertiary }}
-              onClick={() => void abortSecretaryTask(task.id)}
-            />
-          </Tooltip>
-        )}
         <Tooltip title={t('secretary.openInMain')}>
           <Button
             type="text"
@@ -298,32 +237,30 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
             icon={<ExportOutlined />}
             disabled={!conversationId}
             style={{ color: token.colorTextTertiary, flexShrink: 0, paddingInline: 4, fontSize: 11 }}
-            onClick={onOpenInMain}
-          >
-            {t('secretary.openInMain')}
-          </Button>
+            onClick={() => onOpenInMain(task)}
+          />
         </Tooltip>
       </div>
 
-      <div className="secretary-detail-body" ref={bodyRef}>
+      <div className="secretary-chat-body" ref={bodyRef}>
         {rows.map((m) => m.role === 'user' ? (
           <div
             key={m.id}
-            className="secretary-detail-user"
+            className="secretary-chat-user"
             style={{ background: token.colorFillTertiary, color: token.colorText }}
           >
             {m.content}
           </div>
         ) : (
-          <div key={m.id} className="secretary-detail-assistant">
+          <div key={m.id} className="secretary-chat-assistant">
             <AnswerSegment seg={{ id: m.id, type: 'answer', content: m.content }} isError={false} />
             {m.files.length > 0 && (
-              <div className="secretary-detail-files">
+              <div className="secretary-chat-files">
                 {m.files.map((file) => (
                   <button
                     key={file.path}
                     type="button"
-                    className="secretary-detail-file"
+                    className="secretary-chat-file"
                     style={{ color: token.colorLink }}
                     title={file.path}
                     onClick={() => void openFile(file.path)}
@@ -336,7 +273,7 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
           </div>
         ))}
         {live && (
-          <div className="secretary-detail-assistant">
+          <div className="secretary-chat-assistant">
             <AnswerSegment
               seg={{ id: live.id, type: 'answer', content: live.content, isStreaming: true }}
               isError={false}
@@ -344,67 +281,31 @@ const SecretaryTaskDetail: React.FC<SecretaryTaskDetailProps> = ({
           </div>
         )}
         {remote && (
-          <div className="secretary-detail-assistant">
+          <div className="secretary-chat-assistant">
             <AnswerSegment
               seg={{ id: `remote_${remote.sessionId}`, type: 'answer', content: remote.content, isStreaming: true }}
               isError={false}
             />
           </div>
         )}
-        {!loading && rows.length === 0 && !live && !remote && (
-          <div className="secretary-detail-empty" style={{ color: token.colorTextQuaternary }}>
+        {(task.status === 'running' || task.status === 'waiting') && !live && !remote && (
+          <div className="secretary-chat-typing" style={{ color: token.colorTextTertiary }}>
+            <span
+              className="secretary-spin"
+              style={{ borderTopColor: task.status === 'waiting' ? token.colorWarning : token.colorPrimary }}
+            />
+            <span>{task.status === 'waiting' ? t('secretary.waiting') : (task.step || t('secretary.working'))}</span>
+          </div>
+        )}
+        {!loading && rows.length === 0 && !live && !remote
+          && !(task.status === 'running' || task.status === 'waiting') && (
+          <div className="secretary-chat-empty" style={{ color: token.colorTextQuaternary }}>
             {t('secretary.detailEmpty')}
           </div>
         )}
-      </div>
-
-      <div className="secretary-detail-composer">
-        <SecretaryComposer
-          ref={composerRef}
-          placeholder={t('secretary.replyPlaceholder')}
-          onSend={handleSend}
-        />
-        <div className="secretary-detail-actions">
-          <Tooltip title={t('secretary.attach')}>
-            <Button
-              type="text"
-              size="small"
-              icon={<PaperClipOutlined />}
-              style={{ color: token.colorTextTertiary }}
-              onClick={() => fileRef.current?.click()}
-            />
-          </Tooltip>
-          <span
-            className="secretary-detail-hint"
-            style={{ color: token.colorTextQuaternary }}
-          >
-            {remote ? t('secretary.remoteRunning') : t('secretary.inputHint')}
-          </span>
-          <Button
-            type="primary"
-            size="small"
-            loading={sending}
-            disabled={busy}
-            icon={<SendOutlined />}
-            style={{ borderRadius: 999 }}
-            onClick={() => composerRef.current?.submit()}
-          >
-            {t('secretary.send')}
-          </Button>
-        </div>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            addFiles(e.target.files)
-            e.target.value = ''
-          }}
-        />
       </div>
     </div>
   )
 }
 
-export default SecretaryTaskDetail
+export default SecretaryChat

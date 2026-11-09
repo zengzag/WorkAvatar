@@ -189,7 +189,10 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
             <Spin size="large" description={t('kms.searching')} />
           </div>
         ) : searchResults.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('kms.noResults')} />
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={searchQuery.trim() ? t('kms.noResults') : t('kms.searchIdle')}
+          />
         ) : (
           <KMSSearchResultList
             results={searchResults}

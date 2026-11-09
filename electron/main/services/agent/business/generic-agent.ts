@@ -332,7 +332,7 @@ export class GenericAgent extends BaseAgent {
       id: 'read_reference',
       name: 'read_reference',
       title: '读取技能参考文件',
-      description: 'Read a reference file of an activated skill. Pass the skill name and the reference_path exactly as listed in the skill instructions.',
+      description: 'Read a file of an activated skill (references, prompts, tools, scripts …). reference_path may be any path relative to the skill root directory shown in the activated skill instructions.',
       parameters: {
         type: 'object',
         properties: {

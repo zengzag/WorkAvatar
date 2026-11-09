@@ -24,6 +24,7 @@ const AppearanceSettings: React.FC = () => {
             optionType="button"
             buttonStyle="solid"
             size="small"
+            data-testid="settings-theme-mode"
             onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
           >
             <Radio.Button value="light">{t('settings.light')}</Radio.Button>
@@ -38,6 +39,7 @@ const AppearanceSettings: React.FC = () => {
             optionType="button"
             buttonStyle="solid"
             size="small"
+            data-testid="settings-font-size"
             onChange={(e) => setFontSizeLevel(e.target.value as FontSizeLevel)}
           >
             <Radio.Button value="small">{t('settings.small')}</Radio.Button>
@@ -48,7 +50,7 @@ const AppearanceSettings: React.FC = () => {
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
           <Text strong style={{ fontSize: 13 }}>{t('settings.language')}</Text>
-          <Radio.Group value={locale} optionType="button" buttonStyle="solid" size="small" onChange={(e) => setLocale(e.target.value as AppLocale)}>
+          <Radio.Group value={locale} optionType="button" buttonStyle="solid" size="small" data-testid="settings-locale" onChange={(e) => setLocale(e.target.value as AppLocale)}>
             <Radio.Button value="zh-CN">中文</Radio.Button>
             <Radio.Button value="en-US">English</Radio.Button>
           </Radio.Group>

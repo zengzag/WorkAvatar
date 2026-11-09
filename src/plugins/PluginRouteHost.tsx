@@ -13,13 +13,15 @@ export function PluginRouteHost(): React.ReactElement | null {
   // 插件已卸载/未加载 → 回退到任务页（内置兜底，避免空路由）
   if (!plugin || plugin.routes.length === 0) return <Navigate to="/tasks" replace />
   return (
-    <Routes>
-      <Route path="" element={plugin.routes.find(r => r.path === '')?.element ?? <Navigate to="/tasks" replace />} />
-      {plugin.routes.filter(r => r.path !== '').map(r => (
-        <Route key={r.path} path={r.path} element={r.element} />
-      ))}
-      <Route path="*" element={<Navigate to="/tasks" replace />} />
-    </Routes>
+    <div className="wa-plugin-host">
+      <Routes>
+        <Route path="" element={plugin.routes.find(r => r.path === '')?.element ?? <Navigate to="/tasks" replace />} />
+        {plugin.routes.filter(r => r.path !== '').map(r => (
+          <Route key={r.path} path={r.path} element={r.element} />
+        ))}
+        <Route path="*" element={<Navigate to="/tasks" replace />} />
+      </Routes>
+    </div>
   )
 }
 

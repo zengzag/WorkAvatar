@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
-import type { SecretaryCharacterId } from '../shared/channels/secretary'
+import type { SecretaryCharacterId, SecretaryNotifyDismissPayload, SecretaryNotifyPayload } from '../shared/channels/secretary'
 import type {
   WorkspaceOpenInExplorerParams,
   WorkspaceListFilesParams,
@@ -87,8 +87,6 @@ import type {
   ShellBgKillResult,
   ShellBgTaskItem,
   SubAgentProfile,
-  SubAgentProfileCreateParams,
-  SubAgentProfileUpdateParams,
   SubAgentProfileResult,
   SearchApiStatus,
   SearchApiSetKeyParams,
@@ -209,6 +207,9 @@ const electronAPI = {
     attachSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ATTACH_SESSION, sessionId),
     /** 运行中会话是否已有其他窗口接入（发起方据此让出收尾落库） */
     isSessionAttached: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_SESSION_ATTACHED, sessionId) as Promise<boolean>,
+    /** 只读观察全部会话事件（小秘书显示主窗口任务执行细节，不参与接入判定） */
+    observeSessionEvents: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_OBSERVE_SESSION_EVENTS),
+    unobserveSessionEvents: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_UNOBSERVE_SESSION_EVENTS),
     /** 其他窗口发起了会话：已打开该任务的窗口据此接入并同步消息 */
     onSessionStarted: (callback: (data: { sessionId: string; employeeId?: string; conversationId?: string }) => void) => {
       const handler = (_event: any, data: { sessionId: string; employeeId?: string; conversationId?: string }) => callback(data)
@@ -350,10 +351,8 @@ const electronAPI = {
     movePetTo: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_MOVE_PET),
     /** 拖动结束：主进程吸附到边缘并持久化位置 */
     dragEnd: () => ipcRenderer.send(IPC_CHANNELS.SECRETARY_DRAG_END),
-    /** 面板内容高度变化，主进程同步窗口高度 */
-    setPanelHeight: (height: number) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_HEIGHT, height),
-    /** 面板左右边缘拖拽只调整宽度；anchor 为保持不动的那条边，高度仍由内容上报决定 */
-    setPanelSize: (size: { width?: number; anchor?: 'left' | 'right' }) =>
+    /** 面板拖拽边缘调整宽高；anchorX/anchorY 为保持不动的那条边 */
+    setPanelSize: (size: { width?: number; height?: number; anchorX?: 'left' | 'right'; anchorY?: 'top' | 'bottom' }) =>
       ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, size),
     /** 挂件窗口透明区域的鼠标穿透开关 */
     setIgnoreMouse: (ignore: boolean) => ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_IGNORE_MOUSE, ignore),
@@ -389,6 +388,24 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
     },
+    /** 宿主通知改由小秘书承接时推送到挂件窗/面板窗 */
+    onNotify: (callback: (payload: SecretaryNotifyPayload) => void) => {
+      const handler = (_event: any, payload: SecretaryNotifyPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_NOTIFY, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_NOTIFY, handler)
+    },
+    /** 交互请求已被处理：按 clickId 撤回对应的通知条目与气泡 */
+    onNotifyDismiss: (callback: (payload: SecretaryNotifyDismissPayload) => void) => {
+      const handler = (_event: any, payload: SecretaryNotifyDismissPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_NOTIFY_DISMISS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_NOTIFY_DISMISS, handler)
+    },
+    /** 面板通知条目点击：聚焦主窗口并按 clickTarget/clickId 跳转（source 决定插件点击路由） */
+    openNotice: (payload: { clickTarget?: string; clickId?: string; source?: string }) =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_NOTIFY_CLICK, payload),
+    /** 渲染端挂载完成：主进程据此开始投递通知（并补发加载期间积压的通知） */
+    notifyReady: (kind: 'pet' | 'panel') =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_WINDOW_READY, kind),
   },
 
   tool: {
@@ -589,6 +606,12 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.INTERACTION_REQUEST, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_REQUEST, handler)
     },
+    /** 主进程侧请求已失效（超时/会话结束）：按 id 关闭对应弹窗 */
+    onDismiss: (callback: (payload: { id: string }) => void) => {
+      const handler = (_event: any, payload: { id: string }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.INTERACTION_DISMISS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_DISMISS, handler)
+    },
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
     /** 关闭/开启"本轮任务不再提醒"高权限模式（conversationId 优先，无 DB 会话时传 sessionId） */
@@ -671,10 +694,6 @@ const electronAPI = {
   // 子智能体模板（SubAgentProfile）管理
   subagent: {
     listProfiles: () => ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_LIST) as Promise<SubAgentProfile[]>,
-    createProfile: (params: SubAgentProfileCreateParams) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_CREATE, params) as Promise<SubAgentProfileResult>,
-    updateProfile: (params: SubAgentProfileUpdateParams) =>
-      ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_UPDATE, params) as Promise<SubAgentProfileResult>,
     deleteProfile: (id: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_PROFILE_DELETE, id) as Promise<SubAgentProfileResult>,
   },
@@ -689,6 +708,7 @@ export type ElectronAPI = typeof electronAPI & {
   getPathForFile: (file: File) => string
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
+    onDismiss: (callback: (payload: { id: string }) => void) => () => void
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) => Promise<{ success: boolean }>
     setTaskHighPermission: (params: { conversationId?: string; sessionId?: string; enabled: boolean }) => Promise<{ success: boolean; error?: string }>
   }

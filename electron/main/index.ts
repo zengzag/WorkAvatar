@@ -40,6 +40,15 @@ process.on('uncaughtException', (error) => {
   }, 1000)
 })
 
+// E2E 测试：独立数据目录 + 独立 userData，保证多实例隔离且不污染真实数据
+const e2eDataDir = process.env.WORKAVATAR_DATA_DIR
+if (e2eDataDir) {
+  const userDataDir = path.join(e2eDataDir, 'electron')
+  fs.mkdirSync(userDataDir, { recursive: true })
+  app.setPath('userData', userDataDir)
+  app.setPath('sessionData', path.join(userDataDir, 'session'))
+}
+
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
@@ -177,7 +186,10 @@ if (gotTheLock) {
 
 // 设置应用名称，用于系统通知中标识程序名（macOS/Linux 直接生效，Windows 配合 AUMID 生效）
 app.setName('WorkAvatar')
-app.setAppUserModelId('com.workavatar.desktop')
+// 开发运行必须用 electron.exe 路径作为 AUMID：Windows 按 AUMID 匹配开始菜单快捷方式做通知展示与点击激活，
+// 若开发态也占用正式 AUMID，会在开始菜单留下指向 electron.exe 的同名快捷方式，接管正式安装版的通知
+//（通知显示为 Electron，点击启动一个裸 Electron 窗口）
+app.setAppUserModelId(app.isPackaged ? 'com.workavatar.desktop' : process.execPath)
 
 /**
  * 内嵌网页权限策略：默认授权。
@@ -260,6 +272,8 @@ function registerWebviewGuard(): void {
 registerWebviewGuard()
 
 const isDev = !app.isPackaged
+/** E2E 测试模式：加载已构建产物而非 dev server，且不自动打开 DevTools */
+const isE2E = process.env.WORKAVATAR_E2E === '1'
 
 // 注册 app-file:// 特权协议，让渲染进程能通过 URL 访问本地文件（用于 file-viewer 预览）
 // 注册 plugin:// 特权协议，供渲染端动态 import 插件 ESM 入口（CORS 放行跨源模块加载）
@@ -551,7 +565,7 @@ async function createWindow() {
 
   mainWindow.on('ready-to-show', () => {
     startupMark('主窗口 ready-to-show（首帧绘制）')
-    if (isDev) {
+    if (isDev && !isE2E) {
       mainWindow?.webContents.openDevTools()
     }
   })
@@ -582,7 +596,7 @@ async function createWindow() {
   // 主窗口纳入插件广播目标（插件 ctx.ipc.broadcast 推送范围）
   PluginHostService.getInstance().addTarget(mainWindow)
 
-  if (isDev) {
+  if (isDev && !isE2E) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
     mainWindow.loadFile(getDistPath('dist', 'index.html'))
@@ -722,6 +736,11 @@ app.whenReady().then(() => {
     SecretaryWindowService.getInstance().init(mainWindow)
     // 小秘书显隐变化后刷新托盘菜单文案（显示/隐藏）
     SecretaryWindowService.getInstance().setStateListener(() => updateTrayMenu())
+    // 小秘书启用时承接宿主通知（日历提醒/自动化完成/ask_user 等），关闭时还原系统通知
+    NotificationService.getInstance().setSecretaryNotifier((payload) => {
+      const secretary = SecretaryWindowService.getInstance()
+      return secretary.isEnabled() && secretary.deliverNotification(payload)
+    })
   }
 
   // Windows/Linux 首次启动时从 argv 提取 .md 文件（macOS 走 open-file 事件）

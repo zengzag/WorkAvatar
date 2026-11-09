@@ -36,6 +36,8 @@ const FileRow: React.FC<{
   return (
     <WorkspaceEntryMenu path={entry.path} onPreview={() => onOpenFile(entry)}>
       <div
+        data-testid="workspace-file"
+        data-path={entry.path}
         onClick={() => onOpenFile(entry)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -64,6 +66,8 @@ const DirectoryNode: React.FC<{
     <>
       <WorkspaceEntryMenu path={entry.path} isDirectory>
         <div
+          data-testid="workspace-dir"
+          data-path={entry.path}
           onClick={() => toggleDirExpanded(entry.path)}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}

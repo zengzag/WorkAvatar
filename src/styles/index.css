@@ -4,50 +4,12 @@
   box-sizing: border-box;
 }
 
+/* 字号档位由外观设置驱动；语义色与材质令牌统一在 theme.css 维护 */
 :root {
   --font-size-base: 13px;
   --font-size-sm: 12px;
   --font-size-lg: 15px;
   --font-size-xl: 18px;
-  --bg-primary: #f3f6fb;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f7f9fd;
-  --border-color: #dfe6f0;
-  --text-primary: #101828;
-  --text-secondary: #4a5568;
-  --text-tertiary: #667085;
-  --shadow-color: rgba(16, 24, 40, 0.04);
-  --xy-node-background-color-default: transparent;
-  --xy-node-border-default: none;
-  --xy-controls-button-background-color-default: #ffffff;
-  --xy-controls-button-background-color-hover-default: #f7f9fd;
-  --xy-controls-button-border-color-default: #dfe6f0;
-  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
-  --xy-minimap-background-color-default: #ffffff;
-  --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
-  --xy-minimap-mask-stroke-color-default: #d9d9d9;
-  --xy-background-pattern-dot-color-default: #d9d9d9;
-}
-
-html.dark {
-  --bg-primary: #07090d;
-  --bg-secondary: #0f1218;
-  --bg-tertiary: #141925;
-  --border-color: #2a3342;
-  --text-primary: #e9eef8;
-  --text-secondary: #a7b1c2;
-  --text-tertiary: #7e8a9d;
-  --shadow-color: rgba(0, 0, 0, 0.3);
-  --xy-node-background-color-default: transparent;
-  --xy-node-border-default: none;
-  --xy-controls-button-background-color-default: #2a2a2a;
-  --xy-controls-button-background-color-hover-default: #353535;
-  --xy-controls-button-border-color-default: #404040;
-  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.3);
-  --xy-minimap-background-color-default: #1f1f1f;
-  --xy-minimap-mask-background-color-default: rgba(255, 255, 255, 0.08);
-  --xy-minimap-mask-stroke-color-default: #555;
-  --xy-background-pattern-dot-color-default: #3a3a3a;
 }
 
 body {
@@ -57,8 +19,9 @@ body {
   font-size: var(--font-size-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  color: var(--text-primary);
-  background-color: var(--bg-primary);
+  color: var(--wa-ink);
+  background-color: var(--wa-bg);
+  overflow: hidden;
 }
 
 /* 应用是固定视口壳层，根元素必须钉成"不可滚动的视口大小"：
@@ -73,160 +36,15 @@ html {
   overflow: hidden;
 }
 
-body {
+#root {
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
-}
-
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
-  border-radius: 4px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.2);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border: 2px solid transparent;
-  background-clip: padding-box;
-}
-
-.ant-table-wrapper .ant-table {
-  scrollbar-color: auto !important;
-}
-
-.ant-table-wrapper .ant-table::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.ant-table-wrapper .ant-table::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ant-table-wrapper .ant-table::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
-}
-
-.ant-table-wrapper .ant-table::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-html.dark .ant-table-wrapper .ant-table::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-html.dark .ant-table-wrapper .ant-table::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.ant-table-body::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.ant-table-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ant-table-body::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
-}
-
-.ant-table-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-html.dark .ant-table-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-html.dark .ant-table-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.rc-virtual-list-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15) !important;
-  border-radius: 3px !important;
-}
-
-html.dark .rc-virtual-list-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15) !important;
-}
-
-.ant-drawer-body::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.ant-drawer-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ant-drawer-body::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
-}
-
-.ant-drawer-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-html.dark .ant-drawer-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-html.dark .ant-drawer-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.ant-modal-body::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.ant-modal-body::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ant-modal-body::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
-}
-
-.ant-modal-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-html.dark .ant-modal-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
 }
 
 /* 待办快速添加输入框：抹掉 antd TextArea 自带聚焦样式 */
 .quick-add-input::placeholder {
-  color: var(--text-tertiary, rgba(0, 0, 0, 0.45));
+  color: var(--wa-ink-3);
 }
 
 .ant-input.quick-add-input,
@@ -244,39 +62,30 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb {
   box-shadow: none !important;
 }
 
-html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-#root {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-}
-
+/* React Flow：节点本身透明，由业务节点自带表面 */
 .react-flow__controls-button {
-  background: var(--xy-controls-button-background-color-default);
-  border-color: var(--xy-controls-button-border-color-default);
-  color: var(--text-primary);
+  background: var(--wa-panel);
+  border-color: var(--wa-line);
+  color: var(--wa-ink);
 }
 
 .react-flow__controls-button:hover {
-  background: var(--xy-controls-button-background-color-hover-default);
+  background: var(--wa-panel-2);
 }
 
 .react-flow__controls-button svg {
-  fill: var(--text-primary);
+  fill: var(--wa-ink);
 }
 
 .react-flow__minimap {
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: var(--xy-controls-box-shadow-default);
+  box-shadow: 0 0 2px 1px rgba(0, 0, 0, 0.06);
 }
 
 .react-flow__minimap-mask {
-  fill: var(--xy-minimap-mask-background-color-default);
-  stroke: var(--xy-minimap-mask-stroke-color-default);
+  fill: var(--wa-surface-inset);
+  stroke: var(--wa-line);
 }
 
 .react-flow__node {

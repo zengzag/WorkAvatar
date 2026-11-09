@@ -39,6 +39,8 @@ class NotificationService {
   private static instance: NotificationService
   private mainWindow: BrowserWindow | null = null
   private ipcRegistered = false
+  /** 小秘书接管通知的投递器（启用时返回 true）；未注入或未启用时保持原有通知链路 */
+  private secretaryNotifier: ((payload: NotifyPayload) => boolean) | null = null
 
   private constructor() {}
 
@@ -51,6 +53,11 @@ class NotificationService {
 
   setMainWindow(win: BrowserWindow | null): void {
     this.mainWindow = win
+  }
+
+  /** 注入小秘书通知投递器：小秘书启用时由它承接通知，宿主不再发系统/主窗口通知 */
+  setSecretaryNotifier(fn: ((payload: NotifyPayload) => boolean) | null): void {
+    this.secretaryNotifier = fn
   }
 
   /** 主窗口当前是否处于"用户可见但未激活"状态——需要弹系统通知的判定依据 */
@@ -71,6 +78,13 @@ class NotificationService {
   notify(payload: NotifyPayload): boolean {
     if (!payload || !payload.title) return false
     this.ensureIpcRegistered()
+
+    // 小秘书启用时接管全部宿主通知：只走挂件气泡 + 面板通知列表，避免与系统通知重复
+    try {
+      if (this.secretaryNotifier?.(payload)) return true
+    } catch (err: any) {
+      logger.warn('Secretary notify failed, fallback to default channel:', err?.message || err)
+    }
 
     const pluginId = pluginIdFromSource(payload.source)
     const inactive = this.isMainWindowInactive()

@@ -1,7 +1,5 @@
 import { Typography, Tooltip, App, Image, theme } from 'antd'
 import {
-  DownOutlined,
-  RightOutlined,
   LoadingOutlined,
   CloseCircleOutlined,
   CopyOutlined,
@@ -13,7 +11,8 @@ import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 import { formatDuration } from '../../utils/format'
 import { getToolIconKey } from '../../utils/tool-display'
 import { getCategoryIcon } from '../common/tool-category-icons'
-import PreviewLine from './PreviewLine'
+import { summarizeToolCall } from '../../utils/tool-call-summary'
+import SegmentRow from './SegmentRow'
 
 const { Text } = Typography
 
@@ -151,15 +150,17 @@ const ToolCallSegmentInner: React.FC<{
         // 取消/失败时 toolArgs 可能为空（JSON 不完整无法解析），回退到 raw 展示已生成部分
         : (seg.toolArgsRaw || ''))
 
-  // 折叠态预览：仅输出进行中（参数流式/执行中）显示，完成后不显示
+  // 行摘要：执行中优先展示实时进度，结束后展示本次调用的目标（文件名/命令/查询词）
   const lastProgress = seg.toolProgress && seg.toolProgress.length > 0
     ? seg.toolProgress[seg.toolProgress.length - 1]
     : null
+  const argsSummary = summarizeToolCall(seg.toolName, seg.toolArgs ?? seg.toolArgsRaw)
   const previewText = isArgsStreaming
-    ? (seg.toolArgsRaw || '')
+    ? argsSummary
     : (isToolError || seg.isToolComplete)
       ? ''
       : [lastProgress?.action, lastProgress?.detail].filter(Boolean).join(' — ')
+  const rowDetail = previewText || argsSummary
 
   const jsonColors = {
     key: token.colorPrimary,
@@ -243,61 +244,30 @@ const ToolCallSegmentInner: React.FC<{
   ) : null
 
   const header = (
-    <div
+    <SegmentRow
+      expanded={isExpanded}
+      icon={getCategoryIcon(seg.toolName ? getToolIconKey(seg.toolName) : undefined)}
+      title={seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
+      titleColor={isToolError ? token.colorError : undefined}
+      detail={rowDetail}
+      meta={
+        <>
+          {seg.parallelTotal && seg.parallelTotal > 1 && (
+            <span>{t('workbench.runGroupTotal', { count: seg.parallelTotal })}</span>
+          )}
+          {duration !== null && <span>{t('workbench.executionTime', { time: duration })}</span>}
+        </>
+      }
+      status={statusEl}
       onClick={onToggle}
-      style={{
-        padding: '5px 0',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        cursor: 'pointer',
-        userSelect: 'none',
-      }}
-    >
-      {isExpanded ? (
-        <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-      ) : (
-        <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-      )}
-      {/* 有分组时用该分组的图标（与员工设置一致），未分组回退小扳手 */}
-      <span style={{ display: 'inline-flex', flexShrink: 0, fontSize: 12, color: isToolError ? token.colorError : token.colorTextTertiary }}>
-        {getCategoryIcon(seg.toolName ? getToolIconKey(seg.toolName) : undefined)}
-      </span>
-      <Text style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
-      </Text>
-      {/* 并行派发卡：展示本次派发的子任务总数（挂在派发卡而非首个委托卡，避免歧义） */}
-      {seg.parallelTotal && seg.parallelTotal > 1 && (
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0 }}>
-          {t('workbench.runGroupTotal', { count: seg.parallelTotal })}
-        </Text>
-      )}
-      {!isExpanded && previewText && (
-        <PreviewLine
-          text={previewText}
-          fontSize={11}
-          lineHeight={16}
-          color={token.colorTextQuaternary}
-        />
-      )}
-      {duration !== null && (
-        <Text className="dm-toolcall-extra" style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0 }}>
-          {t('workbench.executionTime', { time: duration })}
-          {resultStr && ` · ${t('workbench.chars', { chars: resultStr.length })}`}
-        </Text>
-      )}
-      {statusEl}
-    </div>
+    />
   )
 
   if (isExpanded) {
     return (
       <div style={{ marginBottom: 2, containerType: 'inline-size' }}>
         {header}
-        <div style={{ position: 'relative' }}>
-          {/* 竖线与展开 icon 同列，从 icon 正下方延伸贯穿内容区 */}
-          <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
-          <div style={{ position: 'relative', padding: '0 10px 8px 24px' }}>
+        <div className="wa-seg-body">
             {argsStr && (
               <div style={{ marginBottom: seg.toolResult !== undefined ? 10 : 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -314,24 +284,13 @@ const ToolCallSegmentInner: React.FC<{
                       />
                     </Tooltip>
                   )}
-                  {isArgsStreaming && (
-                    <Text type="secondary" style={{ fontSize: 10 }}>
-                      {argsStr.length} chars
-                    </Text>
-                  )}
                 </div>
-                <pre ref={argsScrollRef} onScroll={argsOnScroll} style={{
+                <pre ref={argsScrollRef} onScroll={argsOnScroll} className="wa-detail-block" style={{
                   margin: 0,
-                  padding: '8px 10px',
-                  background: 'var(--wa-code-bg)',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                  maxHeight: 120,
+                  maxHeight: 140,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
                   {isArgsStreaming ? argsStr : renderHighlighted(argsStr)}
                 </pre>
@@ -342,15 +301,10 @@ const ToolCallSegmentInner: React.FC<{
                 <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
                   {t('workbench.toolProgress')}
                 </Text>
-                <div ref={progressScrollRef} onScroll={progressOnScroll} style={{
-                  padding: '6px 10px',
-                  background: 'var(--wa-code-bg)',
-                  borderRadius: 6,
-                  fontSize: 11,
-                  lineHeight: 1.6,
-                  maxHeight: 120,
+                <div ref={progressScrollRef} onScroll={progressOnScroll} className="wa-detail-block" style={{
+                  maxHeight: 140,
                   overflow: 'auto',
-                  border: `1px solid ${token.colorBorderSecondary}`,
+                  fontSize: 11,
                 }}>
                   {seg.toolProgress.map((step: any, i: number) => {
                     return (
@@ -416,31 +370,29 @@ const ToolCallSegmentInner: React.FC<{
                     />
                   </Tooltip>
                 </div>
-                <pre style={{
+                <pre className="wa-detail-block" style={{
                   margin: 0,
-                  padding: '8px 10px',
-                  background: 'var(--wa-code-bg)',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                  maxHeight: 190,
+                  maxHeight: 220,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
                   {renderHighlighted(resultStr)}
                 </pre>
               </div>
             )}
-          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div style={{ marginBottom: 2, containerType: 'inline-size' }}>
+    <div
+      data-testid="tool-call-segment"
+      data-tool-name={seg.toolName || ''}
+      data-status={seg.toolIsError || seg.toolError ? 'error' : 'ok'}
+      style={{ marginBottom: 2, containerType: 'inline-size' }}
+    >
       {header}
     </div>
   )

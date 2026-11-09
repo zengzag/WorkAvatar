@@ -392,7 +392,7 @@ class KMSIndexWorkerClientService {
     const apiKeys = await this.collectDecryptedApiKeys()
     // 主进程判断的 isDev 透传给 worker，避免 worker 中访问 electron.app.isPackaged
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const isDev = !require('electron').app.isPackaged
+    const isDev = !require('electron').app.isPackaged || process.env.WORKAVATAR_E2E === '1'
     // 透传当前日志文件路径，让 Worker 复用同一文件，避免日志碎片化
     const logFilePath = LoggerBackend.getInstance().getLogFilePath()
 

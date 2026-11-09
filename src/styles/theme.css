@@ -5,14 +5,14 @@
  */
 
 :root {
-  --wa-bg: #f3f6fb;
+  --wa-bg: #e9eef7;
   --wa-panel: #ffffff;
   --wa-panel-2: #f7f9fd;
   --wa-panel-3: #eaeff7;
-  --wa-line: #dfe6f0;
-  --wa-line-2: #edf1f7;
+  --wa-line: #dbe3ef;
+  --wa-line-2: #e9eef6;
 
-  --wa-ink: #101828;
+  --wa-ink: #0f1729;
   --wa-ink-2: #4a5568;
   --wa-ink-3: #667085;
   --wa-ink-4: #98a2b3;
@@ -21,24 +21,70 @@
   --wa-accent-hover: #3d8bff;
   --wa-accent-soft: rgba(22, 119, 255, 0.09);
   --wa-accent-line: rgba(22, 119, 255, 0.28);
+  --wa-danger: #cf222e;
+  --wa-danger-hover: #dc3d43;
 
-  --wa-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.7));
-  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.4);
-  --wa-glass-lift: 0 24px 50px -40px rgba(20, 32, 64, 0.4), 0 2px 10px -8px rgba(20, 32, 64, 0.12);
-  --wa-ambient-a: rgba(22, 119, 255, 0.085);
-  --wa-ambient-b: rgba(56, 189, 248, 0.065);
-  --wa-ambient-c: rgba(0, 194, 224, 0.045);
-  --wa-noise-opacity: 0.022;
+  /* ---- 液态玻璃材质（明色）：无色透明叠层 + 三道内侧高光边 ----
+     色调全部来自背后的环境光，玻璃本身不染色，避免与背景色彩混成灰泥。 */
+  --wa-glass-tint: linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(246, 250, 255, 0.34));
+  --wa-glass-tint-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(248, 251, 255, 0.46));
+  --wa-glass-rim-top: rgba(255, 255, 255, 0.9);
+  --wa-glass-rim-hairline: rgba(255, 255, 255, 0.42);
+  --wa-glass-rim-bottom: rgba(255, 255, 255, 0.18);
+  --wa-glass-border: rgba(22, 34, 64, 0.13);
+  --wa-glass-shadow: 0 26px 60px -34px rgba(20, 32, 64, 0.42), 0 6px 18px -12px rgba(20, 32, 64, 0.16);
+  --wa-glass-menu-surface: #f7f9fd;
+  --wa-glass-menu-shadow: 0 18px 46px -26px rgba(20, 32, 64, 0.4), 0 4px 12px -8px rgba(20, 32, 64, 0.14);
+  --wa-glass-scrim: rgba(16, 24, 40, 0.3);
+  --wa-glass-blur: blur(4px) saturate(128%);
 
-  --wa-user-bubble: #e9f0fa;
+  /* 兼容旧变量名（壳层沿用） */
+  --wa-glass-sheen: inset 0 1px 0 var(--wa-glass-rim-top), inset 0 0 0 1px var(--wa-glass-rim-hairline), inset 0 -1px 0 var(--wa-glass-rim-bottom);
+  --wa-glass-lift: var(--wa-glass-shadow);
+
+  /* 内容面：任务页主舞台、卡片等实色或微透明表面，不做模糊 */
+  --wa-content-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(251, 253, 255, 0.78));
+  --wa-surface-inset: rgba(16, 24, 40, 0.045);
+  --wa-surface-inset-hover: rgba(16, 24, 40, 0.075);
+
+  /* 内容区漂浮面：工作区面板的入口卡片 / 标签芯片等，实色 + 单层柔影，不做玻璃渐变 */
+  --wa-raised-bg: #ffffff;
+  --wa-raised-bg-hover: #ffffff;
+  --wa-raised-border: rgba(22, 34, 64, 0.08);
+  --wa-raised-border-hover: rgba(22, 119, 255, 0.26);
+  --wa-raised-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 10px 22px -18px rgba(16, 24, 40, 0.28);
+  --wa-raised-shadow-hover: 0 2px 4px rgba(16, 24, 40, 0.06), 0 16px 30px -22px rgba(16, 24, 40, 0.3);
+
+  /* 环境光：玻璃显现色彩的唯一来源，只做轻微不均匀，避免抢走正文注意力 */
+  --wa-mesh-violet: rgba(126, 92, 255, 0.09);
+  --wa-mesh-pink: rgba(255, 96, 170, 0.06);
+  --wa-mesh-cyan: rgba(38, 198, 224, 0.07);
+  --wa-mesh-blue: rgba(22, 119, 255, 0.055);
+  --wa-noise-opacity: 0.02;
+
+  --wa-user-bubble: linear-gradient(180deg, #dceafb, #cfdff8);
   --wa-card-bg: #ffffff;
   --wa-code-bg: #f5f8fd;
   --wa-selection: rgba(22, 119, 255, 0.18);
   --wa-hover: rgba(16, 24, 40, 0.05);
-  --wa-focus: 0 0 0 3px rgba(22, 119, 255, 0.16);
+  --wa-focus: 0 0 0 2px rgba(22, 119, 255, 0.1);
 
-  --wa-ease: cubic-bezier(0.22, 0.8, 0.24, 1);
   --wa-radius: 7px;
+  --wa-radius-sm: 6px;
+  --wa-radius-md: 10px;
+  --wa-radius-lg: 16px;
+  --wa-radius-xl: 22px;
+  --wa-ease: cubic-bezier(0.22, 0.8, 0.24, 1);
+  --wa-spring: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* 旧版通用变量别名：插件与历史组件仍在使用，统一指向新语义令牌 */
+  --bg-primary: var(--wa-bg);
+  --bg-secondary: var(--wa-panel);
+  --bg-tertiary: var(--wa-panel-2);
+  --border-color: var(--wa-line);
+  --text-primary: var(--wa-ink);
+  --text-secondary: var(--wa-ink-2);
+  --text-tertiary: var(--wa-ink-3);
 
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
@@ -69,21 +115,56 @@ html.dark {
   --wa-accent-hover: #69b1ff;
   --wa-accent-soft: rgba(64, 150, 255, 0.14);
   --wa-accent-line: rgba(64, 150, 255, 0.32);
+  --wa-danger: #c93c45;
+  --wa-danger-hover: #d95059;
 
-  --wa-glass-bg: linear-gradient(180deg, rgba(23, 28, 39, 0.8), rgba(12, 15, 22, 0.72));
-  --wa-glass-sheen: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.025);
-  --wa-glass-lift: 0 28px 60px -42px rgba(0, 0, 0, 1), 0 2px 12px -10px rgba(0, 0, 0, 0.85);
-  --wa-ambient-a: rgba(64, 150, 255, 0.13);
-  --wa-ambient-b: rgba(56, 189, 248, 0.08);
-  --wa-ambient-c: rgba(13, 148, 196, 0.06);
+  /* 暗色玻璃：同样是 6% 无色彩层，只把边光调亮——暗背景里边缘本身就是层次 */
+  --wa-glass-tint: linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.04));
+  --wa-glass-tint-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
+  --wa-glass-rim-top: rgba(255, 255, 255, 0.24);
+  --wa-glass-rim-hairline: rgba(255, 255, 255, 0.08);
+  --wa-glass-rim-bottom: rgba(255, 255, 255, 0.05);
+  --wa-glass-border: rgba(255, 255, 255, 0.12);
+  --wa-glass-shadow: 0 28px 64px -34px rgba(0, 0, 0, 0.95), 0 4px 16px -10px rgba(0, 0, 0, 0.8);
+  --wa-glass-menu-surface: #16161b;
+  --wa-glass-menu-shadow: 0 20px 50px -24px rgba(0, 0, 0, 0.8), 0 4px 12px -8px rgba(0, 0, 0, 0.6);
+  --wa-glass-scrim: rgba(0, 0, 0, 0.55);
+  --wa-glass-blur: blur(4px) saturate(128%);
+
+  --wa-glass-sheen: inset 0 1px 0 var(--wa-glass-rim-top), inset 0 0 0 1px var(--wa-glass-rim-hairline), inset 0 -1px 0 var(--wa-glass-rim-bottom);
+  --wa-glass-lift: var(--wa-glass-shadow);
+
+  --wa-content-bg: linear-gradient(180deg, rgba(15, 19, 26, 0.84), rgba(8, 11, 15, 0.78));
+  --wa-surface-inset: rgba(255, 255, 255, 0.055);
+  --wa-surface-inset-hover: rgba(255, 255, 255, 0.09);
+
+  --wa-raised-bg: #171d29;
+  --wa-raised-bg-hover: #1c2331;
+  --wa-raised-border: rgba(255, 255, 255, 0.07);
+  --wa-raised-border-hover: rgba(255, 255, 255, 0.16);
+  --wa-raised-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 14px 30px -24px rgba(0, 0, 0, 0.9);
+  --wa-raised-shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 18px 36px -24px rgba(0, 0, 0, 0.95);
+
+  --wa-mesh-violet: rgba(126, 92, 255, 0.13);
+  --wa-mesh-pink: rgba(255, 96, 170, 0.09);
+  --wa-mesh-cyan: rgba(38, 198, 224, 0.09);
+  --wa-mesh-blue: rgba(22, 119, 255, 0.1);
   --wa-noise-opacity: 0.03;
 
-  --wa-user-bubble: #1a2230;
+  --wa-user-bubble: linear-gradient(180deg, #1e3049, #17283e);
   --wa-card-bg: #141925;
   --wa-code-bg: #0b0e14;
   --wa-selection: rgba(64, 150, 255, 0.3);
   --wa-hover: rgba(255, 255, 255, 0.055);
-  --wa-focus: 0 0 0 3px rgba(64, 150, 255, 0.2);
+  --wa-focus: 0 0 0 2px rgba(64, 150, 255, 0.14);
+
+  --bg-primary: var(--wa-bg);
+  --bg-secondary: var(--wa-panel);
+  --bg-tertiary: var(--wa-panel-2);
+  --border-color: var(--wa-line);
+  --text-primary: var(--wa-ink);
+  --text-secondary: var(--wa-ink-2);
+  --text-tertiary: var(--wa-ink-3);
 
   --xy-controls-button-background-color-default: #1a2130;
   --xy-controls-button-background-color-hover-default: #232c3d;
@@ -103,7 +184,9 @@ html.dark {
   background: var(--wa-bg);
 }
 
-/* 环境光：三层低饱和光场 + 极细噪点，让玻璃层有可感知的深度与材质 */
+/* 环境光：低饱和光场 + 极细噪点。
+   这是玻璃能"显色"的唯一来源——玻璃本身无色，只折射背后的光。
+   光场只做边角处的轻微不均匀，页面中部保持干净，避免与正文争夺注意力。 */
 #root::before {
   content: '';
   position: fixed;
@@ -111,9 +194,10 @@ html.dark {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(760px 460px at 8% -12%, var(--wa-ambient-a), transparent 60%),
-    radial-gradient(620px 380px at 98% -8%, var(--wa-ambient-b), transparent 62%),
-    radial-gradient(1100px 700px at 50% 120%, var(--wa-ambient-c), transparent 70%);
+    radial-gradient(48rem 34rem at 10% -4%, var(--wa-mesh-violet), transparent 66%),
+    radial-gradient(40rem 28rem at 96% 2%, var(--wa-mesh-cyan), transparent 68%),
+    radial-gradient(42rem 30rem at 88% 100%, var(--wa-mesh-pink), transparent 68%),
+    radial-gradient(36rem 26rem at 2% 102%, var(--wa-mesh-blue), transparent 68%);
 }
 
 #root::after {
@@ -137,6 +221,177 @@ html.dark {
   z-index: 1;
 }
 
+/* ---------- 液态玻璃材质 ----------
+   玻璃分档使用：壳层/工具条用 .wa-glass（折射 + 边缘高光），
+   小徽标用 .wa-glass-chip（仅染色与模糊，数量多、尺寸小），
+   浮层菜单用 .wa-glass-menu（重模糊 + 表面洗涤，保证文字可读）。
+   内容卡片保持实色，不做玻璃。 */
+
+.wa-glass {
+  position: relative;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg);
+  background: var(--wa-glass-tint);
+  box-shadow:
+    var(--wa-glass-shadow),
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px var(--wa-glass-rim-hairline),
+    inset 0 -1px 0 var(--wa-glass-rim-bottom);
+  backdrop-filter: var(--wa-glass-blur);
+  -webkit-backdrop-filter: var(--wa-glass-blur);
+}
+
+.wa-glass-interactive {
+  transition:
+    background 0.18s var(--wa-ease),
+    box-shadow 0.18s var(--wa-ease),
+    transform 0.18s var(--wa-spring);
+}
+
+.wa-glass-interactive:hover {
+  background: var(--wa-glass-tint-hover);
+}
+
+.wa-glass-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: 999px;
+  background: var(--wa-glass-tint);
+  box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
+  backdrop-filter: blur(8px) saturate(130%);
+  -webkit-backdrop-filter: blur(8px) saturate(130%);
+  color: var(--wa-ink-2);
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.wa-glass-menu {
+  background: color-mix(in srgb, var(--wa-glass-menu-surface) 78%, transparent);
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-md);
+  box-shadow: var(--wa-glass-menu-shadow), inset 0 1px 0 var(--wa-glass-rim-top);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+}
+
+/* 玻璃面板内的控件：不叠加第二层玻璃表面，只用间距与低透明度凹槽表达层级 */
+.ant-btn.wa-icon-btn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--wa-ink-3);
+  cursor: pointer;
+  transition: background 0.15s var(--wa-ease), color 0.15s var(--wa-ease), border-color 0.15s var(--wa-ease);
+}
+
+.ant-btn.wa-icon-btn:hover {
+  background: var(--wa-surface-inset) !important;
+  border-color: var(--wa-glass-border);
+  color: var(--wa-ink) !important;
+}
+
+.ant-btn.wa-icon-btn:active {
+  transform: scale(0.96);
+}
+
+.ant-btn.wa-icon-btn:focus-visible {
+  outline: 2px solid var(--wa-accent);
+  outline-offset: 1px;
+}
+
+.ant-btn.wa-icon-btn.is-active {
+  color: var(--wa-accent) !important;
+  background: var(--wa-accent-soft) !important;
+  border-color: var(--wa-accent-line);
+}
+
+.wa-field {
+  border: 1px solid transparent;
+  border-radius: var(--wa-radius-md);
+  background: var(--wa-surface-inset);
+  transition: background 0.16s var(--wa-ease), border-color 0.16s var(--wa-ease), box-shadow 0.16s var(--wa-ease);
+}
+
+.wa-field:hover {
+  background: var(--wa-surface-inset-hover);
+}
+
+.wa-field:focus-within {
+  background: color-mix(in srgb, var(--wa-accent-soft) 55%, var(--wa-surface-inset));
+  border-color: var(--wa-accent-line);
+  box-shadow: var(--wa-focus);
+}
+
+.wa-hairline {
+  border-color: var(--wa-line-2);
+}
+
+/* 无障碍：降低透明度或提高对比度时，玻璃退化为实色表面 */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .wa-glass,
+  .wa-glass-chip,
+  .wa-glass-menu,
+  .wa-task-sidebar,
+  .wa-workspace-panel,
+  .wa-composer,
+  .app-sider,
+  .wa-titlebar,
+  .wa-settings-tabs .ant-tabs-nav,
+  .ant-dropdown .ant-dropdown-menu,
+  .ant-select-dropdown,
+  .ant-popover-inner {
+    background: var(--wa-panel) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* 不支持 backdrop-filter 时（旧版 WebView / 被禁用）退化为不透明表面，保证文字可读 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .wa-glass,
+  .wa-glass-chip,
+  .wa-glass-menu,
+  .wa-task-sidebar,
+  .wa-workspace-panel,
+  .wa-composer,
+  .app-sider,
+  .wa-titlebar,
+  .wa-settings-tabs .ant-tabs-nav,
+  .ant-dropdown .ant-dropdown-menu,
+  .ant-select-dropdown,
+  .ant-picker-dropdown .ant-picker-panel-container,
+  .ant-popover-inner,
+  .ant-drawer .ant-drawer-content,
+  .ant-modal .ant-modal-content {
+    background: var(--wa-panel) !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .wa-glass,
+  .wa-task-sidebar,
+  .wa-workspace-panel,
+  .wa-composer {
+    background: Canvas !important;
+    border: 1px solid ButtonText;
+    box-shadow: none;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
 /* 小秘书透明浮窗：根节点底板与环境光层必须去掉，否则整窗是一块不透明底 */
 html.wa-secretary-window,
 html.wa-secretary-window body,
@@ -151,13 +406,39 @@ html.wa-secretary-window #root::after {
 /* ---------- 侧边导航 ---------- */
 
 .app-sider {
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  background: var(--wa-glass-bg) !important;
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift);
+  position: relative;
+  background: var(--wa-glass-tint) !important;
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  box-shadow: inset -1px 0 0 var(--wa-glass-border) !important;
+  border-right: none !important;
+}
+
+/* 导航选中态的滑动玻璃块（JS 注入 height/translateY） */
+.wa-nav-thumb {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  width: 36px;
+  border-radius: var(--wa-radius);
+  background: var(--wa-accent-soft);
+  box-shadow:
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px color-mix(in srgb, var(--wa-accent) 16%, transparent),
+    0 8px 18px -18px var(--wa-accent);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  transition: transform 0.2s var(--wa-ease), height 0.2s var(--wa-ease), opacity 0.12s var(--wa-ease);
+}
+
+.wa-nav-thumb.is-ready {
+  opacity: 1;
 }
 
 .app-sider .ant-menu {
+  position: relative;
+  z-index: 1;
   background: transparent !important;
   border-inline-end: none !important;
 }
@@ -177,26 +458,17 @@ html.wa-secretary-window #root::after {
   color: var(--wa-ink) !important;
 }
 
-.app-sider .ant-menu-item-selected {
-  background: var(--wa-accent-soft) !important;
+/* 选中底色由 .wa-nav-thumb 统一绘制，item 自身保持透明 */
+.app-sider .ant-menu-item-selected,
+.app-sider .ant-menu-item-selected:hover {
+  background: transparent !important;
   color: var(--wa-accent) !important;
-  box-shadow: inset 0 0 0 1px var(--wa-accent-line), 0 8px 18px -16px var(--wa-accent);
+  box-shadow: none !important;
 }
 
-.app-sider .ant-menu-item-selected::after {
-  display: none !important;
-}
-
+.app-sider .ant-menu-item-selected::after,
 .app-sider .ant-menu-item-selected::before {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 50%;
-  width: 2px;
-  height: 16px;
-  margin-top: -8px;
-  border-radius: 2px;
-  background: var(--wa-accent);
+  display: none !important;
 }
 
 /* 内置导航与插件导航之间的分隔线 */
@@ -207,15 +479,25 @@ html.wa-secretary-window #root::after {
 
 /* ---------- 悬浮层统一质感 ---------- */
 
+/* 抽屉/弹窗从窗口顶部开始，会覆盖标题栏的 34px 拖拽区；
+   必须显式声明 no-drag，否则关闭按钮会被窗口拖拽吞掉点击 */
+.ant-drawer-content,
+.ant-drawer-mask,
+.ant-modal-root,
+.ant-modal-mask,
+.ant-image-preview-root {
+  -webkit-app-region: no-drag;
+}
+
 .ant-dropdown .ant-dropdown-menu,
 .ant-select-dropdown,
 .ant-picker-dropdown .ant-picker-panel-container,
 .ant-popover-inner {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-panel) 94%, transparent), color-mix(in srgb, var(--wa-panel) 86%, transparent)) !important;
-  backdrop-filter: blur(34px) saturate(1.6);
-  -webkit-backdrop-filter: blur(34px) saturate(1.6);
-  border: 1px solid var(--wa-line);
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+  background: color-mix(in srgb, var(--wa-glass-menu-surface) 82%, transparent) !important;
+  backdrop-filter: blur(26px) saturate(150%);
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  border: 1px solid var(--wa-glass-border);
+  box-shadow: var(--wa-glass-menu-shadow), inset 0 1px 0 var(--wa-glass-rim-top) !important;
 }
 
 /* Tooltip 保持深底白字，避免玻璃底导致浅色主题文字不可见 */
@@ -259,18 +541,19 @@ html.dark .ant-tooltip .ant-tooltip-arrow::after {
 
 .ant-drawer .ant-drawer-content,
 .ant-modal .ant-modal-content {
-  background: var(--wa-glass-bg) !important;
-  backdrop-filter: blur(24px) saturate(1.4);
-  -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+  background: color-mix(in srgb, var(--wa-panel) 92%, transparent) !important;
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: var(--wa-glass-shadow), inset 0 1px 0 var(--wa-glass-rim-top) !important;
 }
 
 .ant-drawer .ant-drawer-content {
-  border-left: 1px solid var(--wa-line-2);
+  border-left: 1px solid var(--wa-glass-border);
 }
 
 .ant-modal .ant-modal-content {
-  border: 1px solid var(--wa-line);
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg) !important;
 }
 
 .ant-drawer .ant-drawer-header,
@@ -338,6 +621,37 @@ html.dark .wa-approval-modal .ant-modal-mask {
   background: linear-gradient(180deg, color-mix(in srgb, var(--wa-accent) 80%, #fff 20%), var(--wa-accent-hover)) !important;
 }
 
+/* Ghost 主按钮：透明底 + 主色描边，不能套用实心渐变，否则文字与底色同色不可见 */
+.ant-btn-primary.ant-btn-background-ghost:not(:disabled) {
+  background: transparent !important;
+  border-color: var(--wa-accent) !important;
+  color: var(--wa-accent) !important;
+  box-shadow: none !important;
+}
+
+.ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
+  background: var(--wa-accent-soft) !important;
+  border-color: var(--wa-accent-hover) !important;
+  color: var(--wa-accent-hover) !important;
+}
+
+.ant-btn-primary.ant-btn-dangerous.ant-btn-background-ghost:not(:disabled) {
+  background: transparent !important;
+  border-color: var(--wa-danger) !important;
+  color: var(--wa-danger) !important;
+  box-shadow: none !important;
+}
+
+/* 高危确认按钮：沿用主按钮的层次，但使用错误色，避免被通用主按钮样式覆盖成蓝色 */
+.ant-btn-primary.ant-btn-dangerous:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-danger) 88%, #fff 12%), var(--wa-danger)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 6px 16px -12px var(--wa-danger) !important;
+}
+
+.ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-danger) 80%, #fff 20%), var(--wa-danger-hover)) !important;
+}
+
 /* 暗色下主按钮用更深的蓝底 + 纯白文字，避免亮蓝底白字/浅蓝底深字看不清 */
 html.dark .ant-btn-primary:not(:disabled) {
   background: #2b6fe8 !important;
@@ -353,6 +667,30 @@ html.dark .ant-btn-primary:not(:disabled):hover {
 
 html.dark .ant-btn-primary:not(:disabled):active {
   background: #1f5fd0 !important;
+  color: #fff !important;
+}
+
+html.dark .ant-btn-primary.ant-btn-background-ghost:not(:disabled) {
+  background: transparent !important;
+  border-color: var(--wa-accent) !important;
+  color: var(--wa-accent) !important;
+  box-shadow: none !important;
+}
+
+html.dark .ant-btn-primary.ant-btn-background-ghost:not(:disabled):hover {
+  background: var(--wa-accent-soft) !important;
+  border-color: var(--wa-accent-hover) !important;
+  color: var(--wa-accent-hover) !important;
+}
+
+html.dark .ant-btn-primary.ant-btn-dangerous:not(:disabled) {
+  background: var(--wa-danger) !important;
+  color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 6px 16px -12px var(--wa-danger) !important;
+}
+
+html.dark .ant-btn-primary.ant-btn-dangerous:not(:disabled):hover {
+  background: var(--wa-danger-hover) !important;
   color: #fff !important;
 }
 
@@ -389,17 +727,45 @@ html.dark .ant-btn-primary:not(:disabled):active {
   color: var(--wa-accent) !important;
 }
 
+/* 设置类抽屉的顶部 Tab：胶囊选中态，去掉下划线 */
+.employee-settings-drawer .ant-tabs-nav {
+  margin-bottom: 14px !important;
+}
+
+.employee-settings-drawer .ant-tabs-tab {
+  margin: 0 2px 0 0 !important;
+  padding: 6px 10px !important;
+  border-radius: 8px;
+  transition: background 0.15s var(--wa-ease), color 0.15s var(--wa-ease);
+}
+
+.employee-settings-drawer .ant-tabs-tab:hover {
+  background: var(--wa-surface-inset);
+}
+
+.employee-settings-drawer .ant-tabs-tab-active {
+  background: var(--wa-accent-soft);
+}
+
+.employee-settings-drawer .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--wa-accent) !important;
+}
+
+.employee-settings-drawer .ant-tabs-ink-bar {
+  display: none;
+}
+
 /* 卡片、分段器、表格、标签统一到同一平面层级 */
 .ant-card {
-  border-radius: 12px !important;
-  border-color: var(--wa-line) !important;
+  border-radius: 14px !important;
+  border-color: var(--wa-line-2) !important;
   background: var(--wa-card-bg) !important;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 18px 36px -34px rgba(20, 32, 64, 0.4);
+  box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
 }
 
 html.dark .ant-card {
   background: var(--wa-card-bg) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 /* 员工卡片走同一套表面与悬停层级 */
@@ -410,21 +776,25 @@ html.dark .ant-card {
 
 .emp-card:hover {
   border-color: var(--wa-accent-line) !important;
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
-  transform: translateY(-1px);
+  box-shadow: var(--wa-glass-shadow), inset 0 1px 0 var(--wa-glass-rim-top) !important;
+  transform: translateY(-2px);
 }
 
 .ant-segmented {
-  background: var(--wa-panel-2) !important;
+  background: color-mix(in srgb, var(--wa-panel-2) 90%, transparent) !important;
   border: 1px solid var(--wa-line-2);
   border-radius: 8px !important;
   padding: 3px !important;
+  box-shadow:
+    inset 0 1px 2px rgba(16, 24, 40, 0.06),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
 
 .ant-segmented .ant-segmented-item {
   border-radius: 6px !important;
   color: var(--wa-ink-3);
-  transition: color 0.15s var(--wa-ease), background 0.15s var(--wa-ease);
+  /* 文本高亮必须瞬时生效：它跟随选中值本身，而滑块是另一套动画 */
+  transition: none;
 }
 
 .ant-segmented .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
@@ -432,18 +802,59 @@ html.dark .ant-card {
   background: var(--wa-hover);
 }
 
+/* 选中文字立即高亮；动画期间 item-selected 会被移除，但 selected-text 始终跟随当前值 */
+.ant-segmented .ant-segmented-item-selected,
+.ant-segmented .ant-segmented-item-selected-text {
+  color: var(--wa-ink) !important;
+}
+
+/* 静止态：thumb 不渲染（rc-segmented 仅在切换时创建），选中底色由 item 自己画 */
 .ant-segmented .ant-segmented-item-selected {
   background: var(--wa-panel) !important;
-  color: var(--wa-ink) !important;
-  box-shadow: var(--wa-glass-sheen), 0 2px 6px -4px rgba(0, 0, 0, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(16, 24, 40, 0.06),
+    0 1px 2px rgba(16, 24, 40, 0.08),
+    0 4px 10px -6px rgba(16, 24, 40, 0.22);
+}
+
+/* 切换动画期间：thumb 已存在并由它承载选中底色，item 必须让位，否则两处色块叠加会「闪一下」 */
+.ant-segmented-group:has(.ant-segmented-thumb) .ant-segmented-item-selected {
+  background: transparent !important;
+  box-shadow: none;
+}
+
+.ant-segmented .ant-segmented-thumb {
+  background: var(--wa-panel) !important;
+  border-radius: 6px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 0 0 1px rgba(16, 24, 40, 0.06),
+    0 1px 2px rgba(16, 24, 40, 0.08),
+    0 4px 10px -6px rgba(16, 24, 40, 0.22);
+  transition: transform 0.24s var(--wa-ease), width 0.24s var(--wa-ease) !important;
+  will-change: transform, width;
+}
+
+.ant-segmented .ant-segmented-thumb-motion-appear-active {
+  transition: transform 0.24s var(--wa-ease), width 0.24s var(--wa-ease) !important;
 }
 
 html.dark .ant-segmented {
-  background: rgba(255, 255, 255, 0.03) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
-html.dark .ant-segmented .ant-segmented-item-selected {
+html.dark .ant-segmented .ant-segmented-item-selected,
+html.dark .ant-segmented .ant-segmented-thumb {
   background: var(--wa-panel-3) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 2px 8px -4px rgba(0, 0, 0, 0.6);
 }
 
 .ant-table-wrapper .ant-table {
@@ -555,60 +966,970 @@ html.dark .ant-switch .ant-switch-handle::before {
   background: var(--wa-selection);
 }
 
-/* ---------- 工作台 ---------- */
+/* ---------- 通用模块页骨架：与任务页一致的浮层画布 + 实色内容面 ---------- */
 
-.wa-workbench-topbar {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-panel) 64%, transparent), color-mix(in srgb, var(--wa-panel) 44%, transparent)) !important;
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+.wa-module-page {
+  height: 100%;
+  padding: 7px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.wa-module-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg);
+  background: var(--wa-content-bg);
+  box-shadow: 0 26px 64px -48px rgba(20, 32, 64, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+html.dark .wa-module-shell {
+  box-shadow: 0 30px 74px -52px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.wa-module-header {
+  flex-shrink: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--wa-line-2);
-  box-shadow: var(--wa-glass-sheen);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
 }
 
-.wa-topbar-workspace {
-  transition: color 0.15s var(--wa-ease), background 0.15s var(--wa-ease), border-color 0.15s var(--wa-ease);
+html.dark .wa-module-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0));
 }
 
-.wa-topbar-workspace:hover {
-  color: var(--wa-ink) !important;
-  background: var(--wa-hover);
-  border-color: var(--wa-line) !important;
+.wa-module-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--wa-ink);
+  flex-shrink: 0;
 }
 
-.wa-topbar-workspace:active {
+.wa-module-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--wa-glass-border);
+  background: var(--wa-surface-inset);
+  color: var(--wa-ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.wa-module-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px 19px;
+}
+
+/* 内容区自行管理高度与滚动的模块（搜索、看板、编辑器等） */
+.wa-module-body.is-flush {
+  overflow: hidden;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-module-body.is-flush > * {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 让 Tabs 内容区撑满 Tabs 自身高度，内部 flex / overflow 布局才能拿到确定高度 */
+.wa-fill-tabs .ant-tabs-body-holder {
+  flex: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wa-fill-tabs .ant-tabs-body,
+.wa-fill-tabs .ant-tabs-content {
+  height: 100%;
+}
+
+.wa-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding-left: 2px;
+}
+
+.wa-section-heading-title {
+  font-size: 12.5px;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+  color: var(--wa-ink-2);
+}
+
+.wa-section-heading-count {
+  font-size: 11px;
+  color: var(--wa-ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* KMS 搜索工具条：把模式、输入与筛选收进同一块浅凹槽 */
+.wa-kms-searchbar {
+  padding: 10px 12px;
+  border: 1px solid var(--wa-line-2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--wa-panel) 58%, transparent);
+  box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
+}
+
+/* 插件宿主：统一外边距与圆角容器，插件内部保持自己的内容表面 */
+.wa-plugin-host {
+  height: 100%;
+  min-height: 0;
+  padding: 7px;
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-plugin-host > * {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  border-radius: var(--wa-radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--wa-glass-border);
+  background: var(--wa-panel);
+  box-shadow: 0 26px 64px -48px rgba(20, 32, 64, 0.45);
+}
+
+html.dark .wa-plugin-host > * {
+  box-shadow: 0 30px 74px -52px rgba(0, 0, 0, 0.95);
+}
+
+/* ---------- 设置页：玻璃导航栏 + 实色内容面 ---------- */
+
+.wa-settings-page {
+  height: 100%;
+  min-height: 0;
+  padding: 7px;
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-settings-tabs.ant-tabs {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.wa-settings-tabs.ant-tabs-left {
+  display: flex;
+  gap: 7px;
+}
+
+.wa-settings-tabs .ant-tabs-nav {
+  flex: 0 0 auto;
+  width: 208px;
+  margin: 0 !important;
+  padding: 10px 8px;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg);
+  background: var(--wa-glass-tint);
+  box-shadow:
+    var(--wa-glass-shadow),
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px var(--wa-glass-rim-hairline);
+  backdrop-filter: var(--wa-glass-blur);
+  -webkit-backdrop-filter: var(--wa-glass-blur);
+}
+
+.wa-settings-tabs .ant-tabs-nav::before {
+  display: none !important;
+}
+
+.wa-settings-tabs .ant-tabs-nav-list {
+  gap: 2px;
+}
+
+.wa-settings-tabs .ant-tabs-tab {
+  margin: 0 !important;
+  padding: 8px 10px !important;
+  border-radius: 9px;
+  color: var(--wa-ink-2);
+  transition: background 0.15s var(--wa-ease), color 0.15s var(--wa-ease), box-shadow 0.15s var(--wa-ease);
+}
+
+.wa-settings-tabs .ant-tabs-tab:hover {
+  background: var(--wa-surface-inset);
+}
+
+.wa-settings-tabs .ant-tabs-tab-active {
   background: var(--wa-accent-soft);
 }
 
+.wa-settings-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--wa-accent) !important;
+}
+
+.wa-settings-tabs .ant-tabs-ink-bar {
+  display: none;
+}
+
+.wa-settings-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg);
+  background: color-mix(in srgb, var(--wa-panel-2) 72%, transparent);
+  box-shadow: 0 26px 64px -48px rgba(20, 32, 64, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+html.dark .wa-settings-tabs .ant-tabs-content-holder {
+  background: color-mix(in srgb, var(--wa-panel) 55%, transparent);
+  box-shadow: 0 30px 74px -52px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.wa-settings-tabs .ant-tabs-content,
+.wa-settings-tabs .ant-tabs-tabpane {
+  height: 100%;
+}
+
+.wa-settings-tabs .ant-tabs-body-holder,
+.wa-settings-tabs .ant-tabs-body {
+  height: 100%;
+  min-height: 0;
+}
+
+/* 员工设置抽屉：Segmented 切换 + 单一滚动内容区，所有 Tab 内容顶部对齐 */
+.employee-settings-body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px;
+}
+
+.employee-settings-segmented {
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 7px 0 0;
+  font-size: 12.5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.employee-settings-segmented::-webkit-scrollbar {
+  display: none;
+}
+
+.employee-settings-segmented .ant-segmented-item-label {
+  min-height: 26px;
+  line-height: 26px;
+  padding: 0 11px;
+}
+
+.employee-settings-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 13px;
+}
+
+/* 内容根节点统一为块级布局：Space 默认 inline-flex 会带入基线留白，导致各 Tab 正文顶部错位 */
+.employee-settings-content > .ant-space.ant-space-vertical {
+  display: flex;
+  flex-direction: column;
+}
+
+.wa-settings-scroll {
+  height: 100%;
+  overflow: auto;
+  padding: 16px 19px 19px;
+}
+
+.wa-settings-panel {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 12px 14px;
+  border: 1px solid var(--wa-line-2);
+  border-radius: 14px;
+  background: var(--wa-panel);
+  box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
+}
+
+html.dark .wa-settings-panel {
+  background: var(--wa-panel-3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* ---------- 引导页：居中的玻璃卡片 ---------- */
+
+.wa-onboarding-page {
+  height: 100%;
+  padding: 28px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+
+.wa-onboarding-shell {
+  width: 100%;
+  max-width: 560px;
+  min-height: 480px;
+  max-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  padding: 30px 34px 34px;
+  overflow: auto;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-xl);
+  background: var(--wa-glass-tint);
+  box-shadow:
+    var(--wa-glass-shadow),
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px var(--wa-glass-rim-hairline);
+  backdrop-filter: var(--wa-glass-blur);
+  -webkit-backdrop-filter: var(--wa-glass-blur);
+}
+
+/* ---------- 任务页布局：浮在环境光上的玻璃侧栏 + 内容主舞台 ---------- */
+
+.wa-tasks-page {
+  height: 100%;
+  padding: 7px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.wa-tasks-body {
+  flex: 1;
+  display: flex;
+  gap: 7px;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* 内容主舞台：实色微透表面，不做模糊——滚动正文与玻璃字面互不干扰 */
+.wa-task-stage {
+  position: relative;
+  container-type: inline-size;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg);
+  background: var(--wa-content-bg);
+  box-shadow: 0 26px 64px -48px rgba(20, 32, 64, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+html.dark .wa-task-stage {
+  box-shadow: 0 30px 74px -52px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* 顶栏：主舞台内的功能条，用渐变与发丝线分层，避免嵌套第二层玻璃 */
+.wa-workbench-topbar {
+  flex-shrink: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--wa-line-2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+}
+
+html.dark .wa-workbench-topbar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0));
+}
+
+.wa-topbar-title {
+  font-size: 14px;
+  font-weight: 640;
+  letter-spacing: -0.015em;
+  color: var(--wa-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.wa-topbar-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--wa-ink-3);
+  white-space: nowrap;
+}
+
+.wa-topbar-divider {
+  width: 1px;
+  height: 13px;
+  flex-shrink: 0;
+  background: var(--wa-line);
+}
+
+/* 工作区：纯文字 + 前置图标，只在悬停时给一点反馈，不做胶囊 */
+.wa-topbar-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  max-width: 200px;
+  margin-right: 2px;
+  padding: 0 7px;
+  border-radius: 7px;
+  color: var(--wa-ink-3);
+  font-size: 12px;
+  cursor: default;
+  transition: color 0.15s var(--wa-ease), background 0.15s var(--wa-ease);
+}
+
+.wa-topbar-workspace.is-clickable {
+  cursor: pointer;
+}
+
+.wa-topbar-workspace.is-clickable:hover {
+  color: var(--wa-ink);
+  background: var(--wa-hover);
+}
+
+.wa-topbar-workspace-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 舞台变窄（例如打开工作区面板）时按优先级收敛顶栏信息，标题始终优先 */
+@container (max-width: 780px) {
+  .wa-topbar-time {
+    display: none;
+  }
+}
+
+@container (max-width: 680px) {
+  .wa-topbar-employee .wa-topbar-name,
+  .wa-topbar-divider {
+    display: none;
+  }
+}
+
+@container (max-width: 600px) {
+  .wa-topbar-workspace {
+    display: none;
+  }
+}
+
+/* ---------- 新任务页 ---------- */
+
+.wa-newtask {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 16px 32px;
+}
+
+.wa-newtask-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.wa-newtask-title {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  color: var(--wa-ink);
+  line-height: 1.25;
+}
+
+.wa-newtask-sub {
+  max-width: 330px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--wa-ink-3);
+}
+
+/* ---------- 对话区：消息在浮层输入区下方滚动 ---------- */
+
+.wa-chat-area {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* 舞台内光场只落在输入区附近：给玻璃一点可折射的颜色，正文阅读区保持干净 */
+.wa-chat-area::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.42;
+  background:
+    radial-gradient(30rem 18rem at 96% 102%, var(--wa-mesh-violet), transparent 74%),
+    radial-gradient(26rem 16rem at 2% 104%, var(--wa-mesh-cyan), transparent 76%);
+}
+
+html.dark .wa-chat-area::before {
+  opacity: 0.55;
+}
+
+.wa-chat-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 13px 16px 160px;
+}
+
+.wa-composer-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  padding: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+/* 消息滚入输入区时逐渐淡出，保留玻璃可采样到的背景层次 */
+.wa-composer-dock::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 168%;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--wa-panel) 78%, transparent) 42%,
+    color-mix(in srgb, var(--wa-panel) 98%, transparent) 88%
+  );
+}
+
+.wa-composer-dock > * {
+  pointer-events: auto;
+}
+
+/* 任务对话中的分段行（思考/工具/委托/过程组）：统一字号、留白与悬停反馈 */
+.wa-seg-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 8px;
+  margin: 0 -8px;
+  border-radius: 7px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s var(--wa-ease);
+}
+
+.wa-seg-row:hover {
+  background: var(--wa-hover);
+}
+
+.wa-seg-row-title {
+  font-size: 12px;
+  color: var(--wa-ink-2);
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.wa-seg-row-meta {
+  font-size: 11px;
+  color: var(--wa-ink-4);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.wa-seg-body {
+  margin: 2px 0 8px 6px;
+  padding: 4px 8px 2px 12px;
+  border-left: 1px solid var(--wa-line-2);
+}
+
+/* 工具参数/结果、思考正文、diff 等详情块共用一套表面 */
+.wa-detail-block {
+  background: var(--wa-code-bg);
+  border: 1px solid var(--wa-line-2);
+  border-radius: var(--wa-radius-md);
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* 消息时间分隔：居中发丝线 + 极小字号，不抢正文 */
+.wa-time-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--wa-ink-4);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.wa-time-sep::before,
+.wa-time-sep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--wa-line-2);
+}
+
+/* 消息头像：方形圆角 + 内侧高光，和玻璃面板同一套边光语言 */
+.wa-msg-avatar {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  border: 1px solid var(--wa-glass-border);
+  background: var(--wa-glass-tint);
+  box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
+}
+
+/* 气泡下方操作：常驻显示，尺寸与悬停反馈统一 */
+.wa-msg-actions .ant-btn {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--wa-ink-3);
+}
+
+.wa-msg-actions .ant-btn:hover {
+  background: var(--wa-hover) !important;
+  color: var(--wa-ink) !important;
+}
+
+/* 用户气泡：右上角大圆角、贴近侧的小圆角，形成方向感 */
+.wa-user-bubble {
+  padding: 10px 14px;
+  border-radius: 16px 16px 6px 16px;
+  background: var(--wa-user-bubble);
+  border: 1px solid color-mix(in srgb, var(--wa-accent) 22%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  color: var(--wa-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.72;
+}
+
+html.dark .wa-user-bubble {
+  border-color: color-mix(in srgb, var(--wa-accent) 28%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* 任务内联确认卡：与输入框同宽的实色卡片，左侧状态条 */
+.wa-inline-approval {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: var(--wa-radius-lg);
+  margin-bottom: 8px;
+  box-shadow: 0 16px 40px -30px rgba(16, 24, 40, 0.55);
+  animation: wa-approval-in 0.18s var(--wa-ease);
+}
+
+@keyframes wa-approval-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+html.dark .wa-inline-approval {
+  box-shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+}
+
+.wa-pending-approvals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 48px);
+  max-width: 820px;
+  margin: 8px auto 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--wa-glass-border);
+  background: var(--wa-glass-tint);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+}
+
+/* 输入区：浮在消息之上的玻璃胶囊（折射由 useLiquidGlass 注入）
+   底色刻意接近不透明：编辑区是阅读/输入的主表面，背后的正文不能透上来干扰 */
 .wa-composer {
-  background: var(--wa-glass-bg) !important;
-  backdrop-filter: blur(28px) saturate(1.55);
-  -webkit-backdrop-filter: blur(28px) saturate(1.55);
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift) !important;
+  background: color-mix(in srgb, var(--wa-panel) 96%, transparent) !important;
+  box-shadow:
+    var(--wa-glass-shadow),
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px var(--wa-glass-rim-hairline),
+    inset 0 -1px 0 var(--wa-glass-rim-bottom) !important;
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  transition: box-shadow 0.18s var(--wa-ease), border-color 0.18s var(--wa-ease);
 }
 
+/* 聚焦：只做一层极淡的主色描边，不再用粗亮的焦点环（视觉上过于抢眼） */
 .wa-composer:focus-within {
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift), var(--wa-focus) !important;
+  border-color: color-mix(in srgb, var(--wa-accent) 30%, var(--wa-glass-border)) !important;
+  box-shadow:
+    var(--wa-glass-shadow),
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px var(--wa-glass-rim-hairline),
+    inset 0 -1px 0 var(--wa-glass-rim-bottom),
+    0 0 0 2px color-mix(in srgb, var(--wa-accent) 6%, transparent) !important;
 }
 
-.wa-task-sidebar {
-  background: var(--wa-glass-bg) !important;
-  backdrop-filter: blur(24px) saturate(1.45);
-  -webkit-backdrop-filter: blur(24px) saturate(1.45);
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift);
-}
-
+/* 玻璃壳层：侧栏 / 工作区面板 */
+.wa-task-sidebar,
 .wa-workspace-panel {
-  background: var(--wa-glass-bg) !important;
-  backdrop-filter: blur(24px) saturate(1.45);
-  -webkit-backdrop-filter: blur(24px) saturate(1.45);
-  box-shadow: var(--wa-glass-sheen), var(--wa-glass-lift);
+  overflow: hidden;
+  border: 1px solid var(--wa-glass-border);
+  border-radius: var(--wa-radius-lg);
+  background: var(--wa-glass-tint) !important;
+  box-shadow:
+    var(--wa-glass-shadow),
+    inset 0 1px 0 var(--wa-glass-rim-top),
+    inset 0 0 0 1px var(--wa-glass-rim-hairline),
+    inset 0 -1px 0 var(--wa-glass-rim-bottom);
+  backdrop-filter: var(--wa-glass-blur);
+  -webkit-backdrop-filter: var(--wa-glass-blur);
+}
+
+/* 工作区面板内部控件：实色漂浮面 + 极淡描边，暗色下靠略亮的表面区分层级 */
+.wa-start-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border-radius: 13px;
+  background: var(--wa-raised-bg);
+  border: 1px solid var(--wa-raised-border);
+  box-shadow: var(--wa-raised-shadow);
+  cursor: pointer;
+  transition: transform 0.18s var(--wa-ease), background 0.18s var(--wa-ease),
+    border-color 0.18s var(--wa-ease), box-shadow 0.18s var(--wa-ease);
+}
+
+.wa-start-card:hover {
+  transform: translateY(-1px);
+  background: var(--wa-raised-bg-hover);
+  border-color: var(--wa-raised-border-hover);
+  box-shadow: var(--wa-raised-shadow-hover);
+}
+
+.wa-start-card[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.wa-start-card[aria-disabled='true']:hover {
+  transform: none;
+  background: var(--wa-raised-bg);
+  border-color: var(--wa-raised-border);
+  box-shadow: var(--wa-raised-shadow);
+}
+
+.wa-start-card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px var(--wa-raised-border);
+}
+
+.wa-start-card-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--wa-ink);
+}
+
+.wa-start-card-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--wa-ink-3);
+}
+
+/* 标签芯片：中性漂浮面，选中不铺大面积主色，避免暗色下发灰 */
+.wa-panel-tab {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--wa-ink-3);
+  cursor: pointer;
+  transition: background 0.16s var(--wa-ease), border-color 0.16s var(--wa-ease),
+    box-shadow 0.16s var(--wa-ease), color 0.16s var(--wa-ease);
+}
+
+.wa-panel-tab:hover {
+  background: var(--wa-hover);
+  color: var(--wa-ink-2);
+}
+
+.wa-panel-tab.is-active {
+  background: var(--wa-raised-bg);
+  border-color: var(--wa-raised-border);
+  color: var(--wa-ink);
+  box-shadow: var(--wa-raised-shadow);
+}
+
+.wa-panel-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: inherit;
+}
+
+.wa-panel-tab-close {
+  font-size: 9px;
+  padding: 2px;
+  flex-shrink: 0;
+  color: var(--wa-ink-4);
+}
+
+.wa-panel-tab:hover .wa-panel-tab-close,
+.wa-panel-tab.is-active .wa-panel-tab-close {
+  color: var(--wa-ink-3);
 }
 
 .wa-titlebar {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--wa-bg) 74%, transparent), color-mix(in srgb, var(--wa-bg) 56%, transparent)) !important;
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  box-shadow: var(--wa-glass-sheen);
+  background: color-mix(in srgb, var(--wa-bg) 78%, transparent) !important;
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
+}
+
+/* 窗口控制：与侧栏图标按钮同一套悬停语言，关闭保留系统红 */
+.wa-titlebar .wa-titlebar-btn {
+  border-radius: 6px !important;
+  color: var(--wa-ink-3) !important;
+  transition: background 0.15s var(--wa-ease), color 0.15s var(--wa-ease) !important;
+}
+
+.wa-titlebar .wa-titlebar-btn:hover {
+  background: var(--wa-hover) !important;
+  color: var(--wa-ink) !important;
+}
+
+.wa-titlebar .wa-titlebar-btn.wa-titlebar-close:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+/* ---------- 任务侧栏 ---------- */
+
+.wa-task-item {
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition: background 0.15s var(--wa-ease), border-color 0.15s var(--wa-ease), box-shadow 0.15s var(--wa-ease);
+}
+
+.wa-task-item:hover {
+  background: var(--wa-surface-inset);
+}
+
+.wa-task-item.is-active {
+  background: var(--wa-accent-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.wa-task-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--wa-accent);
+}
+
+.wa-task-item.is-selected {
+  background: var(--wa-accent-soft);
+  border-color: var(--wa-accent-line);
+}
+
+.wa-task-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 9px 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: var(--wa-ink-4);
+  user-select: none;
+}
+
+.wa-task-group-label.is-clickable {
+  cursor: pointer;
+}
+
+.wa-task-group-label.is-clickable:hover {
+  color: var(--wa-ink-2);
 }
 
 .wa-brand-mark {

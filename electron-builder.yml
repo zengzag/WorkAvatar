@@ -116,7 +116,10 @@ mac:
   category: public.app-category.productivity
   darkModeSupport: true
   artifactName: '${productName}-${version}-${arch}.${ext}'
-  # 未配置开发者证书时（CSC_IDENTITY_AUTO_DISCOVERY=false）跳过签名，产出可直接本地运行
+  # 未配置开发者证书时（CSC_IDENTITY_AUTO_DISCOVERY=false）使用 ad-hoc 签名。
+  # 必须真正签名整个 .app：只靠链接器签名时 Info.plist 未绑定（Identifier=Electron），
+  # macOS TCC 无法把麦克风/屏幕录制权限归属到 WorkAvatar，系统设置里也看不到本应用。
+  identity: "-"
   hardenedRuntime: false
   extendInfo:
     # 语音插件需访问麦克风；缺失该字段时 macOS 会在调用录音时直接终止应用

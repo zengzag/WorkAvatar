@@ -139,8 +139,6 @@ export type {
   ShellBgTaskItem,
 } from './channels/shell-bg'
 export type {
-  SubAgentProfileCreateParams,
-  SubAgentProfileUpdateParams,
   SubAgentProfileResult,
 } from './channels/subagent'
 export type {

@@ -1,7 +1,5 @@
 import { Typography, Tooltip, theme } from 'antd'
 import {
-  DownOutlined,
-  RightOutlined,
   LoadingOutlined,
   CheckCircleFilled,
   CarryOutOutlined,
@@ -10,7 +8,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useState, memo } from 'react'
 import type { MessageSegment } from './types'
-import PreviewLine from './PreviewLine'
+import SegmentRow from './SegmentRow'
 import ToolCallSegment from './ToolCallSegment'
 
 const { Text } = Typography
@@ -134,51 +132,32 @@ const TodoListSegmentInner: React.FC<{
   }
 
   const header = (
-    <div
-      onClick={() => setOverride(!collapsed)}
-      style={{ padding: '5px 0', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
-    >
-      {collapsed ? (
-        <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
+    <SegmentRow
+      expanded={!collapsed}
+      icon={<CarryOutOutlined />}
+      title={getToolDisplayName(seg.toolName || 'todo_write')}
+      detail={collapsed && progress.current ? `${t('workbench.todoCurrentItem')}: ${progress.current.content}` : undefined}
+      meta={progress.allDone ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: token.colorSuccess }}>
+          <CheckCircleFilled style={{ fontSize: 11 }} />
+          {t('workbench.todoAllDone')}
+        </span>
       ) : (
-        <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
+        <>
+          <span>{t('workbench.todoProgress', { done: progress.done, total: progress.total })}</span>
+          <div style={{ width: 48, height: 4, borderRadius: 2, background: token.colorFillSecondary, overflow: 'hidden' }}>
+            <div style={{
+              width: `${progress.percent}%`,
+              height: '100%',
+              background: token.colorPrimary,
+              borderRadius: 2,
+              transition: 'width 0.3s',
+            }} />
+          </div>
+        </>
       )}
-      <CarryOutOutlined style={{ fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }} />
-      <Text style={{ fontSize: 12, color: token.colorTextSecondary, flexShrink: 0 }}>
-        {getToolDisplayName(seg.toolName || 'todo_write')}
-      </Text>
-      {collapsed && progress.current && (
-        <PreviewLine
-          text={`${t('workbench.todoCurrentItem')}: ${progress.current.content}`}
-          fontSize={11}
-          lineHeight={16}
-          color={token.colorTextQuaternary}
-        />
-      )}
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {progress.allDone ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: token.colorSuccess }}>
-            <CheckCircleFilled style={{ fontSize: 11 }} />
-            {t('workbench.todoAllDone')}
-          </span>
-        ) : (
-          <>
-            <Text style={{ fontSize: 11, color: token.colorTextQuaternary, whiteSpace: 'nowrap' }}>
-              {t('workbench.todoProgress', { done: progress.done, total: progress.total })}
-            </Text>
-            <div style={{ width: 48, height: 4, borderRadius: 2, background: token.colorFillSecondary, overflow: 'hidden' }}>
-              <div style={{
-                width: `${progress.percent}%`,
-                height: '100%',
-                background: token.colorPrimary,
-                borderRadius: 2,
-                transition: 'width 0.3s',
-              }} />
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+      onClick={() => setOverride(!collapsed)}
+    />
   )
 
   if (collapsed) return <div style={{ marginBottom: 2 }}>{header}</div>
@@ -186,11 +165,8 @@ const TodoListSegmentInner: React.FC<{
   return (
     <div style={{ marginBottom: 2 }}>
       {header}
-      <div style={{ position: 'relative' }}>
-        {/* 竖线与展开 icon 同列，与工具调用/委托段保持一致 */}
-        <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
-        <div style={{ position: 'relative', padding: '0 10px 8px 24px' }}>
-          <div style={{ padding: '2px 10px', background: token.colorBgLayout, borderRadius: 6, border: `1px solid ${token.colorBorderSecondary}` }}>
+      <div className="wa-seg-body">
+          <div style={{ padding: '2px 10px', background: token.colorBgLayout, borderRadius: 8, border: `1px solid ${token.colorBorderSecondary}` }}>
             {items.map((item, idx) => (
               <div
                 key={idx}
@@ -224,7 +200,6 @@ const TodoListSegmentInner: React.FC<{
               </div>
             ))}
           </div>
-        </div>
       </div>
     </div>
   )

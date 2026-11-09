@@ -8,6 +8,10 @@ import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
 import BackgroundShellBar from '../components/workbench/BackgroundShellBar'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
+import { PendingApprovalsBar, TaskInteractionCard } from '../components/workbench/TaskInteractionCard'
+import { usePageVisible } from '../components/common/page-visibility'
+import { useInteractionStore } from '../stores/interaction.store'
+import { useShallow } from 'zustand/react/shallow'
 import TaskSidebar, { formatTaskTime, type TaskViewMode, type TaskWithEmployee } from '../components/tasks/TaskSidebar'
 import TaskWorkspacePanel from '../components/tasks/TaskWorkspacePanel'
 import { useTaskPanelStore } from '../stores/task-panel.store'
@@ -17,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import { getActiveBranchData } from '../hooks/chat-helpers'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
-import { subscribePendingTaskJump } from '../utils/pending-task-jump'
+import { requestPendingTaskJump, subscribePendingTaskJump } from '../utils/pending-task-jump'
 import { getDirName } from '../utils/format'
 import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
@@ -42,7 +46,7 @@ const SidePanelIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => 
 )
 
 const Tasks: React.FC = () => {
-  const { message, modal } = App.useApp()
+  const { message, modal, notification } = App.useApp()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
@@ -94,7 +98,10 @@ const Tasks: React.FC = () => {
   useEffect(() => { currentEmployeeIdRef.current = currentEmployeeId }, [currentEmployeeId])
 
   // 搜索
+  // 标题检索词：输入即生效（防抖），服务端只按标题/员工名分页匹配，成本低
   const [searchQuery, setSearchQuery] = useState('')
+  // 全文检索词：仅回车提交后生效，触发 FTS 检索 + 全量任务加载
+  const [contentQuery, setContentQuery] = useState('')
   // 任务列表视图：列表（时间分组）/ 员工分组
   const [viewMode, setViewMode] = useState<TaskViewMode>(() => {
     try {
@@ -107,9 +114,9 @@ const Tasks: React.FC = () => {
   // 全文内容搜索匹配的任务 ID 集合（null = 未搜索，Set = 搜索结果）
   const [contentMatchIds, setContentMatchIds] = useState<Set<string> | null>(null)
 
-  // 是否使用全量模式：有搜索或分组视图时使用全量加载，否则分页模式下初始加载20条，滚动加载更多
+  // 是否使用全量模式：全文检索或分组视图时使用全量加载，否则分页加载
   // 分组视图需要拿到全部任务，才能让"每组只看最近5条"不受加载进度限制
-  const useFullLoad = !!searchQuery.trim() || !!contentMatchIds || viewMode !== 'list'
+  const useFullLoad = !!contentQuery || viewMode !== 'list'
 
   const handleViewModeChange = useCallback((mode: TaskViewMode) => {
     setViewMode(mode)
@@ -127,9 +134,11 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  // 加载任务列表：支持全量模式和分页模式
-  const loadGlobalTasks = useCallback(async (opts?: { reset?: boolean; forceFull?: boolean }) => {
+  // 加载任务列表：支持全量模式和分页模式（分页模式可带标题关键字）
+  const loadGlobalTasks = useCallback(async (opts?: { reset?: boolean; forceFull?: boolean; keyword?: string }) => {
     const forceFull = !!opts?.forceFull
+    // 非全量模式下默认沿用当前标题检索词，避免事件触发的刷新丢掉筛选条件
+    const keyword = useFullLoad ? '' : (opts?.keyword ?? searchQuery.trim())
     try {
       const full = forceFull || useFullLoad
       if (full) {
@@ -143,7 +152,7 @@ const Tasks: React.FC = () => {
         // 分页模式：保持当前已加载条数，避免刷新（如选中任务）后列表被截断回 PAGE_SIZE
         // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"；reset 时按首页大小重新加载
         const limit = opts?.reset ? PAGE_SIZE : Math.max(PAGE_SIZE, loadedCountRef.current)
-        const result = await window.electronAPI.conversation.listAll({ limit, offset: 0 })
+        const result = await window.electronAPI.conversation.listAll({ limit, offset: 0, keyword: keyword || undefined })
         const arr = Array.isArray(result) ? result : []
         setGlobalTasks(arr)
         setLoadedCount(arr.length)
@@ -154,14 +163,14 @@ const Tasks: React.FC = () => {
       setLoadedCount(0)
       setHasMore(false)
     }
-  }, [PAGE_SIZE, useFullLoad])
+  }, [PAGE_SIZE, useFullLoad, searchQuery])
 
   // 加载更多（仅在分页模式下使用）
   const loadMoreTasks = useCallback(async () => {
     if (loadingMore || useFullLoad) return
     setLoadingMore(true)
     try {
-      const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: loadedCount })
+      const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: loadedCount, keyword: searchQuery.trim() || undefined })
       const arr = Array.isArray(result) ? result : []
       if (arr.length > 0) {
         setGlobalTasks(prev => {
@@ -177,21 +186,27 @@ const Tasks: React.FC = () => {
     } finally {
       setLoadingMore(false)
     }
-  }, [PAGE_SIZE, loadedCount, loadingMore, useFullLoad])
+  }, [PAGE_SIZE, loadedCount, loadingMore, useFullLoad, searchQuery])
 
-  // 全量模式（搜索/员工分组）与分页模式切换时重新加载列表：
-  // 进入全量模式拉取全部；退回分页模式时按首页大小重载，相当于重新打开任务列表，避免一次渲染全部任务卡顿
+  // 进入/退出全量模式、标题检索词变化时重新加载列表：
+  // 进入全量模式拉取全部；标题检索走分页 + 服务端关键字；退出全量时按首页大小重载
   const prevFullLoadRef = useRef(useFullLoad)
+  const searchEffectMountedRef = useRef(false)
   useEffect(() => {
     const wasFullLoad = prevFullLoadRef.current
     prevFullLoadRef.current = useFullLoad
-    if (useFullLoad) {
-      loadGlobalTasks({ forceFull: true, reset: true })
-    } else if (wasFullLoad) {
-      loadGlobalTasks({ reset: true })
+    if (!searchEffectMountedRef.current) {
+      searchEffectMountedRef.current = true
+      return
     }
+    if (useFullLoad) {
+      if (!wasFullLoad) loadGlobalTasks({ forceFull: true, reset: true })
+      return
+    }
+    // 全量模式下输入关键词不重载（由本地过滤完成），只在非全量模式才走服务端标题检索
+    loadGlobalTasks({ reset: true, keyword: searchQuery.trim() })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useFullLoad])
+  }, [useFullLoad, searchQuery])
 
   const loadAllCollections = useCallback(async () => {
     try {
@@ -250,10 +265,28 @@ const Tasks: React.FC = () => {
     }
   }, [taskMode, employees, currentEmployeeId])
 
-  // 全文内容搜索：输入框侧已做防抖，这里直接请求；请求序号用于丢弃过期结果
+  // 全文内容搜索：只在用户回车提交后才请求（FTS + LIKE 兜底在主进程同步执行，逐字触发会卡住界面）
   const searchSeqRef = useRef(0)
+  // contentQuery 镜像：供输入变更回调判断是否需要作废旧全文结果
+  const contentQueryRef = useRef('')
+  useEffect(() => { contentQueryRef.current = contentQuery }, [contentQuery])
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query)
+    // 输入变化后旧的全文结果已不对应当前关键词，退回标题检索
+    if (contentQueryRef.current && query.trim() !== contentQueryRef.current) {
+      setContentQuery('')
+      setContentMatchIds(null)
+    }
+  }, [])
+
+  const handleSearchSubmit = useCallback((query: string) => {
+    setSearchQuery(query)
+    setContentQuery(query.trim())
+  }, [])
+
   useEffect(() => {
-    const trimmed = searchQuery.trim()
+    const trimmed = contentQuery.trim()
     if (!trimmed) {
       setContentMatchIds(null)
       return
@@ -272,7 +305,7 @@ const Tasks: React.FC = () => {
       if (seq !== searchSeqRef.current) return
       startTransition(() => setContentMatchIds(new Set()))
     })
-  }, [searchQuery])
+  }, [contentQuery])
 
   // 使用 useEmployeeChat，传入 skipAutoInit 避免自动选择对话
   const chatHook = useEmployeeChat({ id: currentEmployeeId, message, skipAutoInit: true })
@@ -379,10 +412,74 @@ const Tasks: React.FC = () => {
   const statusWorkspaceOpenPath = taskMode === 'chat'
     ? (panelRootPath || undefined)
     : (statusWorkspacePath || undefined)
+  // ---- 任务级交互确认：任务页可见时由对话内联卡承接，不再弹全局模态 ----
+  const pageVisible = usePageVisible()
+  const setTaskInlineHost = useInteractionStore((s) => s.setTaskInlineHost)
+  const respondInteraction = useInteractionStore((s) => s.respondById)
+  const interactionRequests = useInteractionStore(useShallow((s) => s.requests))
+
+  // 任务页一旦挂载就作为任务级请求的内联宿主：任务确认不再弹全局模态，
+  // 页面不可见时改由桌面通知引导用户回到对应任务处理。
+  useEffect(() => {
+    setTaskInlineHost(true)
+    return () => setTaskInlineHost(false)
+  }, [setTaskInlineHost])
+
+  /** 已弹出的任务确认通知（key → 请求签名），请求处理后同步关闭 */
+  const notifiedApprovalKeysRef = useRef<Map<string, string>>(new Map())
+
+  const activeConversationRequests = useMemo(
+    () => interactionRequests.filter(r => r.conversationId === activeConversationId),
+    [interactionRequests, activeConversationId],
+  )
+
+  const pendingRequestCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const r of interactionRequests) {
+      if (!r.conversationId) continue
+      counts[r.conversationId] = (counts[r.conversationId] || 0) + 1
+    }
+    return counts
+  }, [interactionRequests])
+
+  // 其他任务的待确认提示：非弹窗，点击任务条直接切换
+  const pendingOtherApprovals = useMemo(() => {
+    const items: Array<{ conversationId: string; title: string; count: number }> = []
+    for (const [conversationId, count] of Object.entries(pendingRequestCounts)) {
+      if (conversationId === activeConversationId) continue
+      const task = globalTasks.find(item => item.id === conversationId)
+      items.push({
+        conversationId,
+        title: task?.title || t('workbench.untitledConv'),
+        count,
+      })
+    }
+    return items
+  }, [pendingRequestCounts, activeConversationId, globalTasks, t])
+
   // 终端会话按任务隔离：任务内 cd 状态与运行中命令互不干扰
   const terminalId = taskMode === 'chat' && activeConversationId
     ? `conv:${activeConversationId}`
     : `emp:${currentEmployeeId || 'none'}`
+
+  // 输入区浮层高度会随行数/排队卡片变化，消息区底部留白跟随，避免最后一条被遮挡
+  const composerDockRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const dock = composerDockRef.current
+    const scroll = chatContainerRef.current
+    if (!dock || !scroll) return
+    const sync = () => {
+      scroll.style.paddingBottom = `${dock.offsetHeight + 28}px`
+    }
+    const observer = new ResizeObserver(sync)
+    observer.observe(dock)
+    sync()
+    return () => {
+      observer.disconnect()
+      // 命令式写入的内联留白需手动清掉：切换模式时 DOM 节点可能被复用，残留值会把新任务页撑开
+      scroll.style.paddingBottom = ''
+    }
+  }, [taskMode, isComparisonMode, chatContainerRef])
 
   // 侧边栏产物列表：聚合本任务消息中产物工具声明的文件，按最新调用倒序，同路径只保留最新一次
   const taskArtifacts = useMemo(() => {
@@ -469,13 +566,14 @@ const Tasks: React.FC = () => {
   }, [employee, selectConversation])
 
   // 过滤后的任务列表（支持标题/员工名匹配 + 全文内容搜索）
+  // 标题匹配与服务端一致：去掉空格后再比较，避免本地把空格当必须字符
   const filteredTasks = useMemo(() => {
     let result = globalTasks
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
+      const q = searchQuery.toLowerCase().replace(/\s+/g, '')
       result = result.filter(t =>
-        (t.title || '').toLowerCase().includes(q) ||
-        (t.employee_name || '').toLowerCase().includes(q) ||
+        (t.title || '').toLowerCase().replace(/\s+/g, '').includes(q) ||
+        (t.employee_name || '').toLowerCase().replace(/\s+/g, '').includes(q) ||
         (contentMatchIds?.has(t.id) ?? false)
       )
     }
@@ -525,6 +623,65 @@ const Tasks: React.FC = () => {
       }
     })
   }, [selectConversation])
+
+  /** 从任务确认通知/待确认条跳转到目标任务 */
+  const handleReviewApproval = useCallback(async (conversationId: string) => {
+    navigate('/tasks')
+    let employeeId = globalTasks.find(item => item.id === conversationId)?.employee_id
+    if (!employeeId) {
+      try {
+        const conv: any = await window.electronAPI.conversation.get(conversationId)
+        employeeId = conv?.employee_id
+      } catch { /* 会话可能已删除 */ }
+    }
+    if (employeeId) requestPendingTaskJump(employeeId, conversationId)
+  }, [navigate, globalTasks])
+
+  // 任务页不可见时（设置/员工/资料库等页面），用非模态通知提醒有待确认请求，
+  // 避免多个任务的确认框同时变成全局弹窗
+  useEffect(() => {
+    const activeKeys = new Set<string>()
+    if (!pageVisible) {
+      const groups = new Map<string, { count: number; firstId: string; firstTitle: string }>()
+      for (const req of interactionRequests) {
+        if (!req.conversationId) continue
+        const existing = groups.get(req.conversationId)
+        if (existing) existing.count += 1
+        else groups.set(req.conversationId, {
+          count: 1,
+          firstId: req.id,
+          firstTitle: req.title || t('interaction.defaultTitle'),
+        })
+      }
+      for (const [conversationId, group] of groups) {
+        const key = `task-approval-${conversationId}`
+        activeKeys.add(key)
+        const signature = `${group.firstId}:${group.count}`
+        if (notifiedApprovalKeysRef.current.get(key) === signature) continue
+        notifiedApprovalKeysRef.current.set(key, signature)
+        const taskTitle = globalTasks.find(item => item.id === conversationId)?.title || t('workbench.untitledConv')
+        notification.warning({
+          key,
+          title: t('interaction.taskApprovalNotifyTitle'),
+          description: group.count > 1
+            ? t('interaction.taskApprovalNotifyMore', { title: taskTitle, count: group.count })
+            : t('interaction.taskApprovalNotifyDesc', { title: taskTitle, request: group.firstTitle }),
+          placement: 'topRight',
+          duration: 10,
+          actions: (
+            <Button size="small" type="primary" onClick={() => { void handleReviewApproval(conversationId) }}>
+              {t('interaction.goReview')}
+            </Button>
+          ),
+        })
+      }
+    }
+    for (const key of Array.from(notifiedApprovalKeysRef.current.keys())) {
+      if (activeKeys.has(key)) continue
+      notification.destroy(key)
+      notifiedApprovalKeysRef.current.delete(key)
+    }
+  }, [pageVisible, interactionRequests, globalTasks, notification, t, handleReviewApproval])
 
   // 删除任务
   const handleDeleteTask = useCallback(async (taskId: string) => {
@@ -698,14 +855,17 @@ const Tasks: React.FC = () => {
   }, [setSelectedCollectionIds, saveNewTaskDraft])
 
   // 发送消息
-  const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
-    setAttachedImages([])
-    setSelectedModels([])
-    setInputModels([])
-    clearNewTaskDraft()
+  const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean; fromQueue?: boolean }) => {
+    // 队列自动续发时保留用户当前正在编辑的草稿/附件/模型选择
+    if (!options?.fromQueue) {
+      setAttachedImages([])
+      setSelectedModels([])
+      setInputModels([])
+      clearNewTaskDraft()
+    }
     // 新建任务时把选定的工作区目录传给会话创建（null 表示默认工作区）
-    const workspacePath = newTaskWorkspacePath || undefined
-    setNewTaskWorkspacePath(null)
+    const workspacePath = options?.fromQueue ? undefined : (newTaskWorkspacePath || undefined)
+    if (!options?.fromQueue) setNewTaskWorkspacePath(null)
     await handleSend(content, images, models, { ...options, workspacePath })
     // 发送后切换到对话模式；任务列表由 activeConversationId/taskMode 变化触发的
     // useEffect 刷新（此时 sendMessage 已完成持久化，listAll 一定能查到新任务）
@@ -984,16 +1144,18 @@ const Tasks: React.FC = () => {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
+    <div className="wa-tasks-page">
       {/* 主体 */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div className="wa-tasks-body">
         {/* 全屏预览模式下隐藏任务列表与对话栏，侧边栏占满 */}
         {!panelFullscreen && showSidePanel && (
           <TaskSidebar
             tasks={filteredTasks}
             activeTaskId={taskMode === 'new' ? null : activeConversationId}
             searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
+            onSearchChange={handleSearchChange}
+            onSearchSubmit={handleSearchSubmit}
+            contentSearched={!!contentQuery}
             viewMode={viewMode}
             onViewModeChange={handleViewModeChange}
             onSelect={handleSelectTask}
@@ -1006,6 +1168,7 @@ const Tasks: React.FC = () => {
             onRename={handleRename}
             onExtractMemory={handleExtractMemory}
             isTaskStreaming={isConversationStreaming}
+            pendingRequestCounts={pendingRequestCounts}
             hasMore={hasMore && !useFullLoad}
             loadingMore={loadingMore}
             onLoadMore={loadMoreTasks}
@@ -1013,40 +1176,35 @@ const Tasks: React.FC = () => {
         )}
 
         {!panelFullscreen && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div className="wa-task-stage">
           {/* 顶部状态栏：侧边栏展开/新建任务 + 任务标题/员工/时间 + 右侧操作区 */}
-          <div className="wa-workbench-topbar" style={{
-            flexShrink: 0, height: 46, display: 'flex', alignItems: 'center', gap: 8,
-            padding: '0 14px',
-          }}>
+          <div className="wa-workbench-topbar">
             {!showSidePanel && (
               <>
                 <Tooltip title={t('workbench.historyConv')}>
                   <Button type="text" size="small"
+                    className="wa-icon-btn"
                     icon={<MenuUnfoldOutlined style={{ fontSize: 14 }} />}
                     onClick={() => setShowSidePanel(true)}
-                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                   />
                 </Tooltip>
                 <Tooltip title={t('tasks.newTask')}>
                   <Button type="text" size="small"
+                    className="wa-icon-btn"
                     icon={<PlusOutlined style={{ fontSize: 14 }} />}
                     onClick={handleNewTask}
-                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                   />
                 </Tooltip>
               </>
             )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-              <span title={statusConv?.title} style={{
-                fontSize: 13.5, fontWeight: 620, color: token.colorText, letterSpacing: '-0.01em',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
-              }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+              <span title={statusConv?.title} data-testid="task-title" className="wa-topbar-title">
                 {statusConv?.title || t('tasks.newTask')}
               </span>
+              {(statusEmployeeName || statusTimeText) && <span className="wa-topbar-divider" />}
               {statusEmployeeName && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-                  {statusEmployee ? (
+                <span className="wa-topbar-meta wa-topbar-employee">
+                  {statusEmployee && statusConv && (
                     <EmployeeAvatar
                       avatarIcon={statusEmployee.avatar_icon}
                       avatarColor={statusEmployee.avatar_color}
@@ -1054,38 +1212,28 @@ const Tasks: React.FC = () => {
                       avatarType={statusEmployee.avatar_type}
                       employeeId={statusEmployee.id}
                       source={statusEmployee.source}
-                      size={15}
+                      size={16}
                     />
-                  ) : (
-                    <RobotOutlined style={{ fontSize: 12, color: token.colorTextSecondary }} />
                   )}
-                  <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{statusEmployeeName}</span>
+                  <span className="wa-topbar-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{statusEmployeeName}</span>
                 </span>
               )}
               {statusTimeText && (
-                <span style={{ fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }}>{statusTimeText}</span>
+                <>
+                  {statusEmployeeName && <span style={{ color: 'var(--wa-line)' }}>·</span>}
+                  <span className="wa-topbar-meta wa-topbar-time" style={{ color: 'var(--wa-ink-4)' }}>{statusTimeText}</span>
+                </>
               )}
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-              {/* 工作区目录：点击打开对应文件夹 */}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+              {/* 工作区目录：纯文字 + 前置图标，点击打开对应文件夹 */}
               <Tooltip title={statusWorkspaceOpenPath || statusWorkspaceLabel}>
                 <span
-                  className={statusWorkspaceOpenPath ? 'wa-topbar-workspace' : undefined}
+                  className={`wa-topbar-workspace${statusWorkspaceOpenPath ? ' is-clickable' : ''}`}
                   onClick={handleOpenStatusWorkspace}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 200,
-                    height: 22, padding: '0 8px', borderRadius: 6, lineHeight: 1,
-                    border: `1px solid ${token.colorBorderSecondary}`,
-                    color: token.colorTextSecondary, fontSize: 12,
-                    cursor: statusWorkspaceOpenPath ? 'pointer' : 'default',
-                    flexShrink: 0,
-                  }}
                 >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {statusWorkspaceLabel}
-                  </span>
-                  <span style={{ width: 1, height: 12, background: token.colorBorderSecondary, flexShrink: 0 }} />
-                  <FolderOutlined style={{ fontSize: 12 }} />
+                  <FolderOutlined style={{ fontSize: 12, flexShrink: 0 }} />
+                  <span className="wa-topbar-workspace-text">{statusWorkspaceLabel}</span>
                 </span>
               </Tooltip>
               {/* 插件视图注入点：任务对话页头部操作区 */}
@@ -1093,35 +1241,34 @@ const Tasks: React.FC = () => {
               {taskMode === 'chat' && (
                 <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
                   <Button type="text" size="small"
+                    className="wa-icon-btn"
                     icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}
-                    style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                   />
                 </Dropdown>
               )}
               <Tooltip title={panelOpen ? t('workbench.closePanel') : t('workbench.panelOpen')}>
                 <Button type="text" size="small"
+                  data-testid="workspace-panel-toggle"
+                  className={`wa-icon-btn${panelOpen ? ' is-active' : ''}`}
                   icon={<SidePanelIcon style={{ fontSize: 15 }} />}
                   onClick={() => { panelOpen ? closePanel() : openPanel() }}
-                  style={{
-                    color: panelOpen ? token.colorPrimary : token.colorTextSecondary,
-                    background: panelOpen ? token.colorFillSecondary : undefined,
-                    width: 28, height: 28, minWidth: 28, borderRadius: 6,
-                  }}
                 />
               </Tooltip>
             </div>
           </div>
+          {pendingOtherApprovals.length > 0 && (
+            <PendingApprovalsBar
+              items={pendingOtherApprovals}
+              onSelect={(conversationId) => { void handleReviewApproval(conversationId) }}
+            />
+          )}
           {taskMode === 'new' ? (
             // 新任务模式：居中输入框（使用带缓存的回调，切换页面回来可恢复）
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '20px',
-              overflowY: 'auto',
-            }}>
+            <div className="wa-newtask" key="new-task">
+              <div className="wa-newtask-brand">
+                <div className="wa-newtask-title">{t('tasks.newTaskTitle')}</div>
+                <div className="wa-newtask-sub">{t('tasks.newTaskHint')}</div>
+              </div>
               <ChatInput
                 onSend={handleSendWithReset}
                 onStop={handleStop}
@@ -1164,8 +1311,8 @@ const Tasks: React.FC = () => {
               />
             </div>
           ) : (
-            // 对话模式
-            <>
+            // 对话模式：消息在浮层输入区下方滚动
+            <div className="wa-chat-area" key="chat-area">
               {isComparisonMode ? (
                 <MultiChatPanel
                   comparisonMessages={getComparisonMessages()}
@@ -1178,15 +1325,8 @@ const Tasks: React.FC = () => {
                 />
               ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
-                  className="wa-message-scroll"
-                  style={{
-                    flex: 1,
-                    overflow: 'auto',
-                    padding: '18px 3% 8px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 20,
-                  }}
+                  className="wa-chat-scroll wa-message-scroll"
+                  data-testid="message-list"
                 >
                   <MessageList
                     messages={messages}
@@ -1212,36 +1352,44 @@ const Tasks: React.FC = () => {
                   />
                 </div>
               )}
-              {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}
-              <BackgroundShellBar conversationId={activeConversationId ?? undefined} />
-              <ChatInput
-                onSend={handleSendWithReset}
-                onStop={handleStop}
-                isStreaming={isStreaming}
-                placeholder={t('workbench.inputPlaceholder')}
-                providers={providers}
-                attachedImages={attachedImages}
-                onImagesChange={setAttachedImages}
-                selectedModels={selectedModels}
-                onModelsChange={handleChatModelsChange}
-                selectedCollectionIds={selectedCollectionIds}
-                onSelectedCollectionIdsChange={setPersistentCollectionIds}
-                allCollections={allCollections}
-                minimalMode={minimalMode}
-                onMinimalModeChange={handleToggleMinimalMode}
-                canToggleMinimalMode={messages.length === 0}
-                conversationId={activeConversationId}
-                getInitialDraft={getInputDraft}
-                onDraftChange={setInputDraft}
-                availableSkills={availableSkills}
-                defaultProviderId={inputDefaultModel?.providerId || sceneDefaultModel?.provider_id || ''}
-                defaultModelId={inputDefaultModel?.modelId || sceneDefaultModel?.model_id || ''}
-                onDefaultModelChange={setInputDefaultModel}
-                enableThinking={enableThinking}
-                onThinkingChange={setEnableThinking}
-                isCompacting={isCompacting}
-              />
-            </>
+              <div ref={composerDockRef} className="wa-composer-dock">
+                {/* 后台长跑任务：agent 异常中止后用户仍可在此手动停止 */}
+                <BackgroundShellBar conversationId={activeConversationId ?? undefined} />
+                <ChatInput
+                  onSend={handleSendWithReset}
+                  onStop={handleStop}
+                  isStreaming={isStreaming}
+                  placeholder={t('workbench.inputPlaceholder')}
+                  providers={providers}
+                  attachedImages={attachedImages}
+                  onImagesChange={setAttachedImages}
+                  selectedModels={selectedModels}
+                  onModelsChange={handleChatModelsChange}
+                  selectedCollectionIds={selectedCollectionIds}
+                  onSelectedCollectionIdsChange={setPersistentCollectionIds}
+                  allCollections={allCollections}
+                  minimalMode={minimalMode}
+                  onMinimalModeChange={handleToggleMinimalMode}
+                  canToggleMinimalMode={messages.length === 0}
+                  conversationId={activeConversationId}
+                  getInitialDraft={getInputDraft}
+                  onDraftChange={setInputDraft}
+                  availableSkills={availableSkills}
+                  defaultProviderId={inputDefaultModel?.providerId || sceneDefaultModel?.provider_id || ''}
+                  defaultModelId={inputDefaultModel?.modelId || sceneDefaultModel?.model_id || ''}
+                  onDefaultModelChange={setInputDefaultModel}
+                  enableThinking={enableThinking}
+                  onThinkingChange={setEnableThinking}
+                  isCompacting={isCompacting}
+                  approvalSlot={activeConversationRequests.length > 0 ? (
+                    <TaskInteractionCard
+                      requests={activeConversationRequests}
+                      respondById={respondInteraction}
+                    />
+                  ) : null}
+                />
+              </div>
+            </div>
           )}
           </div>
         )}

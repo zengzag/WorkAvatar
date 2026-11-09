@@ -222,12 +222,13 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   ]
 
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div className="wa-kms-searchbar" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Select
           value={searchMode}
           onChange={(v) => onSearchModeChange(v)}
           options={searchModeOptions}
+          data-testid="kms-search-mode"
           size="large"
           style={{ width: 140, flexShrink: 0 }}
           popupMatchSelectWidth={false}
@@ -242,6 +243,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
         >
           <Input
             ref={inputRef as any}
+            data-testid="kms-search-input"
             value={searchQuery}
             onChange={handleQueryChange}
             onKeyDown={handleKeyDown}
@@ -277,6 +279,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
                   icon={<SearchOutlined />}
                   onClick={onSearch}
                   loading={isSearching}
+                  data-testid="kms-search-submit"
                 >
                   {t('kms.search')}
                 </Button>

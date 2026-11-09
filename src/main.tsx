@@ -105,7 +105,7 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
             colorErrorBorder: '#f6c9c6',
           }),
 
-          colorBgLayout: isDark ? '#07090d' : '#f3f6fb',
+          colorBgLayout: isDark ? '#07090d' : '#e9eef7',
           colorBgContainer: isDark ? '#0f1218' : '#ffffff',
           colorBgElevated: isDark ? '#141925' : '#ffffff',
           colorBorder: isDark ? '#2a3342' : '#dfe6f0',

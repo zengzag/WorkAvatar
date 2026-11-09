@@ -533,7 +533,7 @@ describe('runPiAgentLoop / 事件转换与 token 累计', () => {
     expect(typeof executed[0].result.latencyMs).toBe('number')
   })
 
-  it('tool_execution_end：LLM 原文与展示值不同时下发 resultRaw（失败工具可原样重建历史）', async () => {
+  it('tool_execution_end：业务失败展示错误原因，并下发 LLM 原文供历史重建', async () => {
     const harness = makeHarness()
     const onToolResult = vi.fn()
     harness.params.callbacks = { onToolResult }
@@ -546,8 +546,27 @@ describe('runPiAgentLoop / 事件转换与 token 累计', () => {
     ])
     await runPiAgentLoop(harness.params)
     expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({
-      result: 'exit_code=1',
+      result: '命令执行失败',
+      success: false,
       resultRaw: '[错误] 命令执行失败\n\nexit_code=1',
+    }))
+  })
+
+  it('tool_execution_end：业务失败但无 error 时回退展示 output', async () => {
+    const harness = makeHarness()
+    const onToolResult = vi.fn()
+    harness.params.callbacks = { onToolResult }
+    h.loopImpl = () => eventStream([
+      { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'tool_a', args: {} },
+      {
+        type: 'tool_execution_end', toolCallId: 'c1', toolName: 'tool_a', isError: false,
+        result: { details: { success: false, output: 'partial output' } },
+      },
+    ])
+    await runPiAgentLoop(harness.params)
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({
+      result: 'partial output',
+      success: false,
     }))
   })
 

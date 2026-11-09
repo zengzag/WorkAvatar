@@ -1,14 +1,8 @@
 import type { SubAgentProfile, EphemeralSubAgentSpec } from '../../shared/types'
 import DatabaseService from './database.service'
-import { generateId } from './common-utils'
 import { createLogger } from './logger'
 
 const logger = createLogger('SubAgentProfile')
-
-/** 名称长度上限 */
-const MAX_NAME_CHARS = 50
-/** 描述长度上限 */
-const MAX_DESC_CHARS = 200
 
 /** 内置子智能体模板工具白名单：只读检索类（不写入、不删除、不执行命令） */
 const EXPLORE_TOOL_ALLOWLIST = [
@@ -23,12 +17,13 @@ const EXPLORE_TOOL_ALLOWLIST = [
  * 作为「开箱即用的预置执行者」，降低主管委托时现场手写 ephemeral_role 的门槛：
  * - explore：只读检索与归纳，适合跨多来源收集信息并给出结论；
  * - general：全能力通用执行者，适合独立的实现/生成/评审子任务。
+ * 工具白名单留空表示不限制，继承子会话完整默认工具集。
  */
 const BUILTIN_PROFILES: Array<Pick<SubAgentProfile, 'id' | 'name' | 'description' | 'system_prompt' | 'tools_json' | 'skills_json' | 'provider_id' | 'model_id' | 'source'>> = [
   {
     id: 'sap-builtin-explore',
-    name: 'explore',
-    description: '只读检索与归纳：跨多来源收集信息并给出结论，不修改任何文件',
+    name: '检索专家',
+    description: '只读检索与归纳：跨文件、图片、知识库、网页收集信息并给出结论，不修改任何文件',
     system_prompt: [
       'You are a read-only research specialist. Locate, read, and synthesize information from files, images, the knowledge base, and the web, then return a concise, well-structured answer to the delegating agent.',
       'Rules:',
@@ -45,8 +40,8 @@ const BUILTIN_PROFILES: Array<Pick<SubAgentProfile, 'id' | 'name' | 'description
   },
   {
     id: 'sap-builtin-general',
-    name: 'general',
-    description: '通用执行者：可读写文件并产出交付物，适合独立的实现/生成/评审子任务',
+    name: '通用执行者',
+    description: '全能力通用执行者：可读写文件、执行命令并产出交付物，适合独立的实现/生成类子任务',
     system_prompt: [
       'You are a general-purpose worker agent. Complete the delegated task end to end with the tools available and deliver concrete results.',
       'Rules:',
@@ -82,8 +77,9 @@ function rowToProfile(r: any): SubAgentProfile {
   }
 }
 
-/** 可复用子智能体模板 CRUD（sub_agent_profiles 表，主库）。
- * 主管可按 profile 委托（等价于一份预置的 ephemeral_role 规格）。 */
+/** 子智能体模板（sub_agent_profiles 表，主库）。
+ * 主管可按 profile 委托（等价于一份预置的 ephemeral_role 规格）。
+ * 模板由应用内置提供；保留 remove 以便清理历史版本中用户自建的模板行。 */
 class SubAgentProfileService {
   private static instance: SubAgentProfileService
 
@@ -134,74 +130,13 @@ class SubAgentProfileService {
       for (const p of BUILTIN_PROFILES) {
         stmt.run(p.id, p.name, p.description, p.system_prompt, p.tools_json, p.skills_json, p.provider_id, p.model_id, p.source, ts, ts)
       }
+      // 清理历史版本已下线但仍在库内的内置模板（如早期版本内置的评审/写作/数据分析）
+      const ids = BUILTIN_PROFILES.map(p => p.id)
+      DatabaseService.getInstance().getDb()
+        .prepare(`DELETE FROM sub_agent_profiles WHERE source = 'builtin' AND id NOT IN (${ids.map(() => '?').join(',')})`)
+        .run(...ids)
     } catch (err: any) {
       logger.warn('播种内置子智能体模板失败:', err?.message || err)
-    }
-  }
-
-  /** 创建模板；返回 created 或 { error } */
-  create(input: {
-    name?: unknown
-    description?: unknown
-    system_prompt?: unknown
-    tools?: unknown
-    skills?: unknown
-    provider_id?: unknown
-    model_id?: unknown
-  }): { profile?: SubAgentProfile; error?: string } {
-    const name = typeof input.name === 'string' ? input.name.trim() : ''
-    const systemPrompt = typeof input.system_prompt === 'string' ? input.system_prompt.trim() : ''
-    if (!name) return { error: 'name 不能为空' }
-    if (name.length > MAX_NAME_CHARS) return { error: `name 超长（最多 ${MAX_NAME_CHARS} 字）` }
-    if (!systemPrompt) return { error: 'system_prompt 不能为空' }
-    const description = typeof input.description === 'string' ? input.description.slice(0, MAX_DESC_CHARS) : ''
-    const profile: SubAgentProfile = {
-      id: `sap-${generateId()}`,
-      name,
-      description,
-      system_prompt: systemPrompt,
-      tools_json: JSON.stringify(this.parseStringArray(input.tools)),
-      skills_json: JSON.stringify(this.parseStringArray(input.skills)),
-      provider_id: typeof input.provider_id === 'string' && input.provider_id ? input.provider_id : null,
-      model_id: typeof input.model_id === 'string' && input.model_id ? input.model_id : null,
-      source: 'user',
-      created_at: now(),
-      updated_at: now(),
-    }
-    try {
-      DatabaseService.getInstance().getDb().prepare(
-        `INSERT INTO sub_agent_profiles (id, name, description, system_prompt, tools_json, skills_json, provider_id, model_id, source, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(profile.id, profile.name, profile.description, profile.system_prompt, profile.tools_json, profile.skills_json, profile.provider_id, profile.model_id, profile.source, profile.created_at, profile.updated_at)
-      return { profile }
-    } catch (err: any) {
-      logger.warn('创建子智能体模板失败:', err?.message || err)
-      return { error: '创建失败（数据库异常）' }
-    }
-  }
-
-  update(id: string, input: Record<string, unknown>): { profile?: SubAgentProfile; error?: string } {
-    const existing = this.get(id)
-    if (!existing) return { error: `模板不存在: ${id}` }
-    if (existing.source === 'builtin') return { error: '内置模板不可修改（可另建自定义模板）' }
-    const merged = {
-      name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : existing.name,
-      description: typeof input.description === 'string' ? input.description.slice(0, MAX_DESC_CHARS) : existing.description,
-      system_prompt: typeof input.system_prompt === 'string' && input.system_prompt.trim() ? input.system_prompt.trim() : existing.system_prompt,
-      tools: input.tools !== undefined ? this.parseStringArray(input.tools) : JSON.parse(existing.tools_json),
-      skills: input.skills !== undefined ? this.parseStringArray(input.skills) : JSON.parse(existing.skills_json),
-      provider_id: input.provider_id === undefined ? existing.provider_id : (typeof input.provider_id === 'string' && input.provider_id ? input.provider_id : null),
-      model_id: input.model_id === undefined ? existing.model_id : (typeof input.model_id === 'string' && input.model_id ? input.model_id : null),
-    }
-    if (merged.name.length > MAX_NAME_CHARS) return { error: `name 超长（最多 ${MAX_NAME_CHARS} 字）` }
-    try {
-      DatabaseService.getInstance().getDb().prepare(
-        `UPDATE sub_agent_profiles SET name = ?, description = ?, system_prompt = ?, tools_json = ?, skills_json = ?, provider_id = ?, model_id = ?, updated_at = ? WHERE id = ?`
-      ).run(merged.name, merged.description, merged.system_prompt, JSON.stringify(merged.tools), JSON.stringify(merged.skills), merged.provider_id, merged.model_id, now(), id)
-      return { profile: this.get(id)! }
-    } catch (err: any) {
-      logger.warn('更新子智能体模板失败:', err?.message || err)
-      return { error: '更新失败（数据库异常）' }
     }
   }
 

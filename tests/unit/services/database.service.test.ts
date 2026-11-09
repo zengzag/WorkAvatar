@@ -77,6 +77,28 @@ function createLegacyDbFile(dbPath: string): void {
   db.exec(`
     CREATE TABLE employees (id TEXT PRIMARY KEY, name TEXT);
     INSERT INTO employees VALUES ('e1', '员工一');
+    -- 模拟 v1.0 的 conversations：缺少 v1.7 查询所需的 default_model_json / collection_ids_json / workspace_mode
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY,
+      employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+      skill_id TEXT,
+      title TEXT DEFAULT '',
+      messages_json TEXT NOT NULL DEFAULT '[]',
+      message_count INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'active',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      summary TEXT DEFAULT '',
+      minimal_mode BOOLEAN NOT NULL DEFAULT 0,
+      last_message_at INTEGER,
+      system_prompt TEXT DEFAULT '',
+      memory_extracted_at INTEGER,
+      memory_extracted_message_count INTEGER NOT NULL DEFAULT 0,
+      context_stats_json TEXT DEFAULT '{}',
+      workspace_path TEXT DEFAULT '',
+      parent_conversation_id TEXT DEFAULT ''
+    );
+    INSERT INTO conversations (id, employee_id, title, message_count) VALUES ('c1', 'e1', '历史任务', 2);
     CREATE TABLE employee_memories (
       id TEXT PRIMARY KEY,
       employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -151,6 +173,31 @@ describe('DatabaseService 启动 / 旧库升级', () => {
     expect(rows.every(r => r.scope === 'employee')).toBe(true)
 
     service!.close()
+  })
+
+  it('旧库缺少增量列时启动自动补齐，对话列表查询不再缺列', () => {
+    createLegacyDbFile(path.join(dataDir, 'workavatar.db'))
+
+    const service = DatabaseService.getInstance()
+    const db = service.getDb()
+    const columns = db.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
+    for (const name of ['default_model_json', 'collection_ids_json', 'workspace_mode']) {
+      expect(columns.some(c => c.name === name)).toBe(true)
+    }
+
+    expect(() => db.prepare(
+      `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, workspace_mode,
+              parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json,
+              default_model_json, collection_ids_json
+       FROM conversations`
+    ).all()).not.toThrow()
+
+    const row = db.prepare(
+      'SELECT default_model_json, collection_ids_json FROM conversations WHERE id = ?'
+    ).get('c1') as { default_model_json: string; collection_ids_json: string } | undefined
+    expect(row).toEqual({ default_model_json: '', collection_ids_json: '' })
+
+    service.close()
   })
 
   it('全新库启动：scope 索引随建表流程创建', () => {

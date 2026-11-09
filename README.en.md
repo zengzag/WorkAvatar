@@ -17,7 +17,9 @@ Create a digital employee: give it a role, a model and a tool set. It breaks the
 
 [简体中文](README.md) | **English**
 
-<img src="images/agent-chat.gif" alt="An employee planning a task, searching local documents, reading files and writing output" width="86%" />
+<img src="images/en/hero.gif" alt="WorkAvatar in a nutshell: one sentence in, an employee that plans, uses tools and writes the result on your own machine" width="96%" />
+
+<img src="images/en/agent-chat.gif" alt="An employee planning a task, searching local documents, reading files and writing output" width="86%" />
 
 </div>
 
@@ -39,7 +41,7 @@ Create a digital employee: give it a role, a model and a tool set. It breaks the
 
 Each employee has its own instructions, default model, tool set and memory. Describe a task and it plans the steps and calls tools, with the whole run visible in the conversation: what it is doing, which file it opened, what it wrote, where it failed.
 
-<img src="images/employees.png" alt="Digital employee management" width="86%" />
+<img src="images/en/employees.png" alt="Digital employee management" width="86%" />
 
 - **Tools** — read, write, edit, copy and delete files, run shell commands (including long-running background jobs), search and fetch the web, recognize images, local OCR, generate Word / Excel / PowerPoint documents, search the knowledge base and past conversations. Tools are configurable per employee, and external MCP servers can be attached.
 - **Delegation** — hand work to other employees or ephemeral roles, up to 5 in parallel and two levels deep. Each sub-task runs in its own workspace and returns only a result summary, so the supervisor's context stays focused. Built-in `explore` (read-only research) and `general` (full capability) roles are included.
@@ -53,7 +55,7 @@ A small pet stays on your desktop and takes a task in one sentence: pick an empl
 
 ### Local knowledge base
 
-<img src="images/kms-search.gif" alt="Hybrid search across local documents" width="86%" />
+<img src="images/en/kms-search.gif" alt="Hybrid search across local documents" width="86%" />
 
 Add folders to the knowledge base and employees can search the project files, contracts, reports and meeting notes inside them.
 
@@ -83,17 +85,18 @@ The app ships with a set of optional plugins, imported, enabled or removed from 
 
 Plugins can also contribute navigation pages, settings tabs, agent tools, MCP tools, shortcuts and their own employees. Want to write one? See [plugin development](#plugin-development), or let the built-in Plugin Development Assistant scaffold it inside the app.
 
-<img src="images/plugins.gif" alt="Enabling and managing plugins" width="86%" />
+<img src="images/en/plugins.gif" alt="Enabling and managing plugins" width="86%" />
 
 <div align="center">
   <table><tr>
-    <td><img src="images/notes.png" alt="Notes" width="100%" /></td>
-    <td><img src="images/calendar.png" alt="Calendar & To-dos" width="100%" /></td>
+    <td><img src="images/en/notes.png" alt="Notes" width="100%" /></td>
+    <td><img src="images/en/calendar.png" alt="Calendar & To-dos" width="100%" /></td>
   </tr><tr>
-    <td><img src="images/voice.png" alt="Voice recognition and meeting minutes" width="100%" /></td>
-    <td><img src="images/automation.png" alt="Automation" width="100%" /></td>
+    <td><img src="images/en/voice.png" alt="Voice recognition and meeting minutes" width="100%" /></td>
+    <td><img src="images/en/automation.png" alt="Automation" width="100%" /></td>
   </tr><tr>
-    <td colspan="2"><img src="images/workflow.png" alt="Task template canvas" width="100%" /></td>
+    <td><img src="images/en/workflow.gif" alt="Task templates: a multi-employee pipeline running" width="100%" /></td>
+    <td><img src="images/en/image-studio.gif" alt="Image Studio" width="100%" /></td>
   </tr></table>
 </div>
 

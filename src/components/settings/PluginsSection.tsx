@@ -148,6 +148,8 @@ const PluginsSection: React.FC = () => {
               <Card
                 key={plugin.id}
                 size="small"
+                data-testid="plugin-card"
+                data-plugin-id={plugin.id}
                 style={{ height: '100%', borderColor: 'var(--wa-line)', background: 'var(--wa-panel)' }}
                 styles={{ body: { display: 'flex', flexDirection: 'column', gap: 6, height: '100%', padding: 12 } }}
               >
@@ -181,6 +183,7 @@ const PluginsSection: React.FC = () => {
                   <Space size={2} style={{ flexShrink: 0 }}>
                     <Switch
                       size="small"
+                      data-testid="plugin-toggle"
                       checked={plugin.enabled}
                       onChange={(checked) => handleToggle(plugin, checked)}
                     />

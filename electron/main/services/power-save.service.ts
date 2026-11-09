@@ -7,6 +7,14 @@ const logger = createLogger('PowerSave')
 // settings 表中的配置键：应用窗口未全部关闭时禁止系统自动熄屏/休眠
 export const PREVENT_SLEEP_SETTING_KEY = 'prevent_sleep_when_foreground'
 
+/** 不参与防休眠判定的辅助小窗（小秘书挂件/面板等常驻置顶浮窗） */
+const ignoredWindows = new WeakSet<BrowserWindow>()
+
+/** 标记忽略窗口：其显隐不影响防休眠判定 */
+export const markPowerSaveIgnored = (win: BrowserWindow): void => {
+  ignoredWindows.add(win)
+}
+
 /**
  * 窗口防休眠服务：开启后，只要应用仍存在开启的窗口（即使被其他窗口覆盖、不在前台），
  * 就通过 powerSaveBlocker 阻止系统自动关闭屏幕和进入休眠。
@@ -86,10 +94,13 @@ class PowerSaveService {
     }
   }
 
-  /** 是否存在仍开启的窗口：窗口可见（即使失焦/被覆盖/最小化）即视为开启，全部隐藏（仅剩托盘图标）时返回 false */
+  /**
+   * 是否存在仍开启的窗口：窗口可见（即使失焦/被覆盖/最小化）即视为开启，全部隐藏（仅剩托盘图标）时返回 false。
+   * 小秘书挂件/面板是常驻置顶小窗，显示它们不代表用户在用应用，不计入判定。
+   */
   private hasOpenWindow(): boolean {
     return BrowserWindow.getAllWindows().some(
-      (win) => !win.isDestroyed() && win.isVisible()
+      (win) => !win.isDestroyed() && win.isVisible() && !ignoredWindows.has(win)
     )
   }
 

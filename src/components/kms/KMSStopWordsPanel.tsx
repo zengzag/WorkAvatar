@@ -108,7 +108,7 @@ const KMSStopWordsPanel: React.FC = () => {
   }, [t, message, modal, loadWords])
 
   return (
-    <div>
+    <div style={{ height: '100%', overflow: 'auto' }}>
       {/* 标题 */}
       <div style={{ marginBottom: 12 }}>
         <Space>

@@ -17,6 +17,8 @@
 
 **简体中文** | [English](README.en.md)
 
+<img src="images/hero.gif" alt="WorkAvatar 简介：一句话派活，数字员工在你自己的电脑上拆解任务、调用工具、写出结果" width="96%" />
+
 <img src="images/agent-chat.gif" alt="数字员工拆解任务、检索本地资料、读取文件并写出结果" width="86%" />
 
 </div>
@@ -49,7 +51,7 @@
 
 ### 桌面小秘书
 
-桌面上常驻一只小挂件，一句话就能派活：选员工、写一句话，任务在后台静默跑起来，并立即出现在任务列表里，点开就能看。`Ctrl+Alt+Space` 随时唤出，尺寸、免打扰和隐藏都在「设置 → 小秘书」里。
+桌面上常驻一只小挂件（默认关闭，在「设置 → 小秘书」或托盘菜单开启），一句话就能派活：选员工、写一句话，任务在后台静默跑起来，并立即出现在任务列表里，点开就能看。开启后 `Ctrl+Alt+Space` 随时唤出，尺寸、免打扰和隐藏都在「设置 → 小秘书」里。
 
 ### 本地资料库
 
@@ -93,7 +95,8 @@
     <td><img src="images/voice.png" alt="语音识别与会议纪要" width="100%" /></td>
     <td><img src="images/automation.png" alt="自动化任务" width="100%" /></td>
   </tr><tr>
-    <td colspan="2"><img src="images/workflow.png" alt="模板任务画布" width="100%" /></td>
+    <td><img src="images/workflow.gif" alt="模板任务：多员工流水线运行实况" width="100%" /></td>
+    <td><img src="images/image-studio.gif" alt="生图" width="100%" /></td>
   </tr></table>
 </div>
 

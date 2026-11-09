@@ -53,7 +53,7 @@ vi.mock('../../../electron/main/services/database.service', () => ({
   default: { getInstance: () => ({ getDb: () => mockState.db }) },
 }))
 
-import PowerSaveService, { PREVENT_SLEEP_SETTING_KEY } from '../../../electron/main/services/power-save.service'
+import PowerSaveService, { PREVENT_SLEEP_SETTING_KEY, markPowerSaveIgnored } from '../../../electron/main/services/power-save.service'
 
 function makeWindow(init: { visible?: boolean; destroyed?: boolean } = {}) {
   const s = { visible: true, destroyed: false, ...init }
@@ -204,6 +204,31 @@ describe('power-save / blocker 生命周期', () => {
     a.s.visible = false
     a.emit('closed')
     expect(mockState.blocker.active.size).toBe(1)
+  })
+
+  it('小秘书等忽略窗口显示时不启动 blocker', () => {
+    const pet = makeWindow({ visible: true })
+    markPowerSaveIgnored(pet as any)
+    mockState.windows.push(pet)
+    const service = PowerSaveService.getInstance()
+    service.init()
+    expect(mockState.blocker.start).not.toHaveBeenCalled()
+  })
+
+  it('忽略窗口与普通窗口共存时只按普通窗口判定', () => {
+    const main = makeWindow({ visible: true })
+    const pet = makeWindow({ visible: true })
+    markPowerSaveIgnored(pet as any)
+    mockState.windows.push(main, pet)
+    const service = PowerSaveService.getInstance()
+    service.init()
+    emitApp('browser-window-created', {}, main)
+    emitApp('browser-window-created', {}, pet)
+    expect(mockState.blocker.active.size).toBe(1)
+
+    main.s.visible = false
+    main.emit('hide')
+    expect(mockState.blocker.active.size).toBe(0)
   })
 
   it('shutdown 释放 blocker，重复调用安全', () => {

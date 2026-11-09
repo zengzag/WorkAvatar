@@ -20,9 +20,7 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_MOVE_PET: 'secretary:move-pet',
   /** 拖动结束：吸附到屏幕边缘并落盘 */
   SECRETARY_DRAG_END: 'secretary:drag-end',
-  /** 面板内容高度变化：主进程据此调整窗口高度 */
-  SECRETARY_SET_PANEL_HEIGHT: 'secretary:set-panel-height',
-  /** 面板左右边缘拖拽调整宽度（高度仍由内容上报决定） */
+  /** 面板左右/上下边缘拖拽调整宽高（宽高一起持久化） */
   SECRETARY_SET_PANEL_SIZE: 'secretary:set-panel-size',
   /** 透明区域点击穿透开关（挂件窗口用） */
   SECRETARY_SET_IGNORE_MOUSE: 'secretary:set-ignore-mouse',
@@ -34,7 +32,35 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_CONTEXT_MENU: 'secretary:context-menu',
   /** 主进程 → 主窗口：打开「设置 → 小秘书」 */
   SECRETARY_OPEN_SETTINGS: 'secretary:open-settings',
+  /** 主进程 → 挂件窗/面板窗：宿主通知（小秘书启用时承接系统通知） */
+  SECRETARY_NOTIFY: 'secretary:notify',
+  /** 主进程 → 挂件窗/面板窗：交互请求已在任意窗口处理，撤回对应提醒 */
+  SECRETARY_NOTIFY_DISMISS: 'secretary:notify-dismiss',
+  /** 面板窗 → 主进程：点击通知条目，聚焦主窗口并跳转目标 */
+  SECRETARY_NOTIFY_CLICK: 'secretary:notify-click',
+  /** 渲染端 → 主进程：窗口已完成挂载，可以接收通知（挂件窗/面板窗各自上报） */
+  SECRETARY_WINDOW_READY: 'secretary:window-ready',
 } as const
+
+/** 撤回提醒的关联键：交互请求 id（通知下发时写入 clickId） */
+export interface SecretaryNotifyDismissPayload {
+  clickId?: string
+}
+
+/** 小秘书承接的通知载荷（复用宿主 NotifyPayload 字段，额外带接收时间） */
+export interface SecretaryNotifyPayload {
+  title: string
+  body: string
+  clickTarget?: string
+  clickId?: string
+  source?: string
+  i18nKey?: string
+  i18nTitleKey?: string
+  i18nParams?: Record<string, string | number>
+  createdAt: number
+  /** 主窗口不在前台时由面板直接弹出通知卡片（「知道了」/10s 后收起） */
+  autoPopup?: boolean
+}
 
 /** 可选的挂件形象，数组顺序即设置面板展示顺序；robot（波波，默认形象）屏幕脸默认显示应用图标、可被员工头像图替换，blob 为最初的圆团子 */
 export const SECRETARY_CHARACTER_IDS = ['robot', 'blob', 'momo', 'pip'] as const
@@ -72,7 +98,7 @@ export interface SecretaryRuntimeState {
 export type SecretarySide = 'left' | 'right'
 
 export const DEFAULT_SECRETARY_SETTINGS: SecretarySettings = {
-  enabled: true,
+  enabled: false,
   size: 128,
   opacity: 1,
   hotkey: 'Control+Alt+Space',

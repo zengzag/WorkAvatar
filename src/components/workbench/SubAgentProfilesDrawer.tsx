@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Drawer, Button, List, Avatar, Tag, App, theme, Modal, Input, Typography, Empty, Popconfirm } from 'antd'
-import { PlusOutlined, SolutionOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Drawer, Button, List, Avatar, Tag, App, theme, Modal, Typography, Empty, Popconfirm, Tooltip, Divider } from 'antd'
+import { SolutionOutlined, DeleteOutlined, ReloadOutlined, EyeOutlined, RobotOutlined } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 
@@ -17,18 +17,6 @@ interface SubAgentProfile {
   source: 'user' | 'builtin'
 }
 
-interface EditorState {
-  open: boolean
-  id?: string
-  name: string
-  description: string
-  system_prompt: string
-  tools: string
-  skills: string
-}
-
-const emptyEditor: EditorState = { open: false, name: '', description: '', system_prompt: '', tools: '', skills: '' }
-
 const parseTags = (json: string): string[] => {
   try {
     const arr = JSON.parse(json || '[]')
@@ -38,7 +26,7 @@ const parseTags = (json: string): string[] => {
   }
 }
 
-/** 子智能体模板管理抽屉：主管委托时可按模板派发（subagent_profile_id） */
+/** 子智能体模板抽屉（只读模板库）：主管委托时可按模板派发（subagent_profile_id） */
 const SubAgentProfilesDrawer: React.FC<{
   open: boolean
   onClose: () => void
@@ -48,7 +36,7 @@ const SubAgentProfilesDrawer: React.FC<{
   const { token } = theme.useToken()
   const [profiles, setProfiles] = useState<SubAgentProfile[]>([])
   const [loading, setLoading] = useState(false)
-  const [editor, setEditor] = useState<EditorState>(emptyEditor)
+  const [detail, setDetail] = useState<SubAgentProfile | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -66,53 +54,27 @@ const SubAgentProfilesDrawer: React.FC<{
     if (open) void load()
   }, [open, load])
 
-  const openCreate = () => setEditor({ ...emptyEditor, open: true })
-  const openEdit = (p: SubAgentProfile) => setEditor({
-    open: true,
-    id: p.id,
-    name: p.name,
-    description: p.description,
-    system_prompt: p.system_prompt,
-    tools: parseTags(p.tools_json).join(', '),
-    skills: parseTags(p.skills_json).join(', '),
-  })
-
-  const handleSave = async () => {
-    if (!editor.name.trim() || !editor.system_prompt.trim()) {
-      toast.warning(t('subagentProfiles.nameAndPromptRequired'))
-      return
-    }
-    const tools = editor.tools.split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean)
-    const skills = editor.skills.split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean)
-    try {
-      const res = editor.id
-        ? await window.electronAPI.subagent.updateProfile({
-            id: editor.id, name: editor.name, description: editor.description,
-            system_prompt: editor.system_prompt, tools, skills,
-          })
-        : await window.electronAPI.subagent.createProfile({
-            name: editor.name, description: editor.description,
-            system_prompt: editor.system_prompt, tools, skills,
-          })
-      if (!res.ok) { toast.error(res.error || t('common.saveFailed')); return }
-      toast.success(t('common.saveSuccess'))
-      setEditor(emptyEditor)
-      void load()
-    } catch {
-      toast.error(t('common.saveFailed'))
-    }
-  }
-
   const handleDelete = async (id: string) => {
     try {
       const res = await window.electronAPI.subagent.deleteProfile(id)
       if (!res.ok) { toast.error(res.error || t('common.deleteFailed')); return }
       toast.success(t('common.deleteSuccess'))
+      if (detail?.id === id) setDetail(null)
       void load()
     } catch {
       toast.error(t('common.deleteFailed'))
     }
   }
+
+  const renderTags = (list: string[], emptyText: string) => (
+    list.length > 0
+      ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {list.map((x) => <Tag key={x} style={{ margin: 0, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{x}</Tag>)}
+        </div>
+      )
+      : <Text type="secondary" style={{ fontSize: 12 }}>{emptyText}</Text>
+  )
 
   return (
     <Drawer
@@ -120,98 +82,128 @@ const SubAgentProfilesDrawer: React.FC<{
       open={open}
       onClose={onClose}
       width={480}
-      extra={
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => void load()} />
-          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>
-            {t('subagentProfiles.create')}
-          </Button>
-        </div>
-      }
+      extra={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()} />}
     >
+      <Paragraph type="secondary" style={{ marginTop: 0, fontSize: 12 }}>
+        {t('subagentProfiles.builtinHint')}
+      </Paragraph>
       <List
         loading={loading}
         dataSource={profiles}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('subagentProfiles.empty')} /> }}
-        renderItem={(p: SubAgentProfile) => (
-          <List.Item
-            style={{ padding: '10px 0' }}
-            actions={[
-              p.source === 'user' && (
-                <Button key="edit" type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(p)} />
-              ),
-              p.source === 'user' && (
-                <Popconfirm
-                  key="del"
-                  title={t('subagentProfiles.confirmDelete')}
-                  onConfirm={() => void handleDelete(p.id)}
-                >
-                  <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              ),
-            ]}
-          >
-            <div style={{ display: 'flex', gap: 10, minWidth: 0 }}>
-              <Avatar size={32} icon={<SolutionOutlined />} style={{ backgroundColor: token.colorPrimaryBg, color: token.colorPrimary, flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
-                  {p.source === 'builtin' && <Tag style={{ margin: 0 }}>{t('subagentProfiles.builtin')}</Tag>}
-                </div>
-                {p.description && (
-                  <Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }} ellipsis={{ rows: 1 }}>
-                    {p.description}
+        renderItem={(p: SubAgentProfile) => {
+          const tools = parseTags(p.tools_json)
+          const skills = parseTags(p.skills_json)
+          return (
+            <List.Item
+              style={{ padding: '10px 0', cursor: 'pointer' }}
+              onClick={() => setDetail(p)}
+              actions={[
+                <Tooltip key="view" title={t('subagentProfiles.detail')}>
+                  <Button type="text" size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); setDetail(p) }} />
+                </Tooltip>,
+                p.source === 'user' && (
+                  <Popconfirm
+                    key="del"
+                    title={t('subagentProfiles.confirmDelete')}
+                    onConfirm={() => void handleDelete(p.id)}
+                  >
+                    <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+                  </Popconfirm>
+                ),
+              ]}
+            >
+              <div style={{ display: 'flex', gap: 10, minWidth: 0 }}>
+                <Avatar size={32} icon={<SolutionOutlined />} style={{ backgroundColor: token.colorPrimaryBg, color: token.colorPrimary, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
+                    {p.source === 'builtin' && <Tag style={{ margin: 0 }}>{t('subagentProfiles.builtin')}</Tag>}
+                  </div>
+                  {p.description && (
+                    <Paragraph type="secondary" style={{ margin: 0, fontSize: 12 }} ellipsis={{ rows: 1 }}>
+                      {p.description}
+                    </Paragraph>
+                  )}
+                  <Paragraph style={{ margin: '2px 0 0', fontSize: 11, color: token.colorTextQuaternary }} ellipsis={{ rows: 1 }}>
+                    {t('subagentProfiles.toolsLabel')}: {tools.join('、') || t('subagentProfiles.defaultTools')}
+                    {skills.length > 0 ? ` · ${t('subagentProfiles.skillsLabel')}: ${skills.join('、')}` : ''}
                   </Paragraph>
-                )}
-                <Paragraph style={{ margin: 0, fontSize: 11, color: token.colorTextQuaternary }} ellipsis={{ rows: 1 }}>
-                  {parseTags(p.tools_json).join('、') || t('subagentProfiles.defaultTools')}
-                </Paragraph>
+                  <Paragraph style={{ margin: 0, fontSize: 11, color: token.colorTextQuaternary }} ellipsis={{ rows: 1 }}>
+                    {t('subagentProfiles.promptLabel')}: {p.system_prompt}
+                  </Paragraph>
+                </div>
               </div>
-            </div>
-          </List.Item>
-        )}
+            </List.Item>
+          )
+        }}
       />
 
       <Modal
-        title={editor.id ? t('subagentProfiles.edit') : t('subagentProfiles.create')}
-        open={editor.open}
-        onCancel={() => setEditor(emptyEditor)}
-        onOk={() => void handleSave()}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-        destroyOnHidden
-        width={560}
+        title={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <RobotOutlined />
+            <span>{detail?.name}</span>
+            {detail?.source === 'builtin' && <Tag style={{ margin: 0 }}>{t('subagentProfiles.builtin')}</Tag>}
+          </div>
+        )}
+        open={!!detail}
+        onCancel={() => setDetail(null)}
+        width={720}
+        footer={<Button onClick={() => setDetail(null)}>{t('common.close')}</Button>}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Input
-            placeholder={t('subagentProfiles.fieldName')}
-            value={editor.name}
-            onChange={(e) => setEditor({ ...editor, name: e.target.value })}
-            maxLength={50}
-          />
-          <Input
-            placeholder={t('subagentProfiles.fieldDescription')}
-            value={editor.description}
-            onChange={(e) => setEditor({ ...editor, description: e.target.value })}
-            maxLength={200}
-          />
-          <Input.TextArea
-            placeholder={t('subagentProfiles.fieldSystemPrompt')}
-            value={editor.system_prompt}
-            onChange={(e) => setEditor({ ...editor, system_prompt: e.target.value })}
-            autoSize={{ minRows: 4, maxRows: 14 }}
-          />
-          <Input
-            placeholder={t('subagentProfiles.fieldTools')}
-            value={editor.tools}
-            onChange={(e) => setEditor({ ...editor, tools: e.target.value })}
-          />
-          <Input
-            placeholder={t('subagentProfiles.fieldSkills')}
-            value={editor.skills}
-            onChange={(e) => setEditor({ ...editor, skills: e.target.value })}
-          />
-        </div>
+        {detail && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: '70vh', overflow: 'auto', paddingRight: 4 }}>
+            <div>
+              <Text strong style={{ fontSize: 12 }}>{t('subagentProfiles.descriptionLabel')}</Text>
+              <Paragraph style={{ margin: '4px 0 0', fontSize: 13 }}>
+                {detail.description || <Text type="secondary">{t('subagentProfiles.none')}</Text>}
+              </Paragraph>
+            </div>
+
+            <div>
+              <Text strong style={{ fontSize: 12 }}>{t('subagentProfiles.modelLabel')}</Text>
+              <div style={{ marginTop: 4 }}>
+                {detail.provider_id || detail.model_id
+                  ? <Tag style={{ margin: 0, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{detail.provider_id || '-'} / {detail.model_id || '-'}</Tag>
+                  : <Text type="secondary" style={{ fontSize: 12 }}>{t('subagentProfiles.inheritModel')}</Text>}
+              </div>
+            </div>
+
+            <div>
+              <Text strong style={{ fontSize: 12 }}>{t('subagentProfiles.toolsLabel')}</Text>
+              <div style={{ marginTop: 4 }}>{renderTags(parseTags(detail.tools_json), t('subagentProfiles.defaultTools'))}</div>
+            </div>
+
+            <div>
+              <Text strong style={{ fontSize: 12 }}>{t('subagentProfiles.skillsLabel')}</Text>
+              <div style={{ marginTop: 4 }}>{renderTags(parseTags(detail.skills_json), t('subagentProfiles.none'))}</div>
+            </div>
+
+            <Divider style={{ margin: '2px 0' }} />
+
+            <div>
+              <Text strong style={{ fontSize: 12 }}>{t('subagentProfiles.promptLabel')}</Text>
+              <pre
+                style={{
+                  margin: '6px 0 0',
+                  padding: 12,
+                  borderRadius: token.borderRadius,
+                  background: token.colorFillQuaternary,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  color: token.colorText,
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                }}
+              >
+                {detail.system_prompt || t('subagentProfiles.none')}
+              </pre>
+            </div>
+          </div>
+        )}
       </Modal>
     </Drawer>
   )

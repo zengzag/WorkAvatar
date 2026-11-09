@@ -111,7 +111,7 @@ const SecretarySettingsPanel: React.FC = () => {
         <span style={labelStyle}>{t('secretary.size')}</span>
         <Slider
           style={{ width: 200, margin: 0 }}
-          min={64}
+          min={32}
           max={192}
           step={8}
           value={sizeValue}

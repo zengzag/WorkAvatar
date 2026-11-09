@@ -51,13 +51,66 @@ const STRINGS = {
     'en-US': 'A digital employee needs your confirmation',
   },
 
-  toolConfirmTitle: { 'zh-CN': '确认执行工具', 'en-US': 'Confirm Tool Execution' },
+  toolConfirmTitle: { 'zh-CN': '允许执行该工具？', 'en-US': 'Allow this tool to run?' },
   toolConfirmMessage: {
-    'zh-CN': '数字员工即将执行工具「{{name}}」，该工具可能修改文件或执行脚本，是否允许？',
-    'en-US': 'The digital employee is about to run the tool "{{name}}". It may modify files or execute scripts. Allow?',
+    'zh-CN': '数字员工请求执行「{{name}}」，该工具可能修改文件或运行脚本。',
+    'en-US': 'The digital employee requests to run "{{name}}". This tool may modify files or run scripts.',
   },
-  sensitiveFileTitle: { 'zh-CN': '确认操作敏感文件', 'en-US': 'Confirm Sensitive File Operation' },
+  sensitiveFileTitle: { 'zh-CN': '允许访问敏感文件？', 'en-US': 'Allow access to sensitive files?' },
   irreversibleConfirmTitle: { 'zh-CN': '确认不可逆操作', 'en-US': 'Confirm Irreversible Operation' },
+  filePermissionOutsideTitle: {
+    'zh-CN': '允许访问工作区外的文件？',
+    'en-US': 'Allow access to files outside the workspace?',
+  },
+  filePermissionOutsideMessage: {
+    'zh-CN': '助手请求{{operation}}以下工作区外的路径（共 {{count}} 个）：\n\n{{paths}}\n\n允许后可选择「始终允许此目录」，该目录及子目录内的后续操作将自动通过。',
+    'en-US': 'The assistant requests to {{operation}} these paths outside the workspace ({{count}} in total):\n\n{{paths}}\n\nAfter allowing, you can choose "Always allow this folder" so later actions in it and its subfolders are allowed automatically.',
+  },
+  filePermissionSensitiveSection: {
+    'zh-CN': '**敏感文件**（凭据、密钥或版本库内部文件；位于工作区内也需要确认，且只能逐次允许）：',
+    'en-US': '**Sensitive files** (credentials, keys or repository internals; confirmation is required even inside the workspace, and only one-time approval is available):',
+  },
+  filePermissionSensitiveMessage: {
+    'zh-CN': '该操作涉及敏感文件，无法使用「始终允许」，请逐次确认。',
+    'en-US': 'This action touches sensitive files, so "always allow" is unavailable. Please confirm each time.',
+  },
+  filePermissionMorePaths: {
+    'zh-CN': '- …（共 {{count}} 个路径）',
+    'en-US': '- …({{count}} paths in total)',
+  },
+  sandboxCommandAccessTitle: {
+    'zh-CN': '允许此命令完整访问文件？',
+    'en-US': 'Allow this command full file access?',
+  },
+  sandboxCommandAccessMessage: {
+    'zh-CN': `命令申请本次「完整文件访问」权限，可读写工作区外的任意路径。
+
+默认可写范围：{{workspace}} 与私有临时目录
+工作目录：{{cwd}}
+
+命令：
+\`\`\`
+{{command}}
+\`\`\`
+
+仅对本次命令生效；拒绝则命令不会执行。`,
+    'en-US': `The command requests full file access for this run and may read or write any path outside the workspace.
+
+Default writable scope: {{workspace}} and a private temp directory
+Working directory: {{cwd}}
+
+Command:
+\`\`\`
+{{command}}
+\`\`\`
+
+This applies only to the current command. If denied, the command will not run.`,
+  },
+  fileOperationWrite: { 'zh-CN': '写入', 'en-US': 'write' },
+  fileOperationAppend: { 'zh-CN': '追加', 'en-US': 'append to' },
+  fileOperationModify: { 'zh-CN': '修改', 'en-US': 'modify' },
+  fileOperationCopy: { 'zh-CN': '复制到', 'en-US': 'copy to' },
+  fileOperationDelete: { 'zh-CN': '删除', 'en-US': 'delete' },
   sandboxTaskAccessTitle: {
     'zh-CN': '助手申请本轮任务完整访问权限',
     'en-US': 'Full Access Requested for This Task',
@@ -74,7 +127,7 @@ const STRINGS = {
 \`\`\`
 
 批准后：本轮任务后续所有命令不再套文件沙箱，文件工具可直接读写任意路径；
-敏感文件（.git/.ssh/.env/密钥等）与删除操作仍需逐次确认；可随时在输入框的执行模式按钮切回手动审批。
+敏感文件（.git/.ssh/.env/密钥等）与删除操作仍需逐次确认；可随时在输入框内的执行模式按钮切回「手动审批」。
 拒绝：本次命令不会执行。`,
     'en-US': `The assistant requests full file access for this task: the task cannot be completed inside the workspace and needs to read and write paths outside it.
 
@@ -87,7 +140,7 @@ Command:
 \`\`\`
 
 After approval: later commands in this task run without the file sandbox, and file tools may read and write any path.
-Sensitive files (.git/.ssh/.env/keys …) and deletions still require confirmation; you can switch back to manual approval from the execution mode button below the input box.
+Sensitive files (.git/.ssh/.env/keys …) and deletions still require confirmation; you can switch back to Manual Approval anytime via the execution mode button inside the input box.
 Denied: this command will not run.`,
   },
 

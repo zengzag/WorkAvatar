@@ -343,7 +343,7 @@ class WorkspaceManagerService {
   }
 
   /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的顶层对话，支持分页 */
-  getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
+  getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[]; keyword?: string }): Array<Conversation & { employee_name: string }> {
     let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.workspace_path, c.workspace_mode, c.parent_conversation_id, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json, c.default_model_json, c.collection_ids_json,
                 e.name as employee_name
          FROM conversations c
@@ -354,6 +354,13 @@ class WorkspaceManagerService {
       const placeholders = params.employee_ids.map(() => '?').join(',')
       sql += ` AND c.employee_id IN (${placeholders})`
       values.push(...params.employee_ids)
+    }
+    // 关键字只匹配标题/员工名（元数据扫描），正文检索由 searchConversationsGlobal 负责
+    const keyword = String(params?.keyword || '').trim().replace(/\s+/g, '')
+    if (keyword) {
+      const pattern = `%${keyword.replace(/[%_]/g, (m) => '\\' + m)}%`
+      sql += ` AND (c.title LIKE ? ESCAPE '\\' OR e.name LIKE ? ESCAPE '\\')`
+      values.push(pattern, pattern)
     }
     sql += ` ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`
     if (params?.limit !== undefined) {
@@ -799,7 +806,8 @@ class WorkspaceManagerService {
     if (results.length === 0) {
       const likeTokens = buildConversationLikeTerms(query)
       if (likeTokens.length > 0) {
-        const tokenCond = `(c.title LIKE ? ESCAPE '\\' OR COALESCE(c.summary, '') LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM conversations_fts f WHERE f.conversation_id = c.id AND f.content_raw LIKE ? ESCAPE '\\'))`
+        // 正文经 LEFT JOIN 只读一次，避免每个词各做一次相关子查询重复扫描 content_raw
+        const tokenCond = `(c.title LIKE ? ESCAPE '\\' OR COALESCE(c.summary, '') LIKE ? ESCAPE '\\' OR COALESCE(f.content_raw, '') LIKE ? ESCAPE '\\')`
         const andClause = likeTokens.map(() => tokenCond).join(' AND ')
         const tokenParams = likeTokens.flatMap((t) => {
           const p = `%${t.replace(/[%_]/g, (m) => '\\' + m)}%`
@@ -812,20 +820,18 @@ class WorkspaceManagerService {
         const employeeParams = employeeIds
 
         // content_raw 中 queryNoSpace 出现次数（LENGTH 差值法）
-        const contentHitsExpr = `COALESCE((
-          SELECT (LENGTH(f.content_raw) - LENGTH(REPLACE(LOWER(f.content_raw), LOWER(?), ''))) / MAX(LENGTH(?), 1)
-          FROM conversations_fts f WHERE f.conversation_id = c.id
-        ), 0)`
+        const contentHitsExpr = `COALESCE((LENGTH(f.content_raw) - LENGTH(REPLACE(LOWER(f.content_raw), LOWER(?), ''))) / MAX(LENGTH(?), 1), 0)`
 
         results = this.db.getDb().prepare(`
           SELECT
             c.id, c.employee_id, e.name as employee_name,
             c.title, c.summary, c.last_message_at, c.message_count,
-            COALESCE((SELECT f.content_raw FROM conversations_fts f WHERE f.conversation_id = c.id), '') as preview_raw,
+            COALESCE(f.content_raw, '') as preview_raw,
             ${titleScoreExpr} as title_score,
             ${contentHitsExpr} as content_hits
           FROM conversations c
           JOIN employees e ON e.id = c.employee_id
+          LEFT JOIN conversations_fts f ON f.conversation_id = c.id
           WHERE c.status = 'active'
             AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
             AND c.employee_id NOT LIKE 'inline:%'

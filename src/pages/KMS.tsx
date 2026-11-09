@@ -125,20 +125,16 @@ const KMSPage: React.FC = () => {
   }, [previewFile, searchQuery])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="wa-module-page">
+      <div className="wa-module-shell">
       {/* 顶部工具栏：视图切换 + 设置 */}
-      <div className="wa-workbench-topbar" style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        height: 46,
-        padding: '0 16px',
-        borderBottom: '1px solid var(--wa-line-2)',
-        flexShrink: 0,
-      }}>
+      <div className="wa-module-header">
+        <span className="wa-module-title">{t('nav.kms')}</span>
+        <span className="wa-topbar-divider" style={{ marginInline: 2 }} />
         <Segmented
           value={viewMode}
           onChange={(v) => setViewMode(v as ViewMode)}
+          data-testid="kms-view-switch"
           options={[
             {
               label: (
@@ -178,11 +174,12 @@ const KMSPage: React.FC = () => {
             },
           ]}
         />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
           <Button
             type="text"
             icon={<SettingOutlined />}
             onClick={() => setSettingsOpen(true)}
+            data-testid="kms-settings-open"
           >
             {t('kms.settings')}
           </Button>
@@ -190,7 +187,7 @@ const KMSPage: React.FC = () => {
       </div>
 
       {/* 主体内容区 */}
-      <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
+      <div className="wa-module-body is-flush">
         {viewMode === 'search' ? (
           <KMSSearchPanel
             searchQuery={searchQuery}
@@ -237,6 +234,7 @@ const KMSPage: React.FC = () => {
             onPreviewFile={handlePreview}
           />
         )}
+      </div>
       </div>
 
       {/* 设置抽屉（分Tab结构） */}

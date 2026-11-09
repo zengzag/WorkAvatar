@@ -145,6 +145,8 @@ class UnifiedInteractionService {
     if (session) {
       for (const [requestId, pending] of session.pendingRequests) {
         if (pending.timer) clearTimeout(pending.timer)
+        this.notifyRendererDismiss(session, requestId)
+        this.withdrawSecretaryNotice(requestId)
         pending.resolve({ id: requestId, cancelled: true })
       }
       this.sessions.delete(sessionId)
@@ -181,11 +183,13 @@ class UnifiedInteractionService {
 
     // 主窗口未激活时，通过系统通知告知用户有数字员工询问
     // 避免用户错过权限请求；点击通知会聚焦主窗口显示交互弹窗
-    this.maybeNotifyInactiveWindow(request, session.webContents)
+    this.maybeNotifyInactiveWindow(request, session.webContents, id)
 
     return new Promise<InteractionResponse>((resolve) => {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id)
+        this.notifyRendererDismiss(session, id)
+        this.withdrawSecretaryNotice(id)
         resolve({ id, cancelled: true, timedOut: true })
       }, timeout)
 
@@ -193,12 +197,25 @@ class UnifiedInteractionService {
 
       try {
         session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
+        this.maybeRelayToSecretary(fullRequest, session.webContents)
       } catch {
         clearTimeout(timer)
         session.pendingRequests.delete(id)
+        this.withdrawSecretaryNotice(id)
         resolve({ id, cancelled: true })
       }
     })
+  }
+
+  /**
+   * 请求在主进程侧已失效（超时/会话结束）时通知渲染端关闭弹窗，
+   * 避免用户面对一个已经无响应目标的弹窗。
+   */
+  private notifyRendererDismiss(session: SessionInfo, requestId: string): void {
+    try {
+      if (session.webContents.isDestroyed()) return
+      session.webContents.send(IPC_CHANNELS.INTERACTION_DISMISS, { id: requestId })
+    } catch { /* 窗口已销毁时忽略 */ }
   }
 
   /**
@@ -206,8 +223,13 @@ class UnifiedInteractionService {
    * 复用 NotificationService 的主窗口失焦检测与通知点击聚焦逻辑。
    * 通知 body 截断到 200 字符，避免过长。
    * 小秘书面板窗发起的请求不发通知：面板会自动弹出并把挂件切到等待态，本身已经是提醒。
+   * clickId 携带交互请求 id：用户在主窗口处理完该请求后，据此撤回小秘书里的同一条提醒。
    */
-  private maybeNotifyInactiveWindow(request: Omit<InteractionRequest, 'id'>, sender: Electron.WebContents): void {
+  private maybeNotifyInactiveWindow(
+    request: Omit<InteractionRequest, 'id'>,
+    sender: Electron.WebContents,
+    requestId: string,
+  ): void {
     try {
       const secretaryWindow = require('./secretary-window.service').default
       if (secretaryWindow.getInstance().isPanelWebContents(sender)) return
@@ -219,9 +241,47 @@ class UnifiedInteractionService {
         title,
         body,
         clickTarget: 'ask_user',
+        clickId: requestId,
         source: 'ask_user',
       })
     } catch { /* 通知失败不影响主流程 */ }
+  }
+
+  /**
+   * 主窗口不在前台时，把交互请求同步转给面板窗直接弹确认框：
+   * 用户可以就地完成授权 / 选择，不必先把主窗口叫出来。
+   */
+  private maybeRelayToSecretary(request: InteractionRequest, sender: Electron.WebContents): void {
+    try {
+      const secretaryWindow = require('./secretary-window.service').default
+      const secretary = secretaryWindow.getInstance()
+      if (!secretary.isEnabled() || secretary.isPanelWebContents(sender)) return
+      const notificationService = require('./notification.service').default.getInstance()
+      if (!notificationService.isMainWindowInactive()) return
+      secretary.relayInteraction(request)
+    } catch { /* 小秘书未启用或模块不可用时忽略 */ }
+  }
+
+  /** 响应是否来自小秘书面板窗（面板可承接主窗口发起的交互） */
+  private isSecretaryPanelSender(sender: Electron.WebContents): boolean {
+    try {
+      const secretaryWindow = require('./secretary-window.service').default
+      return secretaryWindow.getInstance().isPanelWebContents(sender)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 交互请求已处理（用户响应 / 超时 / 会话结束）：撤回小秘书里对应的提醒。
+   * 请求处理发生在主窗口时，小秘书不应再重复展示同一条待确认通知。
+   */
+  private withdrawSecretaryNotice(requestId: string): void {
+    if (!requestId) return
+    try {
+      const secretaryWindow = require('./secretary-window.service').default
+      secretaryWindow.getInstance().dismissInteractionNotice(requestId)
+    } catch { /* 小秘书未启用或模块不可用时忽略 */ }
   }
 
   /**
@@ -285,25 +345,44 @@ class UnifiedInteractionService {
     this.ipcRegistered = true
 
     ipcMain.handle(IPC_CHANNELS.INTERACTION_RESPONSE, (event, response: InteractionResponse) => {
+      let owner: SessionInfo | null = null
+      let pending: PendingRequest | undefined
       for (const [, session] of this.sessions) {
         if (session.webContents !== event.sender) continue
-        const pending = session.pendingRequests.get(response.id)
+        pending = session.pendingRequests.get(response.id)
         if (pending) {
-          if (pending.timer) clearTimeout(pending.timer)
-          session.pendingRequests.delete(response.id)
-          // 用户点击"本次任务始终允许"时，缓存授权到 conversation 级别
-          if (response.allowAlways && pending.source && pending.allowKey) {
-            this.allowSource(pending.allowKey, pending.source)
-          }
-          // 用户点击"本轮任务不再提醒"：开启任务级高权限模式，本轮任务后续文件操作不再弹窗
-          if (response.taskHighPermission && pending.allowKey) {
-            this.setTaskHighPermission(pending.allowKey, true)
-          }
-          pending.resolve(response)
-          return { success: true }
+          owner = session
+          break
         }
       }
-      return { success: false, error: 'Request not found' }
+      // 小秘书面板承接了主窗口发起的交互：允许面板窗回填同一条请求
+      if (!pending && this.isSecretaryPanelSender(event.sender)) {
+        for (const [, session] of this.sessions) {
+          const hit = session.pendingRequests.get(response.id)
+          if (hit) {
+            pending = hit
+            owner = session
+            break
+          }
+        }
+      }
+      if (!pending || !owner) return { success: false, error: 'Request not found' }
+      if (pending.timer) clearTimeout(pending.timer)
+      owner.pendingRequests.delete(response.id)
+      // 用户点击"本次任务始终允许"时，缓存授权到 conversation 级别
+      if (response.allowAlways && pending.source && pending.allowKey) {
+        this.allowSource(pending.allowKey, pending.source)
+      }
+      // 用户点击"本轮任务不再提醒"：开启任务级高权限模式，本轮任务后续文件操作不再弹窗
+      if (response.taskHighPermission && pending.allowKey) {
+        this.setTaskHighPermission(pending.allowKey, true)
+      }
+      // 面板窗回填时，原发起窗口需要关掉同一条弹窗
+      if (owner.webContents !== event.sender) this.notifyRendererDismiss(owner, response.id)
+      pending.resolve(response)
+      // 用户已在窗口里处理完该请求：撤回小秘书里同一条待确认提醒
+      this.withdrawSecretaryNotice(response.id)
+      return { success: true }
     })
 
     // 渲染端开关任务级高权限模式：ChatInput 高权限按钮关闭该模式时调用（开启走确认弹窗响应）

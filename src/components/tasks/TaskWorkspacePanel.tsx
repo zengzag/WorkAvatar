@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, theme, Tooltip, Typography } from 'antd'
-import type { GlobalToken } from 'antd'
 import {
   CloseOutlined,
   CodeOutlined,
@@ -19,11 +18,12 @@ import WorkspaceEntryMenu from './WorkspaceEntryMenu'
 import TaskTerminal from './TaskTerminal'
 import FilePreview, { getFileColor, getFileIcon } from '../workbench/FilePreview'
 import { pathToAppFileUrl } from '../../utils/file-url'
+import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 
 const { Text } = Typography
 
 const WIDTH_KEY = 'tasks:workspacePanelWidth'
-const MIN_WIDTH = 360
+const MIN_WIDTH = 300
 const MAX_WIDTH = 860
 const DEFAULT_WIDTH = 420
 
@@ -45,46 +45,22 @@ const StartCard: React.FC<{
   title: string
   description: string
   disabled?: boolean
+  testId?: string
   onClick: () => void
-}> = ({ icon, iconBg, iconColor, title, description, disabled, onClick }) => {
-  const { token } = theme.useToken()
-  const [hovered, setHovered] = useState(false)
+}> = ({ icon, iconBg, iconColor, title, description, disabled, testId, onClick }) => {
   return (
     <div
+      data-testid={testId}
+      className="wa-start-card"
+      aria-disabled={disabled || undefined}
       onClick={disabled ? undefined : onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '14px 16px',
-        borderRadius: 12,
-        background: hovered && !disabled ? token.colorFillTertiary : token.colorFillQuaternary,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.55 : 1,
-        transform: hovered && !disabled ? 'translateY(-1px)' : 'none',
-        boxShadow: hovered && !disabled ? token.boxShadowTertiary : 'none',
-        transition: 'all 0.2s',
-      }}
     >
-      <span style={{
-        width: 34,
-        height: 34,
-        borderRadius: 9,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: 17,
-        background: iconBg,
-        color: iconColor,
-        flexShrink: 0,
-      }}>
+      <span className="wa-start-card-icon" style={{ background: iconBg, color: iconColor }}>
         {icon}
       </span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 500, color: token.colorText }}>{title}</div>
-        <div style={{ fontSize: 12, color: token.colorTextTertiary, marginTop: 2 }}>{description}</div>
+        <div className="wa-start-card-title">{title}</div>
+        <div className="wa-start-card-desc">{description}</div>
       </div>
     </div>
   )
@@ -104,55 +80,22 @@ const TabChip: React.FC<{
   tab: TaskPanelTab
   title: string
   active: boolean
-  token: GlobalToken
   onSelect: () => void
   onClose: () => void
-}> = ({ tab, title, active, token, onSelect, onClose }) => {
-  const [hovered, setHovered] = useState(false)
+}> = ({ tab, title, active, onSelect, onClose }) => {
   return (
     <div
+      className={`wa-panel-tab${active ? ' is-active' : ''}`}
       onClick={onSelect}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        flex: '1 1 60px',
-        minWidth: 0,
-        maxWidth: 220,
-        height: 28,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '0 4px 0 10px',
-        borderRadius: 7,
-        cursor: 'pointer',
-        background: active ? token.colorFillSecondary : hovered ? token.colorFillQuaternary : 'transparent',
-        border: `1px solid ${active ? token.colorBorderSecondary : 'transparent'}`,
-        transition: 'background 0.15s, border-color 0.15s',
-      }}
+      style={{ flex: '1 1 60px', minWidth: 0, maxWidth: 220 }}
     >
       <span style={{ fontSize: 12, display: 'inline-flex', flexShrink: 0 }}>{tabIcon(tab)}</span>
-      <span
-        title={title}
-        style={{
-          flex: 1,
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontSize: 12,
-          color: active ? token.colorText : token.colorTextSecondary,
-        }}
-      >
+      <span title={title} className="wa-panel-tab-title">
         {title}
       </span>
       <CloseOutlined
         onClick={(event) => { event.stopPropagation(); onClose() }}
-        style={{
-          fontSize: 9,
-          padding: 2,
-          flexShrink: 0,
-          color: active || hovered ? token.colorTextTertiary : token.colorTextQuaternary,
-        }}
+        className="wa-panel-tab-close"
       />
     </div>
   )
@@ -223,8 +166,15 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   })
   const [resizing, setResizing] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
+  const glassRef = useLiquidGlass<HTMLDivElement>()
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
+
+  // 同一个根节点既服务于拖宽计算，也作为玻璃折射的宿主
+  const setPanelNode = useCallback((node: HTMLDivElement | null) => {
+    panelRef.current = node
+    glassRef.current = node
+  }, [glassRef])
 
   useEffect(() => {
     if (!resizing) return
@@ -283,6 +233,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
             title={t('workbench.startFilesTitle')}
             description={t('workbench.startFilesDesc')}
             disabled={!rootPath}
+            testId="workspace-start-files"
             onClick={() => openView('files')}
           />
           <StartCard
@@ -292,6 +243,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
             title={t('workbench.startTerminalTitle')}
             description={t('workbench.startTerminalDesc')}
             disabled={!rootPath}
+            testId="workspace-start-terminal"
             onClick={() => openView('terminal')}
           />
           {!rootPath && (
@@ -343,6 +295,8 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
                     >
                       <div
                         title={file.path}
+                        data-testid="workspace-artifact"
+                        data-path={file.path}
                         onClick={isMissing ? undefined : () => openPreview(file)}
                         onMouseEnter={(event) => { event.currentTarget.style.background = token.colorBgTextHover }}
                         onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent' }}
@@ -407,18 +361,18 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
           tab={tab}
           title={tabTitle(tab)}
           active={tab.id === activeTabId}
-          token={token}
           onSelect={() => setActiveTab(tab.id)}
           onClose={() => closeTab(tab.id)}
         />
       ))}
     </div>
-  ), [tabs, activeTabId, setActiveTab, closeTab, tabTitle, token])
+  ), [tabs, activeTabId, setActiveTab, closeTab, tabTitle])
 
   return (
     <div
-      ref={panelRef}
+      ref={setPanelNode}
       className="wa-workspace-panel"
+      data-testid="workspace-panel"
       style={{
         width: expanded ? undefined : width,
         flex: expanded ? 1 : undefined,
@@ -426,8 +380,6 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
-        borderLeft: expanded ? 'none' : `1px solid ${token.colorBorderSecondary}`,
-        background: 'transparent',
         position: 'relative',
       }}
     >
@@ -437,13 +389,18 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
           onMouseDown={(event) => { event.preventDefault(); setResizing(true) }}
           style={{
             position: 'absolute',
-            left: -3,
-            top: 0,
-            bottom: 0,
+            left: 0,
+            top: 8,
+            bottom: 8,
             width: 6,
+            borderRadius: 3,
             cursor: 'col-resize',
             zIndex: 10,
+            background: resizing ? token.colorPrimaryBorder : 'transparent',
+            transition: resizing ? 'none' : 'background 0.15s',
           }}
+          onMouseEnter={(event) => { event.currentTarget.style.background = token.colorPrimaryBorder }}
+          onMouseLeave={(event) => { if (!resizing) event.currentTarget.style.background = 'transparent' }}
         />
       )}
 
@@ -451,11 +408,11 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 4,
-        padding: '6px 8px 6px 10px',
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        gap: 2,
+        padding: '8px 8px 8px 12px',
+        borderBottom: '1px solid var(--wa-line-2)',
         flexShrink: 0,
-        minHeight: 40,
+        minHeight: 44,
       }}>
         {tabs.length > 0
           ? tabStrip
@@ -472,29 +429,32 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
           <Button
             type="text"
             size="small"
+            className="wa-icon-btn"
             icon={<PlusOutlined style={{ fontSize: 13 }} />}
             onClick={goStart}
-            style={{ width: 24, height: 24, minWidth: 24, color: token.colorTextSecondary, flexShrink: 0 }}
+            style={{ flexShrink: 0 }}
           />
         </Tooltip>
         <Tooltip title={expanded ? t('workbench.panelRestore') : t('workbench.panelExpand')}>
           <Button
             type="text"
             size="small"
+            className="wa-icon-btn"
             icon={expanded
               ? <FullscreenExitOutlined style={{ fontSize: 13 }} />
               : <FullscreenOutlined style={{ fontSize: 13 }} />}
             onClick={toggleExpanded}
-            style={{ width: 24, height: 24, minWidth: 24, color: token.colorTextSecondary, flexShrink: 0 }}
+            style={{ flexShrink: 0 }}
           />
         </Tooltip>
         <Tooltip title={t('workbench.closePanel')}>
           <Button
             type="text"
             size="small"
+            className="wa-icon-btn"
             icon={<CloseOutlined style={{ fontSize: 12 }} />}
             onClick={onClose}
-            style={{ width: 24, height: 24, minWidth: 24, color: token.colorTextSecondary, flexShrink: 0 }}
+            style={{ flexShrink: 0 }}
           />
         </Tooltip>
       </div>

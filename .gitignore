@@ -93,6 +93,7 @@ coverage/
 *.lcov
 playwright-report/
 test-results/
+e2e/report/
 __snapshots__/
 
 # =====================================
@@ -120,3 +121,4 @@ Directory.ps1
 ehthumbs.db
 *.pyc
 .workbuddy
+/design

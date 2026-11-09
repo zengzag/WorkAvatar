@@ -91,6 +91,9 @@ const ModelSwitchPopover: React.FC<{
               {models.map((model) => (
                 <div
                   key={`${provider.id}-${model.model}`}
+                  data-testid="message-switch-model-option"
+                  data-provider-id={provider.id}
+                  data-model-id={model.model}
                   onClick={() => onSelect(provider.id, model.model)}
                   style={{
                     padding: '4px 6px 4px 18px',
@@ -124,7 +127,7 @@ const ModelSwitchPopover: React.FC<{
   return (
     <Popover content={content} trigger="click" placement="bottomLeft" arrow={false} styles={{ container: { padding: 8 } }}>
       <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
-        title={t('workbench.switchModelRegenerate')} />
+        title={t('workbench.switchModelRegenerate')} data-testid="message-switch-model" />
     </Popover>
   )
 }
@@ -273,6 +276,7 @@ const ContextUsageInline: React.FC<{
             icon={<CompressOutlined style={{ fontSize: 12 }} />}
             onClick={onCompact}
             loading={isCompacting}
+            data-testid="context-compact"
             disabled={isCompacting || !onCompact}
             style={{ fontSize: 12, height: 22, padding: '0 4px', color: token.colorText }}>
             {t('workbench.compact', { defaultValue: '压缩' })}
@@ -280,7 +284,7 @@ const ContextUsageInline: React.FC<{
         </div>
       }
     >
-      <div style={{
+      <div data-testid="context-usage" style={{
         display: 'inline-flex',
         alignItems: 'center',
         gap: 4,
@@ -446,27 +450,26 @@ const MessageBubble: React.FC<{
     <div style={{ display: 'flex', justifyContent: 'center' }}>
       <div
         ref={bubbleRef}
+        className="wa-msg"
+        data-testid="message-bubble"
+        data-role={msg.role}
+        data-message-id={msg.id}
+        data-streaming={displayIsStreaming ? 'true' : 'false'}
         style={{
           width: '100%',
-          maxWidth: 'min(92%, 820px)',
+          maxWidth: 'min(100%, 820px)',
           display: 'flex',
           gap: 10,
           flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
           alignItems: 'flex-start',
         }}
       >
-        <div style={{
-          width: 30,
-          height: 30,
-          borderRadius: 8,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          background: msg.role === 'assistant'
-            ? (assistantEmployee ? 'transparent' : token.colorPrimaryBg)
-            : 'var(--wa-panel-3)',
-        }}>
+        <div
+          className="wa-msg-avatar"
+          style={msg.role === 'assistant' && assistantEmployee
+            ? { background: 'transparent', border: 'none', boxShadow: 'none' }
+            : undefined}
+        >
           {msg.role === 'assistant' ? (
             assistantEmployee ? (
               <EmployeeAvatar
@@ -488,7 +491,8 @@ const MessageBubble: React.FC<{
         </div>
 
         <div style={{
-          maxWidth: '88%',
+          // 用户气泡最多占 88% 宽度保持右对齐层次；助手正文占满内容列，便于阅读与复制
+          maxWidth: msg.role === 'user' ? '88%' : '100%',
           minWidth: 0,
           width: msg.role === 'assistant' || isEditing ? '100%' : undefined,
           ...(msg.role === 'user' ? { marginLeft: -10 } : { marginRight: -10 }),
@@ -499,6 +503,7 @@ const MessageBubble: React.FC<{
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Input.TextArea
                   value={editValue}
+                  data-testid="message-edit-input"
                   onChange={(e) => setEditValue(e.target.value)}
                   autoSize={{ minRows: 3, maxRows: 15 }}
                   style={{
@@ -515,21 +520,12 @@ const MessageBubble: React.FC<{
                   }}
                 />
                 <Space size={4} style={{ justifyContent: 'flex-end', display: 'flex' }}>
-                  <Button type="text" size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} />
-                  <Button type="primary" size="small" icon={<CheckOutlined />} onClick={handleSubmitEdit} />
+                  <Button type="text" size="small" icon={<CloseOutlined />} onClick={handleCancelEdit} data-testid="message-edit-cancel" />
+                  <Button type="primary" size="small" icon={<CheckOutlined />} onClick={handleSubmitEdit} data-testid="message-edit-submit" />
                 </Space>
               </div>
             ) : (
-              <div style={{
-                padding: '9px 13px',
-                borderRadius: 12,
-                background: 'var(--wa-user-bubble)',
-                border: '1px solid var(--wa-line-2)',
-                color: token.colorText,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                lineHeight: 1.72,
-              }}>
+              <div className="wa-user-bubble">
                 {userContentParts.map((part, index) => (
                   part.type === 'text'
                     ? <Text key={index} style={{ color: token.colorText, fontSize: 15 }}>{part.value}</Text>
@@ -560,18 +556,20 @@ const MessageBubble: React.FC<{
               </div>
             )}
             {!msg.isStreaming && !isEditing && (
-              <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
+              <Space size={4} className="wa-msg-actions" style={{ marginTop: 4, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
                 {msg.content && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
+                    data-testid="message-copy"
                     onClick={() => onCopy(msg.content)} />
                 )}
                 {!hideMessageActions && (
                   <>
                     <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 12 }} />}
+                      data-testid="message-edit"
                       onClick={handleStartEdit} title={t('workbench.editMessage')} />
                     <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
                       okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} data-testid="message-delete" />
                     </Popconfirm>
                   </>
                 )}
@@ -632,6 +630,7 @@ const MessageBubble: React.FC<{
                   size="small"
                   icon={<ReloadOutlined style={{ fontSize: 12 }} />}
                   onClick={() => onRetry(msg.id)}
+                  data-testid="message-retry"
                 >
                   {t('workbench.retry')}
                 </Button>
@@ -647,7 +646,7 @@ const MessageBubble: React.FC<{
             )}
 
             {!displayIsStreaming && (
-              <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
+              <Space size={4} className="wa-msg-actions" style={{ marginTop: 4, marginLeft: 2 }}>
                 {!hideMessageActions && hasBranches && (
                   <div
                     style={{
@@ -661,10 +660,12 @@ const MessageBubble: React.FC<{
                     }}
                   >
                     <Button type="text" size="small" icon={<LeftOutlined style={{ fontSize: 9 }} />}
+                      data-testid="message-branch-prev"
                       disabled={branchIndex === 0}
                       onClick={() => onSwitchBranch(msg.id, branchIndex - 1)}
                       style={{ padding: '0 2px', minWidth: 16, height: 16 }} />
                     <Text
+                      data-testid="message-branch-label"
                       style={{
                         fontSize: 11,
                         color: hasComparisonBranches ? token.colorPrimary : token.colorTextSecondary,
@@ -676,6 +677,7 @@ const MessageBubble: React.FC<{
                       {branchIndex + 1}/{totalBranches}
                     </Text>
                     <Button type="text" size="small" icon={<RightOutlined style={{ fontSize: 9 }} />}
+                      data-testid="message-branch-next"
                       disabled={branchIndex >= branchCount}
                       onClick={() => onSwitchBranch(msg.id, branchIndex + 1)}
                       style={{ padding: '0 2px', minWidth: 16, height: 16 }} />
@@ -683,6 +685,7 @@ const MessageBubble: React.FC<{
                 )}
                 {displayContent && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
+                    data-testid="message-copy"
                     onClick={() => onCopy(displayContent)} />
                 )}
                 {displayContent && !displayIsError && messageActions
@@ -702,6 +705,7 @@ const MessageBubble: React.FC<{
                 {!hideMessageActions && (
                   <>
                     <Button type="text" size="small" icon={<ReloadOutlined style={{ fontSize: 12 }} />}
+                      data-testid="message-regenerate"
                       onClick={() => onRegenerate(msg.id)} title={t('workbench.regenerate')} />
                     <ModelSwitchPopover
                       providers={providers}
@@ -709,6 +713,7 @@ const MessageBubble: React.FC<{
                     />
                     {onBranch && (
                       <Button type="text" size="small" icon={<ForkOutlined style={{ fontSize: 12 }} />}
+                        data-testid="message-branch"
                         onClick={() => onBranch(msg.id)} title={t('workbench.branchMessage')} />
                     )}
                     {delegationSegs.length > 0 && (
@@ -716,6 +721,7 @@ const MessageBubble: React.FC<{
                         <Button
                           type="text"
                           size="small"
+                          data-testid="message-delegation-drawer"
                           icon={<ApartmentOutlined style={{ fontSize: 13 }} />}
                           onClick={() => setSubTaskDrawerOpen(true)}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 22, padding: '0 6px', borderRadius: 4 }}
@@ -726,7 +732,7 @@ const MessageBubble: React.FC<{
                     )}
                     <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
                       okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} data-testid="message-delete" />
                     </Popconfirm>
                   </>
                 )}
@@ -742,10 +748,9 @@ const MessageBubble: React.FC<{
               flexWrap: 'wrap',
             }}>
                 {currentBranchModelLabel && (
-                  <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, cursor: 'pointer' }}
-                    onClick={() => onOpenComparison(msg.id)}>
+                  <span style={{ fontSize: 10.5, lineHeight: 1, color: token.colorTextTertiary }}>
                     {currentBranchModelLabel}
-                  </Tag>
+                  </span>
                 )}
                 <TokenUsageDisplay tokenUsage={displayTokenUsage} tokensPerSec={conversationTokensPerSec} />
                 {isLastAssistantMessage && (

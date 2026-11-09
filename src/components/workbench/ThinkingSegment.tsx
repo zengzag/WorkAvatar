@@ -1,13 +1,11 @@
-import { Typography, theme } from 'antd'
-import { BulbOutlined, DownOutlined, LoadingOutlined, RightOutlined } from '@ant-design/icons'
+import { theme } from 'antd'
+import { BulbOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import type { MessageSegment } from './types'
 import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 import { formatDuration } from '../../utils/format'
-import PreviewLine from './PreviewLine'
-
-const { Text } = Typography
+import SegmentRow from './SegmentRow'
 
 const HIGHLIGHT_PATTERNS = /^(→|•|※|结论:|Result:|Therefore|So\s)/i
 
@@ -79,60 +77,29 @@ const ThinkingSegmentInner: React.FC<{
   const content = seg.content || ''
 
   const header = (
-    <div
+    <SegmentRow
+      expanded={isExpanded}
+      icon={<BulbOutlined />}
+      title={t('workbench.thinkingProcess')}
+      detail={!isExpanded && isStreaming ? content : undefined}
+      meta={durationText || undefined}
+      status={isStreaming
+        ? <LoadingOutlined spin style={{ fontSize: 11, color: token.colorTextTertiary }} />
+        : undefined}
       onClick={onToggle}
-      style={{
-        padding: '5px 0',
-        cursor: 'pointer',
-        userSelect: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-      }}
-    >
-      {isExpanded ? (
-        <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-      ) : (
-        <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-      )}
-      <BulbOutlined style={{ color: token.colorTextTertiary, fontSize: 12 }} />
-      <Text style={{ fontSize: 12, color: token.colorTextSecondary }}>
-        {t('workbench.thinkingProcess')}
-      </Text>
-      {!isExpanded && isStreaming && content && (
-        <PreviewLine
-          text={content}
-          fontSize={12}
-          lineHeight={18}
-          color={token.colorTextQuaternary}
-        />
-      )}
-      {durationText && (
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {durationText}
-        </Text>
-      )}
-      {isStreaming && (
-        <LoadingOutlined spin style={{ fontSize: 11, color: token.colorTextTertiary, flexShrink: 0 }} />
-      )}
-    </div>
+    />
   )
 
   if (isExpanded) {
     return (
-      <div style={{ marginBottom: 2 }}>
+      <div data-testid="thinking-segment" style={{ marginBottom: 2 }}>
         {header}
-        <div style={{ position: 'relative' }}>
-          {/* 竖线与展开 icon 同列，从 icon 正下方延伸贯穿内容区 */}
-          <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
-          <div style={{ position: 'relative', padding: '0 10px 10px 24px' }}>
+        <div className="wa-seg-body">
           <div
             ref={contentRef}
             onScroll={contentOnScroll}
+            className="wa-detail-block"
             style={{
-              background: token.colorBgLayout,
-              borderRadius: 8,
-              padding: '10px 12px',
               maxHeight: contentExpanded ? 'none' : 220,
               overflowY: contentExpanded ? 'visible' : 'auto',
             }}
@@ -158,14 +125,13 @@ const ThinkingSegmentInner: React.FC<{
               {contentExpanded ? t('workbench.showLess') : t('workbench.showMore')}
             </div>
           )}
-          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div style={{ marginBottom: 2 }}>
+    <div data-testid="thinking-segment" style={{ marginBottom: 2 }}>
       {header}
     </div>
   )

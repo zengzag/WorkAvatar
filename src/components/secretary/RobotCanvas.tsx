@@ -11,14 +11,14 @@ interface Props extends RobotStageProps {
 }
 
 /** 3D 角色的 canvas 容器：只负责生命周期与属性透传，几何/动画在 robot3d.ts */
-export const RobotCanvas: React.FC<Props> = ({ className, style, still, onFail, status, play, faceImage, faceIcon, accent, lookX, lookY }) => {
+export const RobotCanvas: React.FC<Props> = ({ className, style, still, onFail, status, play, sleep, faceImage, faceIcon, accent, lookX, lookY }) => {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<RobotStageHandle | null>(null)
   const failRef = useRef(onFail)
   failRef.current = onFail
-  const propsRef = useRef<RobotStageProps>({ status, play, faceImage, faceIcon, accent, lookX, lookY })
-  propsRef.current = { status, play, faceImage, faceIcon, accent, lookX, lookY }
+  const propsRef = useRef<RobotStageProps>({ status, play, sleep, faceImage, faceIcon, accent, lookX, lookY })
+  propsRef.current = { status, play, sleep, faceImage, faceIcon, accent, lookX, lookY }
 
   useEffect(() => {
     let alive = true
@@ -49,8 +49,8 @@ export const RobotCanvas: React.FC<Props> = ({ className, style, still, onFail, 
   }, [])
 
   useEffect(() => {
-    stageRef.current?.update({ status, play, faceImage, faceIcon, accent, lookX, lookY })
-  }, [status, play, faceImage, faceIcon, accent, lookX, lookY])
+    stageRef.current?.update({ status, play, sleep, faceImage, faceIcon, accent, lookX, lookY })
+  }, [status, play, sleep, faceImage, faceIcon, accent, lookX, lookY])
 
   return (
     <div ref={wrapRef} className={className} style={{ width: '100%', height: '100%', ...style }}>

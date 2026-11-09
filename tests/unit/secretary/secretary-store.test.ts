@@ -64,7 +64,7 @@ describe('secretary.store 落盘恢复', () => {
 
 describe('secretary.store 任务操作', () => {
   beforeEach(() => {
-    useSecretaryStore.setState({ tasks: [] })
+    useSecretaryStore.setState({ tasks: [], notices: [] })
   })
 
   it('addTask 新任务排在最前并限制 30 条', () => {
@@ -97,6 +97,45 @@ describe('secretary.store 任务操作', () => {
     const item = persisted.find((t: any) => t.id === 'img')
     expect(item).toBeTruthy()
     expect(item.employee.avatarImage).toBeUndefined()
+  })
+})
+
+describe('secretary.store 通知操作', () => {
+  beforeEach(() => {
+    useSecretaryStore.setState({ tasks: [], notices: [] })
+  })
+
+  it('addNotice / markNoticeViewed / removeNotice 只影响目标通知', () => {
+    const notice = { id: 'n1', title: '日历提醒', body: '10:00 开会', createdAt: 1, viewed: false }
+    useSecretaryStore.getState().addNotice(notice)
+    useSecretaryStore.getState().addNotice({ ...notice, id: 'n2' })
+    expect(useSecretaryStore.getState().notices.map((n) => n.id)).toEqual(['n2', 'n1'])
+    useSecretaryStore.getState().markNoticeViewed('n1')
+    expect(useSecretaryStore.getState().notices.find((n) => n.id === 'n1')?.viewed).toBe(true)
+    useSecretaryStore.getState().removeNotice('n2')
+    expect(useSecretaryStore.getState().notices.map((n) => n.id)).toEqual(['n1'])
+  })
+
+  it('未读通知计入挂件角标，但不改变任务状态', () => {
+    const summary = selectBusSummary([], [
+      { id: 'n1', title: 'T', body: 'B', createdAt: 1, viewed: false },
+      { id: 'n2', title: 'T', body: 'B', createdAt: 2, viewed: true },
+    ])
+    expect(summary.status).toBe('idle')
+    expect(summary.unreadCount).toBe(1)
+    // 通知与任务结果分开计数：挂件气泡据此区分「通知待查看」与「结果等你来看」
+    expect(summary.unreadTaskCount).toBe(0)
+    expect(summary.unreadNoticeCount).toBe(1)
+  })
+
+  it('任务结果与通知分别计数，角标为两者之和', () => {
+    const summary = selectBusSummary(
+      [{ id: 't1', title: 'T', employee: { id: 'e1', name: '员工' }, status: 'done', step: '', startedAt: 1, viewed: false, conversationId: 'c1' } as any],
+      [{ id: 'n1', title: 'T', body: 'B', createdAt: 1, viewed: false }],
+    )
+    expect(summary.unreadTaskCount).toBe(1)
+    expect(summary.unreadNoticeCount).toBe(1)
+    expect(summary.unreadCount).toBe(2)
   })
 })
 

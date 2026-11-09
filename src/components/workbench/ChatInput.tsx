@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, FileTextOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
@@ -7,6 +7,7 @@ import { getDirName } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import EmployeeAvatar from '../common/EmployeeAvatar'
+import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -27,6 +28,17 @@ export interface ModelSelection {
 
 export interface SendOptions {
   highPermission?: boolean
+  /** 由待发送队列自动触发时为 true，调用方不要清理当前输入框草稿/附件/模型选择 */
+  fromQueue?: boolean
+}
+
+/** 排队等待当前回复结束后自动发送的用户消息 */
+export interface QueuedChatMessage {
+  id: string
+  content: string
+  images: string[]
+  models: ModelSelection[]
+  options?: SendOptions
 }
 
 // 已启用的 skill 简要信息，用于斜杠菜单触发
@@ -51,6 +63,18 @@ const isEditorEffectivelyEmpty = (editor: HTMLElement): boolean => {
 
 /** 生成文件令牌唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+/** 生成排队消息唯一 id */
+const genQueueId = () => `q_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+/** 按对话缓存待发送队列：切换任务时保留各自的排队消息，切回后可继续展示 */
+const _persistentQueues = new Map<string, QueuedChatMessage[]>()
+
+/** 队列预览文本：文件令牌显示为文件名，避免暴露完整路径 */
+const formatQueuedPreview = (content: string): string =>
+  content
+    .replace(/<path>([^<]*)<\/path>/g, (_match, path: string) => path.split(/[\\/]/).pop() || path)
+    .trim()
 
 /** 生成图片附件项：data URL 先落盘为主进程附件，消息里以 wa-attachment:// 引用流转（避免 base64 进 DB/localStorage）。
  *  落盘失败（如主进程异常）时保留原 data URL，功能降级不中断。 */
@@ -357,7 +381,9 @@ const ChatInput: React.FC<{
   isCompacting?: boolean
   /** 隐藏高级工具栏（高权限/模型对比/资料库/极简模式/技能下拉），用于轻量对话视图 */
   hideToolbar?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, workspaceSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
+  /** 输入框上方的附加区域（任务确认卡等），与输入框同宽 */
+  approvalSlot?: React.ReactNode
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, workspaceSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar, approvalSlot }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -375,8 +401,55 @@ const ChatInput: React.FC<{
     if (conversationId) setDraftFullAllow(false)
   }, [conversationId])
   const editorRef = useRef<HTMLDivElement>(null)
+  const composerGlassRef = useLiquidGlass<HTMLDivElement>()
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
+
+  // ---- 待发送队列：回复进行中按 Enter/发送时先排队，回复结束后自动发送 ----
+  // 无会话（新任务/插件临时对话）时用实例级 key，避免不同输入框共用同一队列
+  const localQueueKeyRef = useRef(`local_${Math.random().toString(36).slice(2)}`)
+  const queueKey = conversationId || localQueueKeyRef.current
+  const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>(
+    () => (conversationId ? _persistentQueues.get(conversationId) || [] : [])
+  )
+  /** 当前队列归属的 key，用于切换任务时保存/恢复各自的队列 */
+  const queueKeyRef = useRef(queueKey)
+  const queueRef = useRef(queuedMessages)
+  queueRef.current = queuedMessages
+  /** 上一轮是否处于回复/压缩中：用于识别回复结束、自动续发队列 */
+  const prevBusyRef = useRef(isStreaming || isCompacting)
+  /** 回复结束后是否还有队列待发（编辑队列项时暂缓） */
+  const drainArmedRef = useRef(false)
+  /** 正在内联编辑的队列项；编辑期间暂停自动发送，避免把用户正在修改的内容发出去 */
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null)
+  const [editingQueueText, setEditingQueueText] = useState('')
+
+  useEffect(() => {
+    if (queueKeyRef.current !== queueKey) {
+      if (!queueKeyRef.current.startsWith('local_')) {
+        if (queueRef.current.length > 0) {
+          _persistentQueues.set(queueKeyRef.current, queueRef.current)
+        } else {
+          _persistentQueues.delete(queueKeyRef.current)
+        }
+      }
+      queueKeyRef.current = queueKey
+      // 切换任务时重置续发状态：绝不能把上一个任务的队列发到当前任务
+      prevBusyRef.current = isStreaming || isCompacting
+      drainArmedRef.current = false
+      setQueuedMessages(conversationId ? _persistentQueues.get(conversationId) || [] : [])
+      setEditingQueueId(null)
+      setEditingQueueText('')
+      return
+    }
+    if (conversationId) {
+      if (queuedMessages.length > 0) {
+        _persistentQueues.set(conversationId, queuedMessages)
+      } else {
+        _persistentQueues.delete(conversationId)
+      }
+    }
+  }, [queueKey, conversationId, queuedMessages, isStreaming, isCompacting])
 
   /** 同步：内容变化后通知父组件（草稿），并更新空状态（控制 placeholder 与发送按钮） */
   const emitDraftChange = useCallback(() => {
@@ -529,8 +602,8 @@ const ChatInput: React.FC<{
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      // 流式回复/压缩期间禁用发送：否则消息会被下游静默丢弃，而输入框已被清空导致内容丢失
-      if (isStreaming || isCompacting) return
+      // 压缩期间禁止发送（流式回复期间允许排队，由 handleSend 入队）
+      if (isCompacting) return
       const plain = getPlainText()
       // skill 命令唯一匹配且无参数：替换 /xxx 为 `/<name> ` 让用户继续输入参数
       if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
@@ -543,7 +616,7 @@ const ChatInput: React.FC<{
       }
       handleSendRef.current()
     }
-  }, [getPlainText, currentSlashItems, emitDraftChange, isStreaming, isCompacting])
+  }, [getPlainText, currentSlashItems, emitDraftChange, isCompacting])
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
   // skill 激活统一通过 activate_skill 工具；一条消息内可含多个技能命令，逐个转换
@@ -575,9 +648,15 @@ const ChatInput: React.FC<{
     return !isEditorEffectivelyEmpty(editorRef.current)
   }, [])
 
+  const clearComposer = useCallback(() => {
+    if (editorRef.current) editorRef.current.innerHTML = ''
+    emitDraftChange()
+    onDraftChange?.('')
+  }, [emitDraftChange, onDraftChange])
+
   const handleSend = useCallback(() => {
-    // 流式回复/压缩期间禁用发送，避免消息被下游丢弃后输入框仍被清空
-    if (isStreaming || isCompacting) return
+    // 压缩期间禁止发送，避免消息被下游丢弃后输入框仍被清空
+    if (isCompacting) return
     if (!hasEditorContent() && attachedImages.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
     let content = editorRef.current ? extractContentFromEditor(editorRef.current).replace(/\u200B/g, '') : ''
@@ -588,17 +667,114 @@ const ChatInput: React.FC<{
     }
     // 仅附加文件令牌、没有文字时，extractContentFromEditor 会把令牌路径写入 content，仍可正常发送；
     // 若 content 为空且无图片，上面的 hasEditorContent 已提前返回。
+    if (isStreaming) {
+      // 回复进行中：消息进入待发送队列，回复结束后自动发出
+      const item: QueuedChatMessage = {
+        id: genQueueId(),
+        content,
+        images: imageUrls,
+        models: [...selectedModels],
+        options: { highPermission: fullAllow },
+      }
+      const next = [...queueRef.current, item]
+      queueRef.current = next
+      setQueuedMessages(next)
+      // 队列项已完整保存内容/附件/模型，清空当前输入区，避免重复展示
+      clearComposer()
+      onImagesChange([])
+      onModelsChange([])
+      return
+    }
     onSend(content, imageUrls, selectedModels, { highPermission: fullAllow })
-    // 清空编辑器
-    if (editorRef.current) editorRef.current.innerHTML = ''
-    emitDraftChange()
-    onDraftChange?.('')
-  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange, isStreaming, isCompacting])
+    clearComposer()
+  }, [hasEditorContent, attachedImages, selectedModels, fullAllow, onSend, invocableSkills, convertSkillCommand, clearComposer, onImagesChange, onModelsChange, isStreaming, isCompacting])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
   //  - 确保 handleKeyDown 调用时捕获的是最新闭包（含最新 attachedImages / content）
   handleSendRef.current = handleSend
+
+  /** 从队列取出并发送（默认队首；指定 id 时只发该条），供自动续发与「立即发送」复用 */
+  const takeQueuedAndSend = useCallback((targetId?: string) => {
+    const current = queueRef.current
+    const item = targetId ? current.find(q => q.id === targetId) : current[0]
+    if (!item) return false
+    const next = current.filter(q => q.id !== item.id)
+    queueRef.current = next
+    setQueuedMessages(next)
+    onSend(item.content, item.images, item.models, { ...item.options, fromQueue: true })
+    return true
+  }, [onSend])
+
+  /** 流式结束后自动续发：排队期间用户可能正在编辑，编辑完成/取消后再继续 */
+  useEffect(() => {
+    const busy = isStreaming || isCompacting
+    if (busy) {
+      prevBusyRef.current = true
+      return
+    }
+    if (prevBusyRef.current) {
+      prevBusyRef.current = false
+      drainArmedRef.current = queueRef.current.length > 0
+    }
+    if (drainArmedRef.current && !editingQueueId && queueRef.current.length > 0) {
+      drainArmedRef.current = false
+      takeQueuedAndSend()
+    }
+  }, [isStreaming, isCompacting, editingQueueId, queuedMessages, takeQueuedAndSend])
+
+  /** 立即发送：把目标项提到队首；正在回复时先停止当前回复，结束后优先发送该条 */
+  const handleSendQueuedNow = useCallback((id: string) => {
+    if (isCompacting) return
+    const current = queueRef.current
+    const item = current.find(q => q.id === id)
+    if (!item) return
+    setEditingQueueId(null)
+    setEditingQueueText('')
+    const next = [item, ...current.filter(q => q.id !== id)]
+    queueRef.current = next
+    setQueuedMessages(next)
+    if (isStreaming) {
+      drainArmedRef.current = true
+      void Promise.resolve(onStop()).catch(() => { /* 停止失败时保持当前回复 */ })
+      return
+    }
+    // 编辑暂停或上游未真正发起流式时兜底直接发送
+    takeQueuedAndSend(id)
+  }, [isCompacting, isStreaming, onStop, takeQueuedAndSend])
+
+  const startEditQueued = useCallback((item: QueuedChatMessage) => {
+    setEditingQueueId(item.id)
+    setEditingQueueText(item.content)
+  }, [])
+
+  const cancelEditQueued = useCallback(() => {
+    setEditingQueueId(null)
+    setEditingQueueText('')
+  }, [])
+
+  const saveEditQueued = useCallback(() => {
+    if (!editingQueueId) return
+    const current = queueRef.current
+    const target = current.find(q => q.id === editingQueueId)
+    if (!target) {
+      cancelEditQueued()
+      return
+    }
+    const content = editingQueueText.trim()
+    if (!content && target.images.length === 0) return
+    const next = current.map(q => (q.id === editingQueueId ? { ...q, content } : q))
+    queueRef.current = next
+    setQueuedMessages(next)
+    cancelEditQueued()
+  }, [editingQueueId, editingQueueText, cancelEditQueued])
+
+  const deleteQueued = useCallback((id: string) => {
+    const next = queueRef.current.filter(q => q.id !== id)
+    queueRef.current = next
+    setQueuedMessages(next)
+    if (editingQueueId === id) cancelEditQueued()
+  }, [editingQueueId, cancelEditQueued])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return
@@ -1138,7 +1314,7 @@ const ChatInput: React.FC<{
           : undefined}
         style={{
           color: token.colorTextSecondary,
-          padding: '0 4px 0 0', height: 18, minWidth: 18, borderRadius: 4,
+          padding: '0 2px', height: 22, minWidth: 22, borderRadius: 6,
         }}>
         {enableThinking ? <BulbFilled style={{ fontSize: 12 }} /> : <BulbOutlined style={{ fontSize: 12 }} />}
       </Button>
@@ -1189,6 +1365,8 @@ const ChatInput: React.FC<{
                 return (
                   <div
                     key={`${provider.id}-${model.model}`}
+                    data-testid="chat-model-option"
+                    data-model-id={model.model}
                     onClick={() => {
                       onDefaultModelChange?.(provider.id, model.model)
                       setShowDefaultModelPicker(false)
@@ -1239,6 +1417,10 @@ const ChatInput: React.FC<{
     () => (employees || []).find(e => e.id === selectedEmployeeId)?.name,
     [employees, selectedEmployeeId]
   )
+  const activeEmployee = useMemo(
+    () => (employees || []).find(e => e.id === selectedEmployeeId),
+    [employees, selectedEmployeeId]
+  )
 
   // 工作区触发器文案：指定目录取目录名，否则为默认工作区
   const workspaceLabel = workspaceSelector?.path
@@ -1253,14 +1435,14 @@ const ChatInput: React.FC<{
     return list.filter(ws => ws.label.toLowerCase().includes(search) || ws.path.toLowerCase().includes(search))
   }, [workspaceSelector?.recent, workspaceSearch])
 
-  /** 选择器触发器样式：无边框文字按钮，悬停/展开时高亮 */
+  /** 选择器触发器样式：玻璃胶囊，展开/悬停时加深底色 */
   const selectorTriggerStyle = (open: boolean): React.CSSProperties => ({
     display: 'inline-flex', alignItems: 'center', gap: 6,
-    padding: '3px 8px', borderRadius: 6, maxWidth: 200, minWidth: 0,
-    border: '1px solid transparent', background: open ? token.colorFillTertiary : 'transparent',
-    color: open ? token.colorPrimary : token.colorText,
+    padding: '3px 9px', borderRadius: 999, maxWidth: 200, minWidth: 0,
+    border: '1px solid transparent', background: open ? 'var(--wa-surface-inset-hover)' : 'transparent',
+    color: open ? token.colorPrimary : 'var(--wa-ink-2)',
     cursor: 'pointer', userSelect: 'none', fontFamily: 'inherit',
-    fontSize: 13, lineHeight: '20px',
+    fontSize: 12.5, lineHeight: '18px',
     transition: 'background 0.15s ease, color 0.15s ease',
   })
 
@@ -1344,6 +1526,9 @@ const ChatInput: React.FC<{
           return (
             <div
               key={opt.key}
+              data-testid="chat-mode-option"
+              data-mode={opt.key}
+              data-disabled={opt.disabled ? 'true' : 'false'}
               title={opt.disabled ? t('workbench.modeLockedTip') : undefined}
               onClick={() => { if (!opt.disabled) selectExecutionMode(opt.key) }}
               style={{
@@ -1373,7 +1558,8 @@ const ChatInput: React.FC<{
   return (
     <div style={centerMode
       ? { padding: '0 16px', flexShrink: 0, maxWidth: 720, width: '100%', margin: '0 auto' }
-      : { padding: '8px 6% 12px 6%', flexShrink: 0, maxWidth: 900, width: '100%', margin: '0 auto' }
+      // 与消息区共用同一个内容列：24px 内边距 + 820px 内容宽（868 = 820 + 左右内边距）
+      : { padding: '4px 24px 0', flexShrink: 0, maxWidth: 868, width: '100%', margin: '0 auto' }
     }>
       {(workspaceSelector || (showEmployeeSelector && employees && employees.length > 0)) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, paddingTop: 6, paddingBottom: 6, maxWidth: '100%' }}>
@@ -1468,11 +1654,12 @@ const ChatInput: React.FC<{
             >
               <button
                 type="button"
+                data-testid="chat-workspace-trigger"
                 title={workspaceSelector.path || workspaceLabel}
                 style={selectorTriggerStyle(workspacePickerOpen)}
                 onMouseEnter={(e) => {
                   if (workspacePickerOpen) return
-                  e.currentTarget.style.background = token.colorFillTertiary
+                  e.currentTarget.style.background = 'var(--wa-surface-inset)'
                 }}
                 onMouseLeave={(e) => {
                   if (workspacePickerOpen) return
@@ -1514,6 +1701,8 @@ const ChatInput: React.FC<{
                       return (
                         <div
                           key={emp.id}
+                          data-testid="chat-employee-option"
+                          data-employee-id={emp.id}
                           onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 10,
@@ -1556,18 +1745,31 @@ const ChatInput: React.FC<{
             >
               <button
                 type="button"
+                data-testid="chat-employee-trigger"
                 title={activeEmployeeName || t('nav.employees')}
                 style={selectorTriggerStyle(employeePickerOpen)}
                 onMouseEnter={(e) => {
                   if (employeePickerOpen) return
-                  e.currentTarget.style.background = token.colorFillTertiary
+                  e.currentTarget.style.background = 'var(--wa-surface-inset)'
                 }}
                 onMouseLeave={(e) => {
                   if (employeePickerOpen) return
                   e.currentTarget.style.background = 'transparent'
                 }}
               >
-                <RobotOutlined style={{ fontSize: 14 }} />
+                {activeEmployee ? (
+                  <EmployeeAvatar
+                    employeeId={activeEmployee.id}
+                    avatarType={activeEmployee.avatar_type}
+                    avatarIcon={activeEmployee.avatar_icon}
+                    avatarColor={activeEmployee.avatar_color}
+                    avatarImage={activeEmployee.avatar_image}
+                    source={activeEmployee.source}
+                    size={16}
+                  />
+                ) : (
+                  <RobotOutlined style={{ fontSize: 14 }} />
+                )}
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {activeEmployeeName || t('nav.employees')}
                 </span>
@@ -1580,7 +1782,7 @@ const ChatInput: React.FC<{
       {attachedImages.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 6px', flexWrap: 'wrap' }}>
           {attachedImages.map(img => (
-            <div key={img.id} style={{ position: 'relative', borderRadius: 6, overflow: 'hidden', border: `1px solid ${token.colorBorderSecondary}` }}>
+            <div key={img.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--wa-glass-border)' }}>
               <img src={img.dataUrl} alt={img.name} style={{ width: 72, height: 72, objectFit: 'cover', display: 'block' }} />
               <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 10 }} />}
                 onClick={() => removeImage(img.id)}
@@ -1592,7 +1794,7 @@ const ChatInput: React.FC<{
       {modelTags.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
           {modelTags.map(tag => (
-            <div key={tag.key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: token.colorPrimaryBg, border: `1px solid ${token.colorPrimaryBorder}`, fontSize: 12, color: token.colorPrimary }}>
+            <div key={tag.key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 999, background: 'var(--wa-accent-soft)', border: '1px solid var(--wa-accent-line)', fontSize: 12, color: token.colorPrimary }}>
               <span>@</span>
               <span>{tag.providerName} / {tag.label}</span>
               <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onModelsChange(selectedModels.filter((_, i) => i !== tag.key))} />
@@ -1606,7 +1808,7 @@ const ChatInput: React.FC<{
             const col = allCollections.find((c: any) => c.id === colId)
             if (!col) return null
             return (
-              <div key={colId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
+              <div key={colId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 10px', borderRadius: 999, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
                 <DatabaseOutlined style={{ fontSize: 10 }} />
                 <span>{col.name}</span>
                 <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedCollectionIdsChange(selectedCollectionIds.filter((id: string) => id !== colId))} />
@@ -1627,25 +1829,173 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 14, padding: '8px 8px 8px 14px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorder}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
+      {!centerMode && approvalSlot}
+      {queuedMessages.length > 0 && (
+        <div data-testid="chat-queue" className="wa-glass-menu" style={{
+          marginBottom: 8,
+          borderRadius: 14,
+          overflowX: 'hidden',
+          overflowY: 'auto',
+          maxHeight: 250,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px',
+            fontSize: 12, color: token.colorTextTertiary,
+            borderBottom: '1px solid var(--wa-line-2)',
+            position: 'sticky', top: 0, zIndex: 1,
+            background: 'color-mix(in srgb, var(--wa-glass-menu-surface) 96%, transparent)',
+          }}>
+            <ClockCircleOutlined style={{ fontSize: 12 }} />
+            <span style={{ fontWeight: 500, color: token.colorTextSecondary }}>
+              {t('workbench.queueTitle', { count: queuedMessages.length })}
+            </span>
+            <span style={{ marginLeft: 'auto', textAlign: 'right' }}>{t('workbench.queueAutoSendHint')}</span>
+          </div>
+          {queuedMessages.map((item, index) => {
+            const isItemEditing = editingQueueId === item.id
+            const preview = formatQueuedPreview(item.content)
+            return (
+              <div
+                key={item.id}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  padding: '7px 10px',
+                  borderTop: index > 0 ? `1px solid ${token.colorBorderSecondary}` : undefined,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {isItemEditing ? (
+                    <Input.TextArea
+                      autoSize={{ minRows: 1, maxRows: 4 }}
+                      value={editingQueueText}
+                      onChange={(e) => setEditingQueueText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          saveEditQueued()
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault()
+                          cancelEditQueued()
+                        }
+                      }}
+                      autoFocus
+                      variant="borderless"
+                      style={{
+                        background: token.colorBgContainer,
+                        border: `1px solid ${token.colorBorder}`,
+                        borderRadius: 6,
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        padding: '4px 8px',
+                      }}
+                    />
+                  ) : (
+                    preview && (
+                      <div
+                        title={preview}
+                        style={{
+                          fontSize: 12.5,
+                          lineHeight: 1.5,
+                          color: token.colorText,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}>
+                        {preview}
+                      </div>
+                    )
+                  )}
+                  {item.images.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                      {item.images.slice(0, 5).map((src, imageIndex) => (
+                        <img
+                          key={`${src}_${imageIndex}`}
+                          src={src}
+                          alt=""
+                          style={{
+                            width: 26, height: 26, objectFit: 'cover', display: 'block',
+                            borderRadius: 4, border: `1px solid ${token.colorBorderSecondary}`,
+                          }}
+                        />
+                      ))}
+                      {item.images.length > 5 && (
+                        <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                          +{item.images.length - 5}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                  {isItemEditing ? (
+                    <>
+                      <Tooltip title={t('workbench.queueSave')}>
+                        <Button type="text" size="small" icon={<CheckOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueSave')}
+                          disabled={!editingQueueText.trim() && item.images.length === 0}
+                          onClick={saveEditQueued}
+                          style={{ color: token.colorPrimary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                      <Tooltip title={t('workbench.queueCancel')}>
+                        <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueCancel')}
+                          onClick={cancelEditQueued}
+                          style={{ color: token.colorTextTertiary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                    </>
+                  ) : (
+                    <>
+                      <Tooltip title={t('workbench.queueSendNow')}>
+                        <Button type="text" size="small" icon={<SendOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueSendNow')}
+                          disabled={isCompacting || editingQueueId !== null}
+                          onClick={() => handleSendQueuedNow(item.id)}
+                          style={{ color: token.colorTextSecondary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                      <Tooltip title={t('workbench.queueEdit')}>
+                        <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueEdit')}
+                          disabled={editingQueueId !== null}
+                          onClick={() => startEditQueued(item)}
+                          style={{ color: token.colorTextSecondary, width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                      <Tooltip title={t('workbench.queueDelete')}>
+                        <Button type="text" size="small" icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                          aria-label={t('workbench.queueDelete')}
+                          danger
+                          onClick={() => deleteQueued(item.id)}
+                          style={{ width: 24, height: 24, minWidth: 24 }} />
+                      </Tooltip>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <div ref={composerGlassRef} className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 20, padding: '10px 10px 10px 16px', border: `1px solid ${isDragOver ? token.colorPrimary : 'var(--wa-glass-border)'}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorder }}>
+        onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimaryBorder }}
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = 'var(--wa-glass-border)' }}>
         {isDragOver && (
           <div style={{
-            position: 'absolute', inset: 0,
-            borderRadius: 13,
-            background: token.colorPrimaryBg,
-            border: `2px dashed ${token.colorPrimary}`,
+            position: 'absolute', inset: 3,
+            borderRadius: 17,
+            background: 'color-mix(in srgb, var(--wa-accent-soft) 80%, transparent)',
+            boxShadow: `inset 0 0 0 1.5px ${token.colorPrimary}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             pointerEvents: 'none',
             zIndex: 10,
           }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-              <FileTextOutlined style={{ fontSize: 28, color: token.colorPrimary }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <PaperClipOutlined style={{ fontSize: 16, color: token.colorPrimary }} />
               <Text style={{ color: token.colorPrimary, fontWeight: 500, fontSize: 13 }}>{t('workbench.dropFileHint')}</Text>
             </div>
           </div>
@@ -1654,6 +2004,7 @@ const ChatInput: React.FC<{
           {/* contentEditable 输入框，支持在光标位置嵌入文件令牌 */}
           <div
             ref={editorRef}
+            data-testid="chat-input-editor"
             contentEditable={!isCompacting}
             suppressContentEditableWarning
             onKeyDown={handleKeyDown}
@@ -1668,11 +2019,11 @@ const ChatInput: React.FC<{
               border: 'none',
               outline: 'none',
               resize: 'none',
-              fontSize: 13,
+              fontSize: 14,
               lineHeight: 1.6,
-              padding: '4px 0',
-              minHeight: centerMode ? (5 * 1.6 * 13) : (2 * 1.6 * 13),
-              maxHeight: 8 * 1.6 * 13,
+              padding: '3px 0',
+              minHeight: centerMode ? (5 * 1.6 * 14) : (2 * 1.6 * 14),
+              maxHeight: 8 * 1.6 * 14,
               overflowY: 'auto',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
@@ -1689,9 +2040,9 @@ const ChatInput: React.FC<{
                 zIndex: 1,
                 pointerEvents: 'none',
                 color: token.colorTextTertiary,
-                fontSize: 13,
+                fontSize: 14,
                 lineHeight: 1.6,
-                padding: '4px 0',
+                padding: '3px 0',
                 left: 0,
                 right: 0,
                 top: 0,
@@ -1711,9 +2062,9 @@ const ChatInput: React.FC<{
                 zIndex: 1,
                 pointerEvents: 'none',
                 color: token.colorTextTertiary,
-                fontSize: 13,
+                fontSize: 14,
                 lineHeight: 1.6,
-                padding: '4px 0',
+                padding: '3px 0',
                 left: 0,
                 top: 0,
               }}
@@ -1723,7 +2074,7 @@ const ChatInput: React.FC<{
           )}
           {/* 插件视图注入点：对话输入框上方快捷建议区 */}
           <PluginViewSlot view="chat.quick" />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4, paddingTop: 6, borderTop: '1px solid var(--wa-line-2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {!hideToolbar && (
                 <Popover
@@ -1736,6 +2087,7 @@ const ChatInput: React.FC<{
                   onOpenChange={setShowModePicker}
                 >
                   <Button type="text" size="small"
+                    data-testid="chat-mode-trigger"
                     title={`${modeLabel}\n${modeDesc}`}
                     icon={executionMode === 'pureChat'
                       ? <MessageOutlined style={{ fontSize: 12 }} />
@@ -1746,7 +2098,7 @@ const ChatInput: React.FC<{
                       color: executionMode === 'pureChat'
                         ? token.colorPrimary
                         : executionMode === 'fullAllow' ? token.colorWarning : token.colorTextQuaternary,
-                      padding: '0 6px', height: 20, gap: 4,
+                      padding: '0 8px', height: 24, gap: 5, borderRadius: 7,
                       background: executionMode === 'fullAllow' ? token.colorWarningBg : 'transparent',
                     }}>
                     <span style={{ fontSize: 11 }}>{modeLabel}</span>
@@ -1756,8 +2108,9 @@ const ChatInput: React.FC<{
               {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
               <Tooltip title={t('workbench.attachFile')}>
                 <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
+                  data-testid="chat-attach"
                   onClick={() => fileInputRef.current?.click()}
-                  style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                  style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }} />
               </Tooltip>
               {/* 插件视图注入点：对话输入框工具栏 */}
               <PluginViewSlot view="chat.toolbar" />
@@ -1776,7 +2129,7 @@ const ChatInput: React.FC<{
                     open={showModelPicker}
                   >
                     <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
-                      style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                      style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }}
                       title={t('workbench.compareModels')} />
                   </Popover>
                   <Popover
@@ -1789,13 +2142,13 @@ const ChatInput: React.FC<{
                     open={showKbPicker}
                   >
                     <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
-                      style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                      style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }}
                       title={t('workbench.knowledgeBase')} />
                   </Popover>
                   <Tooltip title={t('workbench.selectSkillToExecute')}>
                     <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
                       <Button type="text" size="small" icon={<ToolOutlined style={{ fontSize: 12 }} />}
-                        style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                        style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 24, minWidth: 24, borderRadius: 7 }} />
                     </Dropdown>
                   </Tooltip>
                 </>
@@ -1817,9 +2170,10 @@ const ChatInput: React.FC<{
                 >
                   <Button type="text" size="small"
                     title={defaultModelLabel || undefined}
+                    data-testid="chat-model-trigger"
                     style={{
                       color: token.colorTextSecondary,
-                      padding: '0 5px', height: 18, minWidth: 18, borderRadius: 4,
+                      padding: '0 6px', height: 22, minWidth: 22, borderRadius: 6,
                     }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11 }}>
                       {defaultModelLabel ? (
@@ -1855,17 +2209,36 @@ const ChatInput: React.FC<{
         </div>
         <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
         {isStreaming || isCompacting ? (
-          <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {isStreaming && (
+              <Tooltip title={t('workbench.queueSendHint')}>
+                <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
+                  data-testid="chat-send"
+                  disabled={isCompacting || (!hasEditorContent() && attachedImages.length === 0)}
+                  style={{ width: 32, height: 32, minWidth: 32, borderRadius: 16, padding: 0, flexShrink: 0 }}
+                  size="middle" />
+              </Tooltip>
+            )}
+            <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop}
+              style={{ width: 32, height: 32, minWidth: 32, borderRadius: 16, padding: 0, flexShrink: 0 }}
+              size="middle" data-testid="chat-stop" />
+          </div>
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
+            data-testid="chat-send"
             disabled={!hasEditorContent() && attachedImages.length === 0}
-            size="middle" style={{ flexShrink: 0 }} />
+            size="middle"
+            style={{
+              width: 32, height: 32, minWidth: 32, borderRadius: 16, padding: 0, flexShrink: 0,
+              boxShadow: '0 10px 22px -14px var(--wa-accent), inset 0 1px 0 rgba(255,255,255,.28)',
+            }} />
         )}
       </div>
       {editorContextMenu && (
         <div
           ref={editorMenuRef}
           onMouseDown={(e) => e.preventDefault()}
+          className="wa-glass-menu"
           style={{
             position: 'fixed',
             left: editorContextMenu.x,
@@ -1873,10 +2246,6 @@ const ChatInput: React.FC<{
             zIndex: 1060,
             minWidth: 136,
             padding: 4,
-            background: token.colorBgElevated,
-            border: `1px solid ${token.colorBorderSecondary}`,
-            borderRadius: 8,
-            boxShadow: token.boxShadowSecondary,
           }}
         >
           {editorContextMenuItems.map(item => (

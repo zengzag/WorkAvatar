@@ -7,6 +7,10 @@ export interface SecretaryBusState {
   bubble: string
   runningCount: number
   unreadCount: number
+  /** 未查看的任务结果数：气泡文案按「结果」表述 */
+  unreadTaskCount: number
+  /** 未查看的通知数：气泡文案按「通知」表述 */
+  unreadNoticeCount: number
   /** 挂件配色跟随当前任务所属员工的头像颜色 */
   petColor?: string
   /** 员工上传的头像图片：挂在挂件胸前作为身份标识 */

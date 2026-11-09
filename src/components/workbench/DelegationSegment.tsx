@@ -1,7 +1,5 @@
 import { Typography, Tooltip, theme } from 'antd'
 import {
-  DownOutlined,
-  RightOutlined,
   TeamOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
@@ -13,7 +11,7 @@ import { useState, useRef, useEffect } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import { SegmentList } from './message-shared'
 import { formatDuration } from '../../utils/format'
-import PreviewLine from './PreviewLine'
+import SegmentRow from './SegmentRow'
 
 const { Text } = Typography
 
@@ -105,105 +103,50 @@ const DelegationSegmentInner: React.FC<{
   const preview = isRunning ? (lastContentful?.content || '') : ''
 
   const header = (
-    <div
-      onClick={() => onToggle(msgId, seg.id)}
-      style={{
-        padding: '5px 0',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        cursor: 'pointer',
-        userSelect: 'none',
-      }}
-    >
-      {isExpanded ? (
-        <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-      ) : (
-        <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-      )}
-      <TeamOutlined style={{ fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }} />
-      <Text style={{
-        fontSize: 12,
-        color: token.colorTextSecondary,
-        flexShrink: 0,
-        whiteSpace: 'nowrap',
-      }}>
-        {t('workbench.delegationTo')}{' '}
-        <span style={{ color: token.colorText, fontWeight: 500 }}>
-          {seg.targetEmployeeName || t('workbench.delegationUnknown')}
-        </span>
-      </Text>
-      {seg.targetEmployeeId?.startsWith('inline:') && (
-        <Tooltip title={t('workbench.delegationEphemeral')}>
-          <span style={{
-            flexShrink: 0,
-            fontSize: 10,
-            lineHeight: '16px',
-            padding: '0 5px',
-            borderRadius: 4,
-            color: token.colorPrimary,
-            border: `1px solid ${token.colorPrimaryBorder}`,
-            background: token.colorPrimaryBg,
-          }}>
-            {t('workbench.delegationEphemeral')}
+    <SegmentRow
+      expanded={isExpanded}
+      icon={<TeamOutlined />}
+      title={(
+        <>
+          {t('workbench.delegationTo')}{' '}
+          <span style={{ color: token.colorText, fontWeight: 500 }}>
+            {seg.targetEmployeeName || t('workbench.delegationUnknown')}
           </span>
-        </Tooltip>
-      )}
-      {instruction && (
-        <Tooltip
-          title={instruction}
-          styles={{
-            root: { maxWidth: 520 },
-            container: { maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-          }}
-        >
-          <Text style={{
-            fontSize: 11,
-            color: token.colorTextQuaternary,
-            maxWidth: 260,
-            flexShrink: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            · {instruction}
-          </Text>
-        </Tooltip>
-      )}
-          {!isExpanded && isRunning && preview && (
-            <PreviewLine
-              text={preview}
-              fontSize={11}
-              lineHeight={16}
-              color={token.colorTextQuaternary}
-            />
+          {seg.targetEmployeeId?.startsWith('inline:') && (
+            <Tooltip title={t('workbench.delegationEphemeral')}>
+              <span style={{
+                marginLeft: 6,
+                fontSize: 10,
+                lineHeight: '16px',
+                padding: '0 5px',
+                borderRadius: 4,
+                color: token.colorPrimary,
+                border: `1px solid ${token.colorPrimaryBorder}`,
+                background: token.colorPrimaryBg,
+              }}>
+                {t('workbench.delegationEphemeral')}
+              </span>
+            </Tooltip>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {duration !== null && (
-          <Text style={{ fontSize: 11, color: token.colorTextQuaternary, display: 'flex', alignItems: 'center', gap: 3 }}>
-            <ClockCircleOutlined style={{ fontSize: 10 }} />
-            {t('workbench.executionTime', { time: duration })}
-          </Text>
-        )}
-        {totalTokens !== undefined && (
-          <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-            {formatNumber(totalTokens)} tokens
-          </Text>
-        )}
-        {statusEl}
-      </div>
-    </div>
+        </>
+      )}
+      detail={isRunning && preview ? preview : instruction}
+      meta={(
+        <>
+          {duration !== null && <span>{t('workbench.executionTime', { time: duration })}</span>}
+          {totalTokens !== undefined && <span>{formatNumber(totalTokens)} tokens</span>}
+        </>
+      )}
+      status={statusEl}
+      onClick={() => onToggle(msgId, seg.id)}
+    />
   )
 
   if (isExpanded) {
     return (
-      <div style={{ marginBottom: 2 }}>
+      <div data-testid="delegation-segment" data-status={status} data-target={seg.targetEmployeeName || ''} style={{ marginBottom: 2 }}>
         {header}
-        <div style={{ position: 'relative' }}>
-          {/* 竖线与展开 icon 同列，从 icon 正下方延伸贯穿内容区 */}
-          <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
-          <div style={{ position: 'relative', padding: '0 10px 8px 24px' }}>
+        <div className="wa-seg-body">
           {hasSubContent ? (
             <>
               <SegmentList
@@ -265,14 +208,13 @@ const DelegationSegmentInner: React.FC<{
               {isRunning ? t('workbench.delegationWaiting') : t('workbench.delegationNoOutput')}
             </Text>
           )}
-          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div style={{ marginBottom: 2 }}>
+    <div data-testid="delegation-segment" data-status={status} data-target={seg.targetEmployeeName || ''} style={{ marginBottom: 2 }}>
       {header}
       {/* 折叠态：失败/取消显示错误信息 */}
       {(() => {

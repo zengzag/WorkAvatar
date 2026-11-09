@@ -10,6 +10,7 @@ import { getToolDisplayName } from '../../utils/tool-display'
 import { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
 import { useSecretaryStore, selectBusSummary, type SecretaryTask } from './secretary.store'
 import { postSecretaryMessage } from './secretary-bus'
+import { markSecretaryOwned } from './secretary-remote'
 
 /**
  * 小秘书任务执行器：
@@ -121,7 +122,9 @@ function emitStream(entry: SessionEntry, streaming: boolean): void {
 
 /** 把任务汇总成挂件状态（面板窗是唯一数据源，挂件窗只消费） */
 export function broadcastSecretaryState(): void {
-  const summary = selectBusSummary(store().tasks)
+  // 主窗口发起的任务也计入挂件状态：用户无需打开主窗口就能看到有任务在跑
+  const combined = [...store().remoteTasks, ...store().tasks].sort((a, b) => b.startedAt - a.startedAt)
+  const summary = selectBusSummary(combined, store().notices)
   const focus = summary.waiting || summary.latest || summary.unreadFirst
   postSecretaryMessage({
     type: 'state',
@@ -134,6 +137,8 @@ export function broadcastSecretaryState(): void {
           : '',
       runningCount: summary.runningCount,
       unreadCount: summary.unreadCount,
+      unreadTaskCount: summary.unreadTaskCount,
+      unreadNoticeCount: summary.unreadNoticeCount,
       petColor: focus?.employee.avatarColor || undefined,
       petImage: focus?.employee.avatarImage || null,
       petIcon: focus?.employee.avatarIcon || undefined,
@@ -151,7 +156,10 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onChunk(({ sessionId, chunk, chunks }) => {
     const entry = sessions.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      setRemoteStep(sessionId, String(i18n.t('secretary.responding')))
+      return
+    }
     const text = chunk ?? (chunks ? chunks.join('') : '')
     if (text) {
       entry.text += text
@@ -164,7 +172,11 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onThought(({ sessionId, thought }) => {
     const entry = sessions.get(sessionId)
-    if (!entry || !thought) return
+    if (!entry) {
+      if (thought) setRemoteStep(sessionId, String(i18n.t('secretary.thinkingProcess')))
+      return
+    }
+    if (!thought) return
     entry.thought += thought
     appendTextSegment(entry, 'thinking', thought)
     setStep(entry.taskId, String(i18n.t('secretary.thinkingProcess')))
@@ -173,7 +185,10 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onToolCall(({ sessionId, id, name, args }) => {
     const entry = sessions.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      setRemoteStep(sessionId, getToolDisplayName(name))
+      return
+    }
     closeStreamingSegments(entry)
     entry.segments.push({
       type: 'tool_call',
@@ -192,7 +207,10 @@ export function installSecretaryRunner(): void {
 
   window.electronAPI.llm.onToolResult(({ sessionId, name, result, generatedFiles }) => {
     const entry = sessions.get(sessionId)
-    if (!entry) return
+    if (!entry) {
+      setRemoteStep(sessionId, String(i18n.t('secretary.working')))
+      return
+    }
     // 工具结果事件不带调用 id，按「同名且未完成」的最后一次调用回填
     for (let i = entry.segments.length - 1; i >= 0; i--) {
       const seg = entry.segments[i]
@@ -251,6 +269,13 @@ export function installSecretaryRunner(): void {
 
 function findTask(taskId: string): SecretaryTask | undefined {
   return store().tasks.find((t) => t.id === taskId)
+}
+
+/** 主窗口发起的任务没有本地执行器：按会话定位运行中的镜像任务，让面板也能看到同样的执行细节 */
+function setRemoteStep(sessionId: string, step: string): void {
+  const task = store().remoteTasks.find((t) => t.sessionId === sessionId)
+  if (!task || task.step === step) return
+  store().patchRemoteTask(task.id, { step })
 }
 
 /** 关闭所有仍在流式中的段（思考结束才出正文、工具调用前先收口正文） */
@@ -398,6 +423,8 @@ export async function startSecretaryTask(params: {
     employee_id: employee.id,
     title,
   })
+  // 永久标记归属：任务被「完成」移除后，也不能作为主窗口任务重新出现在面板
+  markSecretaryOwned(conversation.id)
 
   const taskId = generateId()
   const task: SecretaryTask = {

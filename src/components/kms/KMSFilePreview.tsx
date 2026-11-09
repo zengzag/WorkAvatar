@@ -220,8 +220,8 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
       onCancel={onClose}
       footer={null}
       width="90%"
-      style={{ top: 20 }}
-      styles={{ body: { height: 'calc(90vh - 110px)', padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } }}
+      centered
+      styles={{ body: { height: 'calc(85vh - 110px)', padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } }}
     >
       {/* 顶部操作栏 */}
       <div style={{

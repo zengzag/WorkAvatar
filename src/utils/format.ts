@@ -16,11 +16,13 @@ export function getDirName(p: string): string {
 
 /**
  * 格式化耗时（秒）：
+ * - 不足 0.1 秒显示 <0.1s，避免瞬时工具调用展示成 0.0s
  * - 不足 1 分钟：<10s 保留 1 位小数，≥10s 取整，如 1.2s / 45s
  * - 不足 1 小时：XmXs
  * - 1 小时及以上：XhXmXs
  */
 export function formatDuration(seconds: number): string {
+  if (seconds < 0.1) return seconds > 0 ? '<0.1s' : '0s'
   if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`
   const total = Math.round(seconds)
   const h = Math.floor(total / 3600)

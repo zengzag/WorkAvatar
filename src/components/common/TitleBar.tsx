@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Tooltip, theme } from 'antd'
+import { Button, Tooltip } from 'antd'
 import {
   MinusOutlined,
   BorderOutlined,
@@ -25,7 +25,6 @@ const DETACHABLE_TABS = ['tasks', 'employees', 'kms']
  */
 const TitleBar: React.FC = () => {
   const { t } = useTranslation()
-  const { token } = theme.useToken()
   const location = useLocation()
   const [isMaximized, setIsMaximized] = useState(false)
 
@@ -76,12 +75,11 @@ const TitleBar: React.FC = () => {
 
   const btnStyle: React.CSSProperties = {
     width: 34,
-    height: 34,
+    height: 30,
     minWidth: 34,
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 0,
     border: 'none',
     background: 'transparent',
   }
@@ -91,8 +89,6 @@ const TitleBar: React.FC = () => {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    // 暗色下描边比两侧底色更亮，会形成一条明显的割裂细线；改为无描边，靠底色自然过渡
-    borderBottom: isDark ? 'none' : `1px solid ${token.colorBorderSecondary}`,
     flexShrink: 0,
     userSelect: 'none',
     ...({ WebkitAppRegion: 'drag' } as React.CSSProperties),
@@ -131,6 +127,7 @@ const TitleBar: React.FC = () => {
             <Button
               type="text"
               size="small"
+              className="wa-titlebar-btn"
               icon={<ExpandAltOutlined />}
               onClick={handleDetach}
               style={btnStyle}
@@ -141,6 +138,7 @@ const TitleBar: React.FC = () => {
           <Button
             type="text"
             size="small"
+            className="wa-titlebar-btn"
             icon={isDark ? <SunOutlined /> : <MoonOutlined />}
             onClick={toggleTheme}
             style={btnStyle}
@@ -149,6 +147,7 @@ const TitleBar: React.FC = () => {
         <Button
           type="text"
           size="small"
+          className="wa-titlebar-btn"
           icon={<MinusOutlined />}
           onClick={() => window.electronAPI.window.minimize()}
           style={btnStyle}
@@ -156,6 +155,7 @@ const TitleBar: React.FC = () => {
         <Button
           type="text"
           size="small"
+          className="wa-titlebar-btn"
           icon={isMaximized ? <BlockOutlined /> : <BorderOutlined />}
           onClick={handleToggleMaximize}
           style={btnStyle}
@@ -163,19 +163,12 @@ const TitleBar: React.FC = () => {
         <Button
           type="text"
           size="small"
+          className="wa-titlebar-btn wa-titlebar-close"
           icon={<CloseOutlined />}
           onClick={() => window.electronAPI.window.close()}
-          style={{ ...btnStyle, borderRadius: 0 }}
-          className="titlebar-close-btn"
+          style={btnStyle}
         />
       </div>
-
-      <style>{`
-        .titlebar-close-btn:hover {
-          background: #e81123 !important;
-          color: #fff !important;
-        }
-      `}</style>
     </div>
   )
 }

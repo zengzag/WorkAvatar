@@ -1,13 +1,11 @@
-import { theme, Typography } from 'antd'
-import { DownOutlined, RightOutlined, LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { theme } from 'antd'
+import { LoadingOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageSegment } from './types'
 import { formatDuration } from '../../utils/format'
 import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
-import PreviewLine from './PreviewLine'
-
-const { Text } = Typography
+import SegmentRow from './SegmentRow'
 
 /** 该步骤是否仍在进行（思考流式输出 / 工具未完成 / 子代理运行中） */
 function isStepActive(seg: MessageSegment): boolean {
@@ -81,50 +79,26 @@ const WorkProcessGroupInner: React.FC<{
     return ''
   }, [running, segments, getToolDisplayName, t])
 
-  const showPreview = !open && !!previewText
-
   return (
     <div style={{ marginBottom: 2 }}>
-      <div
+      <SegmentRow
+        expanded={open}
+        icon={<ThunderboltOutlined />}
+        title={t('workbench.workProcess')}
+        detail={!open ? previewText : undefined}
+        meta={`${durationText ? `${durationText} · ` : ''}${t('workbench.workProcessSteps', { count: segments.length })}`}
+        status={running
+          ? <LoadingOutlined spin style={{ fontSize: 11, color: token.colorTextTertiary }} />
+          : undefined}
         onClick={() => setOpen(v => !v)}
-        style={{
-          padding: '5px 0',
-          cursor: 'pointer',
-          userSelect: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        {open ? (
-          <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-        ) : (
-          <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
-        )}
-        <ThunderboltOutlined style={{ color: token.colorTextTertiary, fontSize: 12 }} />
-        <Text style={{ fontSize: 12, color: token.colorTextSecondary, flexShrink: 0 }}>
-          {t('workbench.workProcess')}
-        </Text>
-        {showPreview && (
-          <PreviewLine text={previewText} fontSize={12} lineHeight={18} color={token.colorTextQuaternary} />
-        )}
-        <Text style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0, marginLeft: showPreview ? 0 : 'auto' }}>
-          {durationText ? `${durationText} · ` : ''}
-          {t('workbench.workProcessSteps', { count: segments.length })}
-        </Text>
-        {running && (
-          <LoadingOutlined spin style={{ fontSize: 11, color: token.colorTextTertiary, flexShrink: 0 }} />
-        )}
-      </div>
+      />
 
       {open && (
         <div
           ref={contentScrollRef}
           onScroll={contentOnScroll}
+          className="wa-seg-body"
           style={{
-            marginLeft: 4,
-            paddingLeft: 12,
-            borderLeft: `2px solid ${token.colorBorderSecondary}`,
             maxHeight: 420,
             // 块流布局：子项恒为容器宽度，长 token 由 word-break 断行（flex 下 min-width:auto
             // 会被长 URL/长串撑宽，导致底部横向滚动条随流式内容反复出现消失而闪烁）

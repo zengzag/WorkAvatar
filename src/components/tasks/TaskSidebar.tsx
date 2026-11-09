@@ -18,11 +18,13 @@ import {
   CaretRightOutlined,
   DownOutlined,
   FolderOutlined,
+  WarningFilled,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import type { Conversation } from '../../types'
 import { getDirName } from '../../utils/format'
+import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 
 const { Text } = Typography
 
@@ -65,6 +67,10 @@ interface TaskSidebarProps {
   activeTaskId: string | null
   searchQuery: string
   onSearchChange: (query: string) => void
+  /** 回车提交：触发全文内容检索 */
+  onSearchSubmit?: (query: string) => void
+  /** 是否已提交过全文检索（用于提示"当前仅匹配标题"） */
+  contentSearched?: boolean
   viewMode: TaskViewMode
   onViewModeChange: (mode: TaskViewMode) => void
   onSelect: (taskId: string) => void
@@ -77,6 +83,8 @@ interface TaskSidebarProps {
   onRename?: (taskId: string, newTitle: string) => Promise<boolean> | boolean
   onExtractMemory?: (taskId: string) => void
   isTaskStreaming?: (taskId: string) => boolean
+  /** 每个任务待处理的确认请求数，用于列表内的「待确认」角标 */
+  pendingRequestCounts?: Record<string, number>
   // 增量加载
   hasMore?: boolean
   loadingMore?: boolean
@@ -96,30 +104,39 @@ export const formatTaskTime = (timestamp: number | null, t: (key: string, option
   return time.format('YYYY/M/D')
 }
 
-/** 搜索提交防抖时长：停止输入后再触发检索与列表过滤 */
+/** 搜索提交防抖时长：停止输入后再触发标题检索与列表过滤 */
 const SEARCH_DEBOUNCE_MS = 250
 
+const noop = () => {}
+
 /**
- * 搜索输入框：本地维护输入值并防抖提交。
- * 输入过程只重渲染这个小组件，不触发整页（含对话区）重渲染与后端检索；
+ * 搜索输入框：本地维护输入值并防抖提交标题检索。
+ * 输入过程只重渲染这个小组件，不触发整页（含对话区）重渲染；
  * 提交时用 startTransition 标记为低优先级，避免长列表/流式输出阻塞按键。
+ * 全文内容检索成本高（主进程同步 FTS + LIKE 兜底），只在回车或点击搜索图标时触发。
  */
 const DebouncedSearchInput = memo(({
   value,
   onChange,
+  onSubmit,
   placeholder,
+  submitHint,
   token,
 }: {
   value: string
   onChange: (query: string) => void
+  onSubmit: (query: string) => void
   placeholder: string
+  submitHint: string
   token: any
 }) => {
   const [local, setLocal] = useState(value)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onChangeRef = useRef(onChange)
+  const onSubmitRef = useRef(onSubmit)
 
   useEffect(() => { onChangeRef.current = onChange }, [onChange])
+  useEffect(() => { onSubmitRef.current = onSubmit }, [onSubmit])
   // 外部重置（如清空筛选）时同步本地值
   useEffect(() => { setLocal(value) }, [value])
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
@@ -134,11 +151,27 @@ const DebouncedSearchInput = memo(({
     }
   }, [])
 
+  const submit = useCallback((next: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    startTransition(() => {
+      onChangeRef.current(next)
+      onSubmitRef.current(next)
+    })
+  }, [])
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value
     setLocal(next)
     commit(next)
   }, [commit])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    // 输入法组词中的回车只用于选词，不触发检索
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      submit(local)
+    }
+  }, [local, submit])
 
   const handleClear = useCallback(() => {
     setLocal('')
@@ -147,11 +180,17 @@ const DebouncedSearchInput = memo(({
 
   return (
     <>
-      <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
+      <Tooltip title={submitHint}>
+        <SearchOutlined
+          onClick={() => submit(local)}
+          style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0, cursor: 'pointer' }}
+        />
+      </Tooltip>
       <input
         placeholder={placeholder}
         value={local}
         onChange={handleChange}
+        onKeyDown={handleKeyDown}
         style={{
           flex: 1,
           height: '100%',
@@ -188,6 +227,7 @@ const TaskItem = memo(({
   task,
   active,
   streaming,
+  pendingRequests = 0,
   onSelect,
   onDelete,
   onExport,
@@ -203,6 +243,8 @@ const TaskItem = memo(({
   task: TaskWithEmployee
   active: boolean
   streaming: boolean
+  /** 待处理确认请求数（0 时不展示角标） */
+  pendingRequests?: number
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onExport?: (id: string) => void
@@ -317,6 +359,10 @@ const TaskItem = memo(({
       open={selectionMode ? false : undefined}
     >
       <div
+        data-testid="task-item"
+        data-task-id={task.id}
+        data-task-title={task.title || ''}
+        className={`wa-task-item${active && !selectionMode ? ' is-active' : ''}${selected ? ' is-selected' : ''}`}
         onClick={(e) => {
           e.stopPropagation()
           if (selectionMode) {
@@ -329,15 +375,8 @@ const TaskItem = memo(({
         onMouseLeave={() => { setHovered(false); setDeleteConfirm(false) }}
         onDoubleClick={(e) => { if (!selectionMode) startEdit(e) }}
         style={{
-          padding: '6px 9px',
-          borderRadius: 7,
+          padding: '7px 9px',
           cursor: isEditing ? 'text' : 'pointer',
-          background: selectionMode
-            ? (selected ? 'var(--wa-accent-soft)' : (hovered ? 'var(--wa-hover)' : 'transparent'))
-            : (active ? 'var(--wa-panel-3)' : (hovered ? 'var(--wa-hover)' : 'transparent')),
-          border: active && !selectionMode ? '1px solid var(--wa-line)' : (selected ? '1px solid var(--wa-accent-line)' : '1px solid transparent'),
-          boxShadow: active && !selectionMode ? 'var(--wa-glass-sheen)' : 'none',
-          transition: 'all 0.15s',
           display: 'flex',
           alignItems: 'center',
           gap: 8,
@@ -354,11 +393,12 @@ const TaskItem = memo(({
           </div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 22 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 21 }}>
             {streaming && (
               <span style={{
                 width: 6, height: 6, borderRadius: '50%',
                 background: token.colorPrimary, flexShrink: 0,
+                boxShadow: `0 0 0 3px ${token.colorPrimaryBg}`,
                 animation: 'pulse 1.5s infinite',
               }} />
             )}
@@ -366,19 +406,26 @@ const TaskItem = memo(({
               <Input
                 ref={editInputRef}
                 value={editValue}
+                data-testid="task-rename-input"
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleEditKeyDown}
                 onBlur={saveEdit}
                 size="small"
                 variant="filled"
                 onClick={(e) => e.stopPropagation()}
-                style={{ flex: 1, minWidth: 0, fontSize: 14, padding: '0 8px', height: 24 }}
+                style={{ flex: 1, minWidth: 0, fontSize: 13, padding: '0 8px', height: 24, borderRadius: 7 }}
               />
             ) : (
               <Text
                 strong={active}
                 ellipsis
-                style={{ fontSize: 13, flex: 1, minWidth: 0 }}
+                style={{
+                  fontSize: 13,
+                  flex: 1,
+                  minWidth: 0,
+                  color: token.colorText,
+                  letterSpacing: active ? '-0.005em' : undefined,
+                }}
               >
                 {task.title || t('workbench.untitledConv')}
               </Text>
@@ -390,6 +437,7 @@ const TaskItem = memo(({
               alignItems: 'center',
               gap: 5,
               marginTop: 1,
+              paddingLeft: streaming ? 12 : 0,
               fontSize: 11,
               color: token.colorTextTertiary,
               minWidth: 0,
@@ -405,16 +453,34 @@ const TaskItem = memo(({
               <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                 {formatTaskTime(task.last_message_at ?? task.created_at, t)}
               </span>
+              {pendingRequests > 0 && (
+                <span style={{
+                  flexShrink: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  padding: '0 5px',
+                  borderRadius: 999,
+                  fontSize: 10,
+                  lineHeight: '16px',
+                  color: token.colorWarning,
+                  background: token.colorWarningBg,
+                }}>
+                  <WarningFilled style={{ fontSize: 9 }} />
+                  {t('interaction.pendingBadge')}
+                </span>
+              )}
             </div>
           )}
         </div>
         {hovered && !isEditing && !selectionMode && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
             {!deleteConfirm && (
               <Button
                 type="text"
                 size="small"
                 icon={<EditOutlined style={{ fontSize: 12 }} />}
+                data-testid="task-rename"
                 onClick={(e) => startEdit(e)}
                 title={t('common.rename')}
                 style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
@@ -426,6 +492,7 @@ const TaskItem = memo(({
                   type="text"
                   size="small"
                   onClick={(e) => confirmDelete(e)}
+                  data-testid="task-delete-confirm"
                   title={t('common.confirm')}
                   danger
                   style={{ padding: '0 4px', width: 'auto', height: 20, minWidth: 20, fontSize: 12 }}
@@ -436,6 +503,7 @@ const TaskItem = memo(({
                   type="text"
                   size="small"
                   onClick={() => cancelDeleteConfirm()}
+                  data-testid="task-delete-cancel"
                   title={t('common.cancel')}
                   style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
                 >
@@ -447,6 +515,7 @@ const TaskItem = memo(({
                 type="text"
                 size="small"
                 icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                data-testid="task-delete"
                 onClick={(e) => handleDeleteClick(e)}
                 title={t('common.delete')}
                 style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
@@ -464,6 +533,8 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   activeTaskId,
   searchQuery,
   onSearchChange,
+  onSearchSubmit,
+  contentSearched,
   viewMode,
   onViewModeChange,
   onSelect,
@@ -476,6 +547,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   onRename,
   onExtractMemory,
   isTaskStreaming,
+  pendingRequestCounts,
   hasMore,
   loadingMore,
   onLoadMore,
@@ -490,6 +562,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const glassRef = useLiquidGlass<HTMLDivElement>()
 
   // 侧栏宽度：支持拖拽调整并持久化
   const [width, setWidth] = useState<number>(() => {
@@ -503,6 +576,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const sidebarRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
+
+  // 同一个根节点既服务于拖宽计算，也作为玻璃折射的宿主
+  const setSidebarNode = useCallback((node: HTMLDivElement | null) => {
+    sidebarRef.current = node
+    glassRef.current = node
+  }, [glassRef])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -674,6 +753,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       task={task}
       active={task.id === activeTaskId}
       streaming={isTaskStreaming?.(task.id) ?? false}
+      pendingRequests={pendingRequestCounts?.[task.id] ?? 0}
       selectionMode={selectionMode}
       selected={selectedIds.has(task.id)}
       onToggleSelect={toggleSelect}
@@ -689,47 +769,37 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   )
 
   return (
-    <div ref={sidebarRef} className="wa-task-sidebar" style={{
+    <div ref={setSidebarNode} className="wa-task-sidebar" data-testid="task-sidebar" style={{
       width,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',
-      borderRight: `1px solid ${token.colorBorderSecondary}`,
-      background: 'transparent',
       height: '100%',
       position: 'relative',
       userSelect: resizing ? 'none' : undefined,
     }}>
       {/* 顶部操作区：单行整合 - 关闭面板 | 搜索框(内嵌视图菜单) | 新建任务 */}
       <div style={{
-        padding: '8px 10px',
+        padding: '10px 10px 9px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 6,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        gap: 7,
+        borderBottom: '1px solid var(--wa-line-2)',
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* 最左侧：面板隐藏按钮（弱样式，框架控件） */}
           {onCollapse && (
             <Tooltip title={t('workbench.closePanel')}>
               <Button
                 type="text"
                 size="small"
+                className="wa-icon-btn"
                 icon={<MenuFoldOutlined style={{ fontSize: 14 }} />}
                 onClick={onCollapse}
-                style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  minWidth: 28,
-                  borderRadius: 6,
-                  color: token.colorTextQuaternary,
-                  opacity: 0.5,
-                  transition: 'opacity 0.15s',
-                }}
+                style={{ opacity: 0.55 }}
                 onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
-                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.55' }}
               />
             </Tooltip>
           )}
@@ -738,14 +808,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           {/* 搜索框和批量操作条都常驻DOM，通过display切换，避免条件渲染导致的闪烁 */}
           <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
             {/* 多选模式批量操作条 */}
-            <div style={{
-              height: 28,
+            <div className="wa-field" style={{
+              height: 30,
               display: selectionMode ? 'flex' : 'none',
               alignItems: 'center',
               gap: 6,
               padding: '0 8px',
-              borderRadius: 6,
-              background: token.colorFillQuaternary,
             }}>
               <Checkbox checked={allSelected} indeterminate={selectedIds.size > 0 && !allSelected} onChange={handleToggleSelectAll} />
               <span style={{ flex: 1, fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -756,30 +824,26 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 size="small"
                 disabled={selectedIds.size === 0 || !onDeleteMany}
                 danger
+                data-testid="task-batch-delete"
                 icon={<DeleteOutlined style={{ fontSize: 12 }} />}
                 onClick={handleBatchDelete}
                 style={{ fontSize: 12, color: selectedIds.size > 0 ? token.colorError : token.colorTextQuaternary, padding: 0, width: 22, height: 22, minWidth: 22 }}
               />
             </div>
             {/* 搜索框 */}
-            <div style={{
+            <div data-testid="task-sidebar-search" className="wa-field" style={{
               height: 30,
               display: selectionMode ? 'none' : 'flex',
-              borderRadius: 7,
-              border: '1px solid var(--wa-line)',
-              background: 'var(--wa-panel-2)',
               alignItems: 'center',
-              padding: '0 4px 0 8px',
-              transition: 'border-color 0.15s',
+              padding: '0 3px 0 9px',
               minWidth: 0,
-            }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary }}
-            >
+            }}>
               <DebouncedSearchInput
                 value={searchQuery}
                 onChange={onSearchChange}
+                onSubmit={onSearchSubmit ?? noop}
                 placeholder={t('tasks.searchPlaceholder')}
+                submitHint={t('tasks.searchContentHint')}
                 token={token}
               />
               {/* 视图与多选合并为一个下拉按钮，避免搜索框内堆叠过多图标 */}
@@ -788,13 +852,9 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 onOpenChange={setViewMenuVisible}
                 trigger={['click']}
                 dropdownRender={() => (
-                  <div style={{
-                    width: 160,
+                  <div className="wa-glass-menu" style={{
+                    width: 168,
                     padding: 6,
-                    background: token.colorBgContainer,
-                    borderRadius: 8,
-                    border: `1px solid ${token.colorBorderSecondary}`,
-                    boxShadow: token.boxShadowSecondary,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
@@ -807,6 +867,8 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                       return (
                         <div
                           key={option.key}
+                          data-testid="task-view-option"
+                          data-view={option.key}
                           onClick={() => changeViewMode(option.key)}
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
@@ -815,7 +877,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                             cursor: 'pointer',
                             fontSize: 12,
                             background: active ? token.colorPrimaryBg : 'transparent',
-                            color: active ? token.colorPrimary : token.colorText,
+                            color: token.colorText,
                             transition: 'all 0.15s',
                           }}
                           onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = token.colorBgTextHover }}
@@ -829,6 +891,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                     })}
                     <div style={{ height: 1, background: token.colorBorderSecondary, margin: '4px 2px' }} />
                     <div
+                      data-testid="task-multi-select"
                       onClick={() => {
                         setViewMenuVisible(false)
                         setSelectionMode(true)
@@ -856,6 +919,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                   <Button
                     type="text"
                     size="small"
+                    data-testid="task-sidebar-view"
                     icon={viewMode === 'workspace'
                       ? <FolderOutlined style={{ fontSize: 12 }} />
                       : viewMode === 'employee'
@@ -883,16 +947,9 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               <Button
                 type="text"
                 size="small"
+                className="wa-icon-btn"
                 icon={<CloseOutlined style={{ fontSize: 14 }} />}
                 onClick={exitSelectionMode}
-                style={{
-                  flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  minWidth: 28,
-                  borderRadius: 6,
-                  color: token.colorTextTertiary,
-                }}
               />
             </Tooltip>
           ) : (
@@ -900,20 +957,28 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
               <Button
                 type="primary"
                 size="small"
+                data-testid="task-sidebar-new"
                 icon={<PlusOutlined style={{ fontSize: 14 }} />}
                 onClick={onNewTask}
                 style={{
                   flexShrink: 0,
-                  width: 28,
-                  height: 28,
-                  minWidth: 28,
-                  borderRadius: 6,
+                  width: 30,
+                  height: 30,
+                  minWidth: 30,
+                  borderRadius: '50%',
                   padding: 0,
+                  boxShadow: '0 8px 18px -10px var(--wa-accent), inset 0 1px 0 rgba(255,255,255,.35)',
                 }}
               />
             </Tooltip>
           )}
         </div>
+        {/* 仅标题匹配阶段提示：告知回车可搜全文，避免用户误以为搜不到 */}
+        {searchQuery.trim() && !contentSearched && (
+          <div style={{ fontSize: 11, color: token.colorTextQuaternary, padding: '0 2px', userSelect: 'none' }}>
+            {t('tasks.searchHintTitleOnly')}
+          </div>
+        )}
       </div>
 
       <div
@@ -921,7 +986,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '6px 8px',
+          padding: '7px 8px 14px',
           display: 'flex',
           flexDirection: 'column',
           gap: 2,
@@ -939,14 +1004,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
             {viewMode === 'list'
               ? groupedTasks.map((group, groupIdx) => (
                 <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <div style={{
-                    padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: '0.05em',
-                    color: token.colorTextTertiary,
-                    userSelect: 'none',
-                  }}>
+                  <div className="wa-task-group-label" style={{ paddingTop: groupIdx === 0 ? 4 : 12 }}>
                     {group.label}
                   </div>
                   {group.tasks.map(renderTask)}
@@ -960,20 +1018,10 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 return (
                   <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <div
+                      className="wa-task-group-label is-clickable"
                       onClick={() => toggleGroupCollapsed(group.key)}
                       title={group.hint}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        padding: groupIdx === 0 ? '4px 8px 4px' : '12px 8px 4px',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        letterSpacing: '0.05em',
-                        color: token.colorTextTertiary,
-                        userSelect: 'none',
-                        cursor: 'pointer',
-                      }}
+                      style={{ paddingTop: groupIdx === 0 ? 4 : 12 }}
                     >
                       <CaretRightOutlined
                         rotate={collapsed ? 0 : 90}
@@ -1045,12 +1093,14 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
         }}
         style={{
           position: 'absolute',
-          top: 0,
-          right: -2,
-          width: 5,
-          height: '100%',
+          top: 8,
+          bottom: 8,
+          right: 0,
+          width: 6,
+          height: 'auto',
           cursor: 'col-resize',
           zIndex: 10,
+          borderRadius: 3,
           background: resizing ? token.colorPrimaryBorder : 'transparent',
           transition: resizing ? 'none' : 'background 0.15s',
         }}

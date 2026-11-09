@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 
 const h = vi.hoisted(() => ({
   installed: [] as any[],
@@ -117,8 +120,23 @@ describe('agent/skill-manager / activateSkill 与 activeSkills', () => {
     const mgr = new SkillManager()
     expect(mgr.getActiveSkillInstructions()).toEqual([])
     mgr.discoverSkills()
-    expect(mgr.activateSkill('a')).toBe('instructions-a')
+    const output = mgr.activateSkill('a')
+    expect(output).toContain('instructions-a')
+    expect(output).toContain('技能根目录（绝对路径）')
     expect(mgr.getActiveSkillInstructions()).toEqual(['instructions-a'])
+  })
+
+  it('激活输出注入技能根目录，并把 skills/<技能名>/ 前缀改写为绝对路径', () => {
+    h.installed = [skill({
+      name: 'a',
+      installPath: '/plugins/a/skills/a',
+      skillMdContent: 'python skills/a/tools/run.py --x',
+    })]
+    const mgr = new SkillManager()
+    mgr.discoverSkills()
+    const output = mgr.activateSkill('a')
+    expect(output).toContain('python /plugins/a/skills/a/tools/run.py --x')
+    expect(output).not.toContain('python skills/a/tools/run.py')
   })
 
   it('未发现技能时激活抛错（含技能名）', () => {
@@ -217,5 +235,48 @@ describe('agent/skill-manager / readReference 容错匹配', () => {
     const mgr = new SkillManager()
     mgr.discoverSkills()
     expect(mgr.readReference('c', 'empty.md')).toBe('')
+  })
+})
+
+describe('agent/skill-manager / readReference 技能目录相对路径', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-skill-'))
+  const mk = (rel: string, content: string) => {
+    const full = path.join(dir, rel)
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, content, 'utf-8')
+  }
+  mk('prompts/intake.md', 'INTAKE')
+  mk('references/schemas/appearance.schema.yaml', 'SCHEMA')
+  mk('tools/run.py', 'print(1)')
+  mk('prompts/with-path.md', 'python skills/patent-disclosure/tools/run.py')
+
+  const setup = () => {
+    h.installed = [skill({ name: 'patent-disclosure', installPath: dir })]
+    const mgr = new SkillManager()
+    mgr.discoverSkills()
+    return mgr
+  }
+
+  it('可读取 references/ 之外的 prompts/ 文件', () => {
+    expect(setup().readReference('patent-disclosure', 'prompts/intake.md')).toBe('INTAKE')
+  })
+
+  it('可读取 references 子目录文件（含未预加载的嵌套文件）', () => {
+    expect(setup().readReference('patent-disclosure', 'references/schemas/appearance.schema.yaml')).toBe('SCHEMA')
+    expect(setup().readReference('patent-disclosure', 'schemas/appearance.schema.yaml')).toBe('SCHEMA')
+  })
+
+  it('可读取 tools/ 文件，且兼容 skills/<技能名>/ 前缀', () => {
+    expect(setup().readReference('patent-disclosure', 'skills/patent-disclosure/tools/run.py')).toBe('print(1)')
+  })
+
+  it('拒绝技能目录之外的路径穿越', () => {
+    expect(() => setup().readReference('patent-disclosure', '../outside.md')).toThrow('not found')
+  })
+
+  it('读取到的内容中 skills/<技能名>/ 前缀被改写为技能根目录绝对路径', () => {
+    const content = setup().readReference('patent-disclosure', 'prompts/with-path.md')
+    const root = dir.replace(/\\/g, '/')
+    expect(content).toBe(`python ${root}/tools/run.py`)
   })
 })

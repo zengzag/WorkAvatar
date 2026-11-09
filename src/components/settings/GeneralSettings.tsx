@@ -49,7 +49,7 @@ const GeneralSettings: React.FC = () => {
               {t('settings.rerunOnboardingDesc')}
             </Text>
           </div>
-          <Button onClick={() => navigate('/onboarding')}>{t('settings.rerunOnboardingAction')}</Button>
+          <Button onClick={() => navigate('/onboarding')} data-testid="settings-rerun-onboarding">{t('settings.rerunOnboardingAction')}</Button>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ flex: 1, marginRight: 16 }}>
@@ -59,7 +59,7 @@ const GeneralSettings: React.FC = () => {
               {t('settings.preventSleepDesc')}
             </Text>
           </div>
-          <Switch checked={preventSleep} loading={loading} onChange={handlePreventSleepChange} />
+          <Switch checked={preventSleep} loading={loading} onChange={handlePreventSleepChange} data-testid="settings-prevent-sleep" />
         </div>
       </div>
     </div>

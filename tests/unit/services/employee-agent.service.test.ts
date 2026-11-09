@@ -277,6 +277,24 @@ describe('chatStream', () => {
     expect(agentControl.instances).toHaveLength(1)
   })
 
+  it('不同会话、模型与思考级别各自创建独立 agent（并发任务互不干扰）', async () => {
+    const svc = EmployeeAgentService.getInstance()
+
+    await svc.chatStream(baseParams({ conversation_id: 'c1' }), noopCallbacks())
+    await svc.chatStream(baseParams({ conversation_id: 'c2' }), noopCallbacks())
+    expect(agentControl.instances).toHaveLength(2)
+
+    await svc.chatStream(baseParams({ conversation_id: 'c1', model_id: 'other-model' }), noopCallbacks())
+    expect(agentControl.instances).toHaveLength(3)
+
+    await svc.chatStream(baseParams({ conversation_id: 'c1', enable_thinking: 'high' }), noopCallbacks())
+    expect(agentControl.instances).toHaveLength(4)
+
+    // 相同组合仍命中缓存
+    await svc.chatStream(baseParams({ conversation_id: 'c1' }), noopCallbacks())
+    expect(agentControl.instances).toHaveLength(4)
+  })
+
   it('system 覆盖：经 runStream systemPromptOverride 传递，不写入 agent 缓存', async () => {
     await EmployeeAgentService.getInstance().chatStream(
       baseParams({ system: '自定义系统提示词' }),

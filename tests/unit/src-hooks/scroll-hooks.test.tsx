@@ -16,6 +16,10 @@ beforeAll(() => {
   if (!(Element.prototype as any).scrollIntoView) {
     ;(Element.prototype as any).scrollIntoView = () => { /* noop */ }
   }
+  // jsdom 未实现 Element.scrollTo；useChatScroll 只滚动消息容器本身（不用 scrollIntoView）
+  if (!(Element.prototype as any).scrollTo) {
+    ;(Element.prototype as any).scrollTo = () => { /* noop */ }
+  }
   if (!globalThis.requestAnimationFrame) {
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
       setTimeout(() => cb(Date.now()), 0) as unknown as number) as any
@@ -40,6 +44,7 @@ const flush = async (ms = 60) => {
 let scrollApi: ReturnType<typeof useChatScroll<number>> | null = null
 let followApi: ReturnType<typeof useAutoFollowScroll<HTMLDivElement>> | null = null
 const scrollIntoView = vi.fn()
+const scrollTo = vi.fn()
 
 const ChatHarness: React.FC<{ items: number[] }> = ({ items }) => {
   const api = useChatScroll(items)
@@ -64,7 +69,9 @@ let root: ReturnType<typeof createRoot>
 
 beforeEach(() => {
   scrollIntoView.mockClear()
+  scrollTo.mockClear()
   ;(Element.prototype as any).scrollIntoView = scrollIntoView
+  ;(Element.prototype as any).scrollTo = scrollTo
   scrollApi = null
   followApi = null
   container = document.createElement('div')
@@ -81,7 +88,7 @@ describe('useChatScroll', () => {
   it('消息变化时自动滚到底部（behavior: auto）', async () => {
     await act(async () => { root.render(<ChatHarness items={[1]} />) })
     await flush()
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' })
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
   })
 
   it('用户上滚到距底 >= 50px 后，消息变化不再自动滚动', async () => {
@@ -90,11 +97,11 @@ describe('useChatScroll', () => {
     const el = scrollApi!.chatContainerRef.current!
     setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 400 }) // 距底 100
     act(() => { scrollApi!.handleScroll() })
-    scrollIntoView.mockClear()
+    scrollTo.mockClear()
 
     await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
     await flush()
-    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollTo).not.toHaveBeenCalled()
   })
 
   it('阈值边界：距底恰好 50px 视为不在底部，49px 视为在底部', async () => {
@@ -103,16 +110,16 @@ describe('useChatScroll', () => {
 
     setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 450 })
     act(() => { scrollApi!.handleScroll() })
-    scrollIntoView.mockClear()
+    scrollTo.mockClear()
     await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
     await flush()
-    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(scrollTo).not.toHaveBeenCalled()
 
     setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 451 })
     act(() => { scrollApi!.handleScroll() })
     await act(async () => { root.render(<ChatHarness items={[1, 2, 3]} />) })
     await flush()
-    expect(scrollIntoView).toHaveBeenCalled()
+    expect(scrollTo).toHaveBeenCalled()
   })
 
   it('forceScrollToBottom 强制平滑滚动并重置为跟随状态', async () => {
@@ -121,15 +128,15 @@ describe('useChatScroll', () => {
     const el = scrollApi!.chatContainerRef.current!
     setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 0 })
     act(() => { scrollApi!.handleScroll() })
-    scrollIntoView.mockClear()
+    scrollTo.mockClear()
 
     act(() => { scrollApi!.forceScrollToBottom() })
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' })
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }))
 
     // 已恢复跟随：后续消息变化再次自动滚动
     await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
     await flush()
-    expect(scrollIntoView).toHaveBeenCalledTimes(2)
+    expect(scrollTo).toHaveBeenCalledTimes(2)
   })
 
   it('用户上滚后发送新消息：新消息渲染使 scrollHeight 增大仍滚到底展示新内容', async () => {
@@ -139,21 +146,21 @@ describe('useChatScroll', () => {
     // 用户上滚，距底 100px
     setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 400 })
     act(() => { scrollApi!.handleScroll() })
-    scrollIntoView.mockClear()
+    scrollTo.mockClear()
 
     // 发送新消息：此时只滚到「已有内容」的底部
     act(() => { scrollApi!.forceScrollToBottom('auto') })
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto' })
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
 
     // 新消息渲染使 scrollHeight 增大，程序化滚动触发的 scroll 事件把距离拉到 > 50
     setMetrics(el, { scrollHeight: 1200, clientHeight: 500, scrollTop: 500 })
     act(() => { scrollApi!.handleScroll() })
 
     // 新消息渲染后仍应滚到底
-    scrollIntoView.mockClear()
+    scrollTo.mockClear()
     await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
     await flush()
-    expect(scrollIntoView).toHaveBeenCalled()
+    expect(scrollTo).toHaveBeenCalled()
   })
 
   it('强制跟随窗口结束后，用户上滚恢复暂停自动跟随', async () => {
@@ -167,11 +174,11 @@ describe('useChatScroll', () => {
       nowSpy.mockReturnValue(base + 2000) // 越过强制跟随窗口
       setMetrics(el, { scrollHeight: 1000, clientHeight: 500, scrollTop: 400 }) // 距底 100
       act(() => { scrollApi!.handleScroll() })
-      scrollIntoView.mockClear()
+      scrollTo.mockClear()
 
       await act(async () => { root.render(<ChatHarness items={[1, 2]} />) })
       await flush()
-      expect(scrollIntoView).not.toHaveBeenCalled()
+      expect(scrollTo).not.toHaveBeenCalled()
     } finally {
       nowSpy.mockRestore()
     }
@@ -187,14 +194,14 @@ describe('useChatScroll', () => {
   it('连续多次消息变化由 rAF 合并为一次滚动', async () => {
     await act(async () => { root.render(<ChatHarness items={[1]} />) })
     await flush()
-    scrollIntoView.mockClear()
+    scrollTo.mockClear()
     await act(async () => {
       root.render(<ChatHarness items={[1, 2]} />)
       root.render(<ChatHarness items={[1, 2, 3]} />)
       root.render(<ChatHarness items={[1, 2, 3, 4]} />)
     })
     await flush()
-    expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    expect(scrollTo).toHaveBeenCalledTimes(1)
   })
 })
 
