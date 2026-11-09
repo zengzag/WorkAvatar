@@ -17,7 +17,7 @@ const req = (id: string, extra: Record<string, unknown> = {}) =>
 describe('stores/interaction.store', () => {
   beforeEach(() => {
     respondCalls.length = 0
-    useInteractionStore.setState({ requests: [], taskInlineHost: false })
+    useInteractionStore.setState({ requests: [], suppressedIds: [], taskInlineHost: false })
   })
 
   it('按到达顺序保存请求，并按 id 去重', () => {
@@ -65,6 +65,31 @@ describe('stores/interaction.store', () => {
     // 任务页不可见时回退到全局弹窗，避免确认无人处理
     useInteractionStore.getState().setTaskInlineHost(false)
     expect(selectModalRequest(useInteractionStore.getState())?.id).toBe('task')
+  })
+
+  it('收起的请求不再自动弹窗，恢复后重新展示；后续新请求不受影响', () => {
+    const s = useInteractionStore.getState()
+    s.enqueue(req('1'))
+    s.suppress('1')
+    expect(selectModalRequest(useInteractionStore.getState())).toBeNull()
+
+    // 收起期间到达的新请求仍需正常弹出
+    s.enqueue(req('2'))
+    expect(selectModalRequest(useInteractionStore.getState())?.id).toBe('2')
+
+    useInteractionStore.getState().unsuppress('1')
+    expect(selectModalRequest(useInteractionStore.getState())?.id).toBe('1')
+  })
+
+  it('响应 / 失效时同步清理收起标记', () => {
+    const s = useInteractionStore.getState()
+    s.enqueue(req('1'))
+    s.enqueue(req('2'))
+    s.suppress('1')
+    s.suppress('2')
+    useInteractionStore.getState().respondById('1', { cancelled: true })
+    useInteractionStore.getState().dismiss('2')
+    expect(useInteractionStore.getState().suppressedIds).toEqual([])
   })
 
   it('响应上报失败（异步 reject）时仍移除请求，不阻塞后续确认', async () => {

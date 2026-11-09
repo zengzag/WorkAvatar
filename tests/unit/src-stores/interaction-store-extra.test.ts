@@ -21,7 +21,7 @@ const req = (id: string, extra: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   respondCalls.length = 0
-  useInteractionStore.setState({ requests: [], taskInlineHost: false })
+  useInteractionStore.setState({ requests: [], suppressedIds: [], taskInlineHost: false })
 })
 
 describe('interaction.store / 响应字段透传', () => {

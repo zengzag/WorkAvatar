@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { Modal } from 'antd'
+import { Button, Modal, theme } from 'antd'
+import { EyeInvisibleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { selectModalRequest, useInteractionStore, type InteractionRequest } from '../../stores/interaction.store'
 import {
@@ -10,8 +11,19 @@ import {
   useInteractionResponder,
 } from './interaction-parts'
 
-const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) => {
+interface UnifiedInteractionModalProps {
+  compact?: boolean
+  /** 小秘书面板里确认框的自动收起时长：仅用于展示倒计时进度条 */
+  autoHideMs?: number
+  /** 面板当前可见时才播放倒计时 */
+  active?: boolean
+  /** 立即隐藏确认框（请求保留在通知列表） */
+  onHide?: () => void
+}
+
+const UnifiedInteractionModal: React.FC<UnifiedInteractionModalProps> = ({ compact, autoHideMs, active, onHide }) => {
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const currentRequest = useInteractionStore(selectModalRequest)
   const respondById = useInteractionStore((s) => s.respondById)
   const enqueue = useInteractionStore((s) => s.enqueue)
@@ -58,6 +70,8 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
           <InteractionTitleIcon request={currentRequest} />
           <span style={{
+            flex: 1,
+            minWidth: 0,
             fontSize: 15,
             fontWeight: 600,
             letterSpacing: '-0.01em',
@@ -67,6 +81,33 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
           }}>
             {currentRequest.title || t('interaction.defaultTitle')}
           </span>
+          {compact && onHide && (
+            <Button
+              type="text"
+              size="small"
+              icon={<EyeInvisibleOutlined style={{ fontSize: 12 }} />}
+              onClick={onHide}
+              style={{
+                flexShrink: 0,
+                height: 24,
+                paddingInline: 6,
+                fontSize: 12,
+                color: token.colorTextTertiary,
+              }}
+            >
+              {t('interaction.hide')}
+            </Button>
+          )}
+          {/* 倒计时进度条贴弹窗顶边，不占用内容高度；播完自动收起面板，请求保留 */}
+          {compact && autoHideMs && active && (
+            <div className="wa-countdown-bar is-overlay" style={{ background: token.colorFillSecondary }}>
+              <div
+                key={`${currentRequest.id}-${active ? 'on' : 'off'}`}
+                className="wa-countdown-bar-fill"
+                style={{ background: token.colorPrimary, animationDuration: `${autoHideMs}ms` }}
+              />
+            </div>
+          )}
         </div>
       }
       closable={false}
@@ -75,11 +116,18 @@ const UnifiedInteractionModal: React.FC<{ compact?: boolean }> = ({ compact }) =
       centered={compact || undefined}
       width={compact ? 'calc(100vw - 16px)' : 520}
       styles={{
-        container: { borderRadius: 12, padding: 0, overflow: 'hidden' },
-        header: { margin: 0, padding: '14px 20px' },
-        // 正文超高时整体滚动；小秘书窗口高度由弹窗自身决定，这里用固定上限
-        body: { padding: '14px 20px', maxHeight: compact ? 320 : '60vh', overflowY: 'auto' },
-        footer: { margin: 0, padding: '12px 20px' },
+        container: {
+          borderRadius: 12,
+          padding: 0,
+          overflow: 'hidden',
+          ...(compact ? { position: 'relative', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 16px)' } : {}),
+        },
+        header: { margin: 0, padding: '14px 20px', flex: '0 0 auto' },
+        // 小窗高度固定：正文占满剩余高度并内部滚动，超高也不会被窗口裁掉
+        body: compact
+          ? { padding: '14px 20px', flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }
+          : { padding: '14px 20px', maxHeight: '60vh', overflowY: 'auto' },
+        footer: { margin: 0, padding: '12px 20px', flex: '0 0 auto' },
       }}
       footer={
         !highPermissionPrompt && (
