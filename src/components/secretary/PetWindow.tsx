@@ -31,7 +31,7 @@ const PetWindow: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const [state, setState] = useState<SecretaryBusState>({
-    status: 'idle', bubble: '', runningCount: 0, unreadCount: 0,
+    status: 'idle', bubble: '', runningCount: 0, unreadCount: 0, unreadTaskCount: 0, unreadNoticeCount: 0,
   })
   const [size, setSize] = useState(INITIAL_SETTINGS.size || DEFAULT_SECRETARY_SETTINGS.size)
   const [opacity, setOpacity] = useState(INITIAL_SETTINGS.opacity || DEFAULT_SECRETARY_SETTINGS.opacity)
@@ -357,7 +357,11 @@ const PetWindow: React.FC = () => {
   // 任务态优先展示执行阶段；空闲时优先展示刚收到的通知标题，其次是未读汇总
   const bubbleText = state.status === 'waiting' || state.status === 'running'
     ? state.bubble
-    : notice?.title || (state.unreadCount > 0 ? t('secretary.bubbleUnread', { n: state.unreadCount }) : '')
+    : notice?.title || (state.unreadTaskCount > 0
+        ? t('secretary.bubbleUnread', { n: state.unreadTaskCount })
+        : state.unreadNoticeCount > 0
+          ? t('secretary.bubbleUnreadNotices', { n: state.unreadNoticeCount })
+          : '')
 
   // 气泡文案/挂件尺寸变化后重新贴边；首帧同理（布局效果早于绘制，不会闪）
   useLayoutEffect(() => {

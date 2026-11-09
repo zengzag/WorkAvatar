@@ -174,6 +174,10 @@ export interface SecretaryBusSummary {
   /** 未查看结果的第一条（空闲时用于展示结果身份与配色） */
   unreadFirst?: SecretaryTask
   runningCount: number
+  /** 未查看的任务结果数（挂件气泡用） */
+  unreadTaskCount: number
+  /** 未查看的通知数（挂件气泡用，与任务结果分开表述） */
+  unreadNoticeCount: number
   unreadCount: number
 }
 
@@ -194,6 +198,8 @@ export function selectBusSummary(tasks: SecretaryTask[], notices: SecretaryNotic
     waiting,
     unreadFirst: unread[0],
     runningCount: running.length,
+    unreadTaskCount: unread.length,
+    unreadNoticeCount,
     unreadCount: unread.length + unreadNoticeCount,
   }
 }

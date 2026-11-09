@@ -54,6 +54,17 @@ const SecretaryChat: React.FC<SecretaryChatProps> = ({ task, onOpenInMain }) => 
 
   const taskId = task?.id
   const conversationId = task?.conversationId
+  /** 已做过首次定位的任务：再次同步消息时不再强制拉到底部，避免打断用户上滚查看 */
+  const loadedTaskRef = useRef<string | undefined>(undefined)
+
+  /** 跟随到底部；用户主动上滚后不再强行拉回 */
+  const scrollToBottom = useCallback((force = false) => {
+    const el = bodyRef.current
+    if (!el) return
+    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 80) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [])
 
   const load = useCallback(async (): Promise<ChatMessage[]> => {
     if (!conversationId) {
@@ -81,8 +92,17 @@ const SecretaryChat: React.FC<SecretaryChatProps> = ({ task, onOpenInMain }) => 
     } finally {
       setLoading(false)
     }
+    // 首次进入该任务：等消息渲染与 Markdown 排版完成后再强制滚到最新一条
+    const firstLoad = loadedTaskRef.current !== taskId
+    if (firstLoad) {
+      loadedTaskRef.current = taskId
+      window.requestAnimationFrame(() => {
+        scrollToBottom(true)
+        window.requestAnimationFrame(() => scrollToBottom(true))
+      })
+    }
     return list
-  }, [conversationId])
+  }, [conversationId, taskId, scrollToBottom])
 
   const applyLive = useCallback((next: { id: string; content: string } | null) => {
     liveRef.current = next
@@ -186,21 +206,6 @@ const SecretaryChat: React.FC<SecretaryChatProps> = ({ task, onOpenInMain }) => 
       off?.()
     }
   }, [conversationId, reloadAndSettleRemote])
-
-  /** 跟随到底部；用户主动上滚后不再强行拉回 */
-  const scrollToBottom = useCallback((force = false) => {
-    const el = bodyRef.current
-    if (!el) return
-    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 80) {
-      el.scrollTop = el.scrollHeight
-    }
-  }, [])
-
-  // 切换任务时直接定位到最新消息
-  useEffect(() => {
-    const raf = window.requestAnimationFrame(() => scrollToBottom(true))
-    return () => window.cancelAnimationFrame(raf)
-  }, [taskId, scrollToBottom])
 
   // 新的问答/流式增量后跟随到底部
   useEffect(() => {

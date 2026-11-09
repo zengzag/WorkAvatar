@@ -20,9 +20,7 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_MOVE_PET: 'secretary:move-pet',
   /** 拖动结束：吸附到屏幕边缘并落盘 */
   SECRETARY_DRAG_END: 'secretary:drag-end',
-  /** 面板内容高度变化：主进程据此调整窗口高度 */
-  SECRETARY_SET_PANEL_HEIGHT: 'secretary:set-panel-height',
-  /** 面板左右边缘拖拽调整宽度（高度仍由内容上报决定） */
+  /** 面板左右/上下边缘拖拽调整宽高（宽高一起持久化） */
   SECRETARY_SET_PANEL_SIZE: 'secretary:set-panel-size',
   /** 透明区域点击穿透开关（挂件窗口用） */
   SECRETARY_SET_IGNORE_MOUSE: 'secretary:set-ignore-mouse',
@@ -60,6 +58,8 @@ export interface SecretaryNotifyPayload {
   i18nTitleKey?: string
   i18nParams?: Record<string, string | number>
   createdAt: number
+  /** 主窗口不在前台时由面板直接弹出通知卡片（「知道了」/10s 后收起） */
+  autoPopup?: boolean
 }
 
 /** 可选的挂件形象，数组顺序即设置面板展示顺序；robot（波波，默认形象）屏幕脸默认显示应用图标、可被员工头像图替换，blob 为最初的圆团子 */

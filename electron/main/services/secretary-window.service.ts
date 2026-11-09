@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, app, globalShortcut, ipcMain, screen } from 'electron'
+import { BrowserWindow, Menu, app, globalShortcut, ipcMain, nativeTheme, screen } from 'electron'
 import path from 'path'
 import DatabaseService from './database.service'
 import { createLogger } from './logger'
@@ -15,6 +15,7 @@ import {
   type SecretarySettings,
   type SecretarySide,
 } from '../../shared/channels/secretary'
+import type { InteractionRequest } from './unified-interaction.service'
 
 const logger = createLogger('Secretary')
 
@@ -23,15 +24,13 @@ const SETTINGS_KEY = 'secretary_settings'
 const POSITION_KEY = 'secretary_pet_position'
 const PANEL_SIZE_KEY = 'secretary_panel_size'
 
-/** 面板默认宽度；用户可拖拽右下角调整（宽/高一起存 settings secretary_panel_size） */
+/** 面板默认尺寸；用户可拖拽边缘调整（宽高一起存 settings secretary_panel_size） */
 const DEFAULT_PANEL_WIDTH = 372
 const MIN_PANEL_WIDTH = 300
 const MAX_PANEL_WIDTH = 640
-/** 首帧高度取小一点，等渲染端上报真实内容高度再调整，避免开面板瞬间留一大片透明空区 */
-const DEFAULT_PANEL_HEIGHT = 200
-/** 高度完全由内容决定，这里只兜底首帧/异常上报，不能设太大会在面板底部留出空白 */
-const MIN_PANEL_HEIGHT = 120
-const MAX_PANEL_HEIGHT = 720
+const DEFAULT_PANEL_HEIGHT = 420
+const MIN_PANEL_HEIGHT = 320
+const MAX_PANEL_HEIGHT = 900
 
 /** 挂件窗口在挂件四周预留的透明区域：气泡与通知需要空间 */
 const PET_PADDING_X = 140
@@ -46,6 +45,11 @@ const EDGE_MARGIN = 12
 const SNAP_DISTANCE = 48
 /** 停用后延迟销毁窗口的时间：留给面板窗中止在跑的任务并落状态 */
 const DISABLE_GRACE_MS = 400
+/** 面板窗底色（跟随宿主主题）：透明改不透明后，show 前的底色必须与卡片一致，否则会闪色块 */
+const PANEL_BG_DARK = '#141925'
+const PANEL_BG_LIGHT = '#ffffff'
+/** 宿主外观主题在 settings 表中的键 */
+const APPEARANCE_THEME_KEY = 'appearance_theme'
 
 const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max)
 
@@ -81,8 +85,14 @@ class SecretaryWindowService {
   /** 渲染端是否已挂载完成：窗口加载完成 ≠ React 已注册 IPC 监听，必须等渲染端主动上报 */
   private petReady = false
   private panelReady = false
+  /** 面板首帧是否已可显示（ready-to-show） */
+  private panelReadyToShow = false
+  /** 已请求显示面板但首帧还没就绪：ready-to-show 后再显示 */
+  private panelRevealPending = false
   /** 面板未就绪期间积压的通知，面板上报 ready 后一次性补发 */
   private pendingNotices: SecretaryNotifyPayload[] = []
+  /** 面板未就绪期间积压的交互请求（主窗口失焦时转由面板弹确认框） */
+  private pendingInteractions: InteractionRequest[] = []
 
   static getInstance(): SecretaryWindowService {
     if (!SecretaryWindowService.instance) {
@@ -109,7 +119,12 @@ class SecretaryWindowService {
    */
   deliverNotification(payload: Omit<SecretaryNotifyPayload, 'createdAt'>): boolean {
     if (!this.settings.enabled) return false
-    const data: SecretaryNotifyPayload = { ...payload, createdAt: Date.now() }
+    // 主窗口不在前台且面板未打开时，提醒直接弹一张带「知道了」的通知卡片；
+    // ask_user 由交互请求本身弹确认框，不再叠一层通知卡片。
+    const autoPopup = this.isMainWindowInactive()
+      && !this.isPanelOpen()
+      && payload.clickTarget !== 'ask_user'
+    const data: SecretaryNotifyPayload = { ...payload, createdAt: Date.now(), ...(autoPopup ? { autoPopup } : {}) }
     const pet = this.ensurePetWindow()
     // 面板窗可能从未打开过：隐藏创建，通知才能进列表
     const panel = this.ensurePanelWindow()
@@ -119,7 +134,16 @@ class SecretaryWindowService {
     } else {
       this.pendingNotices = [...this.pendingNotices, data].slice(-30)
     }
+    if (autoPopup) this.showPanel()
     return true
+  }
+
+  /** 主窗口是否不在前台（隐藏 / 最小化 / 未聚焦） */
+  private isMainWindowInactive(): boolean {
+    const win = this.mainWindow
+    if (!win || win.isDestroyed()) return true
+    if (!win.isVisible() || win.isMinimized()) return true
+    return !win.isFocused()
   }
 
   private sendTo(win: BrowserWindow | null, payload: SecretaryNotifyPayload): void {
@@ -137,6 +161,39 @@ class SecretaryWindowService {
   }
 
   /**
+   * 主窗口失焦时的用户交互（权限确认 / ask_user）转交面板窗直接弹确认框：
+   * 用户无需先把主窗口叫出来，处理结果由面板窗回填。
+   */
+  relayInteraction(request: InteractionRequest): boolean {
+    if (!this.settings.enabled) return false
+    const panel = this.ensurePanelWindow()
+    if (!panel) return false
+    if (this.panelReady) {
+      try {
+        panel.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, request)
+      } catch { /* 窗口正在销毁时忽略 */ }
+    } else {
+      this.pendingInteractions = [
+        ...this.pendingInteractions.filter((item) => item.id !== request.id),
+        request,
+      ].slice(-10)
+    }
+    this.showPanel()
+    return true
+  }
+
+  /** 交互请求已处理 / 已失效：关闭面板窗里的同一条确认框 */
+  dismissPanelInteraction(requestId: string): void {
+    if (!requestId) return
+    this.pendingInteractions = this.pendingInteractions.filter((item) => item.id !== requestId)
+    const panel = this.panelWin
+    if (!panel || panel.isDestroyed()) return
+    try {
+      panel.webContents.send(IPC_CHANNELS.INTERACTION_DISMISS, { id: requestId })
+    } catch { /* 窗口正在销毁时忽略 */ }
+  }
+
+  /**
    * 交互请求已在某个窗口处理（权限确认 / ask_user 等）：撤回对应的提醒，
    * 避免用户在主窗口处理完之后，小秘书里仍挂着同一条待确认通知。
    * clickId 为交互请求 id，通知下发时写入。
@@ -150,6 +207,8 @@ class SecretaryWindowService {
     )
     this.sendDismissTo(this.petWin, payload)
     this.sendDismissTo(this.panelWin, payload)
+    // 面板承接的确认框同样要关闭（主窗口先处理完时尤其必要）
+    this.dismissPanelInteraction(requestId)
   }
 
   /** 是否来自小秘书面板窗：面板会自己弹出并让挂件进入等待态，不需要再发系统通知 */
@@ -177,22 +236,27 @@ class SecretaryWindowService {
   showPanel(): void {
     const win = this.ensurePanelWindow()
     if (!win) return
-    // 首次打开时等首帧渲染完再显示，避免出现空白窗口
-    const reveal = () => {
-      if (win.isDestroyed()) return
-      this.placePanel()
-      win.show()
-      win.focus()
-      this.notifyPanelVisibility()
+    // 首帧未就绪时等 ready-to-show，避免先露出空白窗口；尺寸固定，不再等内容高度
+    if (this.panelReadyToShow) {
+      this.revealPanel()
+      return
     }
-    if (win.webContents.isLoading()) {
-      win.once('ready-to-show', reveal)
-    } else {
-      reveal()
-    }
+    this.panelRevealPending = true
+  }
+
+  /** 面板首帧已就绪：按当前固定尺寸定位并显示 */
+  private revealPanel(): void {
+    this.panelRevealPending = false
+    const win = this.panelWin
+    if (!win || win.isDestroyed()) return
+    this.placePanel()
+    win.show()
+    win.focus()
+    this.notifyPanelVisibility()
   }
 
   hidePanel(): void {
+    this.panelRevealPending = false
     if (!this.panelWin || this.panelWin.isDestroyed()) return
     this.panelWin.hide()
     this.notifyPanelVisibility()
@@ -422,18 +486,18 @@ class SecretaryWindowService {
 
   private ensurePanelWindow(): BrowserWindow | null {
     if (this.panelWin && !this.panelWin.isDestroyed()) return this.panelWin
+    // 面板窗用普通不透明窗口：透明窗口 hide 后再 show 会重新合成并送出一帧全透明空帧，
+    // 表现为面板"出现→消失→重现"；不透明窗口没有这个问题，圆角与阴影交给系统（Win11 原生圆角）
     const win = new BrowserWindow({
       width: this.panelWidth,
       height: this.panelHeight,
-      transparent: true,
-      backgroundColor: '#00000000',
+      backgroundColor: this.panelBackgroundColor(),
       frame: false,
       resizable: false,
       maximizable: false,
       minimizable: false,
       skipTaskbar: true,
       alwaysOnTop: true,
-      hasShadow: false,
       show: false,
       webPreferences: {
         preload: this.getPreloadPath(),
@@ -444,17 +508,39 @@ class SecretaryWindowService {
     win.setAlwaysOnTop(true, 'floating')
     // 常驻浮窗：显示时不阻止系统熄屏/锁屏
     markPowerSaveIgnored(win)
+    // 首帧可显示：此时才允许 show，避免露出空白窗口
+    win.once('ready-to-show', () => {
+      this.panelReadyToShow = true
+      if (!this.panelRevealPending) return
+      this.revealPanel()
+    })
     win.on('closed', () => {
       this.panelWin = null
       this.panelReady = false
+      this.panelReadyToShow = false
+      this.panelRevealPending = false
+      this.pendingInteractions = []
       this.notifyPanelVisibility()
     })
     win.webContents.on('did-start-loading', () => { this.panelReady = false })
     this.panelReady = false
+    this.panelReadyToShow = false
     this.panelWin = win
     this.loadRoute(win, '/secretary/panel')
     logger.info('Panel window created')
     return win
+  }
+
+  /** 面板窗底色：读宿主主题设置，system/未设置时按系统明暗解析 */
+  private panelBackgroundColor(): string {
+    try {
+      const row = DatabaseService.getInstance().getDb()
+        .prepare('SELECT value FROM settings WHERE key = ?')
+        .get(APPEARANCE_THEME_KEY) as { value?: string } | undefined
+      if (row?.value === 'dark') return PANEL_BG_DARK
+      if (row?.value === 'light') return PANEL_BG_LIGHT
+    } catch { /* DB 异常时按系统主题兜底 */ }
+    return nativeTheme.shouldUseDarkColors ? PANEL_BG_DARK : PANEL_BG_LIGHT
   }
 
   /** 面板贴挂件弹出：挂件在右半屏时面板放左侧，反之放右侧；底边对齐挂件本体并夹在工作区内 */
@@ -501,6 +587,7 @@ class SecretaryWindowService {
   }
 
   private destroyWindows(): void {
+    this.panelRevealPending = false
     if (this.cursorTimer) {
       clearInterval(this.cursorTimer)
       this.cursorTimer = null
@@ -516,7 +603,9 @@ class SecretaryWindowService {
     this.petWin = null
     this.petReady = false
     this.panelReady = false
+    this.panelReadyToShow = false
     this.pendingNotices = []
+    this.pendingInteractions = []
   }
 
   /**
@@ -755,35 +844,27 @@ class SecretaryWindowService {
       this.persistPosition()
     })
 
-    ipcMain.on(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, (event, size: { width?: number; anchor?: 'left' | 'right' }) => {
+    ipcMain.on(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, (
+      event,
+      size: { width?: number; height?: number; anchorX?: 'left' | 'right'; anchorY?: 'top' | 'bottom' },
+    ) => {
       const win = this.panelWin
       if (!win || win.isDestroyed() || win.webContents !== event.sender) return
       const bounds = win.getBounds()
       const area = screen.getDisplayMatching(bounds).workArea
-      const width = clamp(Math.round(Number(size?.width) || this.panelWidth), MIN_PANEL_WIDTH, MAX_PANEL_WIDTH)
+      const maxWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, area.width - 24))
+      const maxHeight = Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, area.height - 24))
+      const width = clamp(Math.round(Number(size?.width) || this.panelWidth), MIN_PANEL_WIDTH, maxWidth)
+      const height = clamp(Math.round(Number(size?.height) || this.panelHeight), MIN_PANEL_HEIGHT, maxHeight)
       this.panelWidth = width
-      // anchor 是保持不动的那条边：拖左边缘时右边缘固定，拖右边缘时左边缘固定
-      const rawX = size?.anchor === 'right' ? bounds.x + bounds.width - width : bounds.x
+      this.panelHeight = height
+      // anchor 是保持不动的那条边：拖左/上边缘时右/下边缘固定，拖右/下边缘时左/上边缘固定
+      const rawX = size?.anchorX === 'right' ? bounds.x + bounds.width - width : bounds.x
+      const rawY = size?.anchorY === 'bottom' ? bounds.y + bounds.height - height : bounds.y
       const x = clamp(rawX, area.x + 12, Math.max(area.x + 12, area.x + area.width - width - 12))
-      win.setBounds({ x: Math.round(x), y: bounds.y, width, height: bounds.height })
+      const y = clamp(rawY, area.y + 12, Math.max(area.y + 12, area.y + area.height - height - 12))
+      win.setBounds({ x: Math.round(x), y: Math.round(y), width, height })
       this.schedulePersistPanelSize()
-    })
-
-    ipcMain.on(IPC_CHANNELS.SECRETARY_SET_PANEL_HEIGHT, (_e, height: number) => {
-      const next = clamp(Math.round(Number(height) || DEFAULT_PANEL_HEIGHT), MIN_PANEL_HEIGHT, MAX_PANEL_HEIGHT)
-      if (Math.abs(next - this.panelHeight) < 2) return
-      this.panelHeight = next
-      const win = this.panelWin
-      if (!win || win.isDestroyed()) return
-      // 高度只跟着内容走：底边保持不动向上长；x 保留用户拖拽后的位置，不能重新按挂件吸附
-      const b = win.getBounds()
-      const area = screen.getDisplayMatching(b).workArea
-      const y = clamp(
-        b.y + b.height - next,
-        area.y + 12,
-        Math.max(area.y + 12, area.y + area.height - next - 12),
-      )
-      win.setBounds({ x: b.x, y: Math.round(y), width: this.panelWidth, height: next })
     })
 
     ipcMain.on(IPC_CHANNELS.SECRETARY_SET_IGNORE_MOUSE, (event, ignore: boolean) => {
@@ -829,6 +910,13 @@ class SecretaryWindowService {
       const pending = this.pendingNotices
       this.pendingNotices = []
       for (const item of pending) this.sendTo(this.panelWin, item)
+      const interactions = this.pendingInteractions
+      this.pendingInteractions = []
+      for (const request of interactions) {
+        try {
+          this.panelWin.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, request)
+        } catch { /* 窗口正在销毁时忽略 */ }
+      }
     })
 
     // 面板通知条目点击：聚焦主窗口，并按来源复用宿主通知的点击路由

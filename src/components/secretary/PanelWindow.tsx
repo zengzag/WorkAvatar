@@ -5,7 +5,6 @@ import {
   PaperClipOutlined,
   SendOutlined,
   SwapOutlined,
-  PlusOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExclamationCircleOutlined,
@@ -19,6 +18,7 @@ import {
   BellOutlined,
   UnorderedListOutlined,
   ExportOutlined,
+  ArrowLeftOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeAvatar, { resolveEmployeeAvatarIcon } from '../common/EmployeeAvatar'
@@ -56,12 +56,17 @@ const MODEL_ID_KEY = 'wa.secretary.modelId'
 const THINKING_KEY = 'wa.secretary.thinking'
 /** 小秘书默认开启思考（支持时） */
 const DEFAULT_THINKING: ThinkingLevel = 'high'
-/** 面板上限：对话内容超出后在对话区内部滚动，窗口随内容自适应增长 */
-const PANEL_MAX_HEIGHT = 620
-/** 左右边缘拖拽的宽度范围（与主进程 secretary-window.service 的 clamp 保持一致） */
+/** 面板固定尺寸：进入不同页面不再随内容跳变，用户可拖拽边缘调整（与主进程 clamp 保持一致） */
 const PANEL_DEFAULT_WIDTH = 372
 const PANEL_MIN_WIDTH = 300
 const PANEL_MAX_WIDTH = 640
+const PANEL_DEFAULT_HEIGHT = 420
+const PANEL_MIN_HEIGHT = 320
+const PANEL_MAX_HEIGHT = 900
+
+/** 面板可拖拽的边缘与角 */
+type ResizeEdge = 'left' | 'right' | 'top' | 'bottom'
+  | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 
 /** 从路径里取文件名 */
 function baseName(p: string): string {
@@ -76,24 +81,25 @@ function readStoredThinking(): ThinkingLevel {
   return DEFAULT_THINKING
 }
 
-/** 面板浮层：员工切换 / 设置 / 任务清单 / 通知清单（覆盖在对话区上，不占布局高度） */
-type PanelOverlay = 'employee' | 'settings' | 'tasks' | 'notices' | null
+/** 面板主体视图：任务 / 通知两个常驻 Tab，对话从任务行进入 */
+type PanelTab = 'tasks' | 'notices'
+type PanelView = PanelTab | 'chat' | 'employee' | 'settings'
 
-/** 上次关闭时的页面（浮层 + 正在看的对话），重新打开面板时回到这里 */
+/** 通知弹出卡片停留时长：超时后收起面板，通知保留在通知列表 */
+const NOTICE_POPUP_TIMEOUT_MS = 10000
+/** 用户交互确认框在小秘书里的自动收起时长：只收起面板，请求仍保留，可下次重新打开继续处理 */
+const INTERACTION_AUTO_HIDE_MS = 20000
+
+/** 上次关闭时的 Tab，重新打开面板时回到这里；对话不恢复，默认回到任务面板 */
 const VIEW_KEY = 'wa.secretary.panelView'
 
-function readStoredView(): { overlay: PanelOverlay; taskId: string | null } {
+function readStoredTab(): PanelTab {
   try {
     const parsed = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null')
-    const overlay = parsed?.overlay
-    return {
-      overlay: overlay === 'employee' || overlay === 'settings' || overlay === 'tasks' || overlay === 'notices'
-        ? overlay
-        : null,
-      taskId: typeof parsed?.taskId === 'string' ? parsed.taskId : null,
-    }
+    // 兼容旧版：overlay 为 tasks / notices 时沿用，其余一律回到任务
+    return (parsed?.tab ?? parsed?.overlay) === 'notices' ? 'notices' : 'tasks'
   } catch {
-    return { overlay: null, taskId: null }
+    return 'tasks'
   }
 }
 
@@ -107,9 +113,8 @@ const SecretaryPanel: React.FC = () => {
   const [employeeId, setEmployeeId] = useState<string>(() => localStorage.getItem(EMPLOYEE_KEY) || '')
   const [sending, setSending] = useState(false)
   const [dropping, setDropping] = useState(false)
-  /** 挂载时读取上次关闭时的页面，首次渲染就回到该页面，避免先闪输入框再切换 */
-  const [restoredView] = useState(readStoredView)
-  const [overlay, setOverlay] = useState<PanelOverlay>(restoredView.overlay)
+  /** 挂载时读取上次停留的 Tab（任务/通知），对话不恢复 */
+  const [view, setView] = useState<PanelView>(readStoredTab)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modelProviderId, setModelProviderId] = useState(
     () => localStorage.getItem(MODEL_PROVIDER_KEY) || getCachedSceneDefaultModel('workbench')?.provider_id || '',
@@ -118,14 +123,22 @@ const SecretaryPanel: React.FC = () => {
     () => localStorage.getItem(MODEL_ID_KEY) || getCachedSceneDefaultModel('workbench')?.model_id || '',
   )
   const [thinking, setThinking] = useState<ThinkingLevel>(readStoredThinking)
-  /** 当前对话对应的任务；空 = 新会话（只显示输入框） */
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(restoredView.taskId)
-  /** 没有上次的对话 = 新会话；恢复的对话在任务列表里找不到时由回落逻辑纠正 */
-  const [newChat, setNewChat] = useState(!restoredView.taskId)
-  /** 左右边缘拖拽调整宽度时的起点（高度固定，宽度可调） */
-  const resizeOriginRef = useRef<{ edge: 'left' | 'right'; x: number; width: number } | null>(null)
+  /** 正在查看的任务（对话视图）；空 = 任务面板 */
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  /** 从员工/设置页返回时回到进入前的视图 */
+  const overlayReturnRef = useRef<PanelView>('tasks')
+  /** 主窗口失焦时的通知弹窗卡片；超时或「知道了」后收起 */
+  const [popup, setPopup] = useState<SecretaryNotice | null>(null)
+  const popupTimerRef = useRef(0)
+  /** 面板当前是否可见：确认框的自动收起倒计时只在可见时进行 */
+  const [panelVisible, setPanelVisible] = useState(false)
+  /** 本次收起是确认框超时自动触发，跳过「有确认框时拒绝收起」的保护 */
+  const autoHidingRef = useRef(false)
+  /** 从通知列表显式打开确认框：用户已主动开始处理，不再倒计时自动隐藏 */
+  const [manualInteractionId, setManualInteractionId] = useState<string | null>(null)
+  /** 拖拽边缘调整宽高时的起点 */
+  const resizeOriginRef = useRef<{ edge: ResizeEdge; x: number; y: number; width: number; height: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const rootRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ComposerHandle>(null)
   /** 是否有待处理的权限 / ask_user 弹窗（弹窗挂在本窗口，收起面板会让它看不见） */
   const pendingRef = useRef(false)
@@ -160,31 +173,39 @@ const SecretaryPanel: React.FC = () => {
     if (task && employee && task.employee.id !== employee.id) return undefined
     return task
   }, [allTasks, activeTaskId, employee])
+  /** 头部状态：对话态看当前任务，列表态看最近一条执行中任务（与挂件头顶信息一致） */
+  const headTask = view === 'chat' ? activeTask : running[0]
   /** 对话态且当前任务在跑：输入框先停下来，避免同一会话并发提问；任务/通知列表态仍可派新任务 */
   const busy = sending
-    || (!overlay && (activeTask?.status === 'running' || activeTask?.status === 'waiting'))
+    || (view === 'chat' && (activeTask?.status === 'running' || activeTask?.status === 'waiting'))
 
-  /** 主窗口任务镜像是否已拉取过一次：恢复的对话可能来自镜像，首帧不能急着回落 */
-  const remoteSyncedRef = useRef(false)
+  /** 收起通知弹窗；hide=true 时同时收起面板（「知道了」/超时） */
+  const clearPopup = useCallback((hide = false) => {
+    if (popupTimerRef.current) {
+      window.clearTimeout(popupTimerRef.current)
+      popupTimerRef.current = 0
+    }
+    setPopup(null)
+    if (hide) window.electronAPI.secretary.hidePanel()
+  }, [])
 
-  // 没有指定对话时回落到当前员工最近的任务（优先执行中），让重开面板就能接着聊
-  useEffect(() => {
-    if (!remoteSyncedRef.current || newChat || activeTask) return
-    const sorted = [...tasks, ...remoteTasks]
-      .filter((task) => !employee || task.employee.id === employee.id)
-      .sort((a, b) => b.startedAt - a.startedAt)
-    const next = sorted.find((task) => task.conversationId
-      && (task.status === 'running' || task.status === 'waiting'))
-      ?? sorted.find((task) => task.conversationId)
-    if (next) setActiveTaskId(next.id)
-  }, [activeTask, newChat, remoteTasks, tasks, employee])
+  /** 主窗口不在前台时直接弹出通知卡片，10s 无操作自动收起（通知留在列表里） */
+  const showNoticePopup = useCallback((notice: SecretaryNotice) => {
+    setPopup(notice)
+    if (popupTimerRef.current) window.clearTimeout(popupTimerRef.current)
+    popupTimerRef.current = window.setTimeout(() => {
+      popupTimerRef.current = 0
+      setPopup(null)
+      // 收起后下次打开直接落到通知列表，方便回看
+      setView('notices')
+      window.electronAPI.secretary.hidePanel()
+    }, NOTICE_POPUP_TIMEOUT_MS)
+  }, [])
 
   /** 主窗口任务镜像：员工信息用于头像/配色，事件回调取最新值，避免重复订阅 */
   const employeesRef = useRef<Employee[]>([])
   const syncRemote = useCallback(() => {
-    void syncRemoteTasks(employeesRef.current).finally(() => {
-      remoteSyncedRef.current = true
-    })
+    void syncRemoteTasks(employeesRef.current)
   }, [])
 
   // 主窗口任务的新增/改名/删除、以及运行会话变化时刷新镜像
@@ -274,6 +295,10 @@ const SecretaryPanel: React.FC = () => {
     document.documentElement.style.background = 'transparent'
     document.body.style.background = 'transparent'
     document.body.style.overflow = 'hidden'
+    // 面板可能在渲染端重建时已经处于显示状态：先取一次真实可见性，确认框倒计时才不会误判
+    window.electronAPI.secretary.getState()
+      .then((state) => setPanelVisible(!!state.panelOpen))
+      .catch(() => {})
   }, [])
 
   // 主窗口发起的任务也要显示执行细节：面板常驻，挂载即接管会话流事件
@@ -309,23 +334,44 @@ const SecretaryPanel: React.FC = () => {
     // 面板窗常驻不销毁：每次重新打开都刷新员工与模型列表，新建员工/模型后无需重启
     const off = window.electronAPI.secretary.onPanelVisibility((open) => {
       if (open) {
+        autoHidingRef.current = false
+        setPanelVisible(true)
         loadEmployees()
         loadProviders()
         // 不重置页面：面板挂载时已恢复上次关闭的浮层/对话，隐藏期间状态也一直保留
         return
       }
-      // 确认框还挂着时拒绝收起（挂件点击/快捷键/托盘都可能触发），否则弹窗跟着被藏起来，任务只能等超时
-      if (pendingRef.current) window.electronAPI.secretary.showPanel()
+      setPanelVisible(false)
+      // 确认框还挂着时拒绝收起（挂件点击/快捷键/托盘都可能触发），否则弹窗跟着被藏起来，任务只能等超时；
+      // 确认框自身超时自动收起是例外，此时请求仍保留，下次打开可继续处理
+      if (pendingRef.current && !autoHidingRef.current) {
+        window.electronAPI.secretary.showPanel()
+        return
+      }
+      autoHidingRef.current = false
+      // 面板收起后不保留通知卡片，避免下次打开时再次弹出旧通知
+      clearPopup()
     })
     return () => { off() }
-  }, [loadEmployees, loadProviders])
+  }, [loadEmployees, loadProviders, clearPopup])
 
-  // 记住当前页面，面板隐藏或应用重启后再次打开都回到这里
+  // 记住当前 Tab（任务/通知），下次打开面板回到同一页；对话不恢复
   useEffect(() => {
+    if (view !== 'tasks' && view !== 'notices') return
     try {
-      localStorage.setItem(VIEW_KEY, JSON.stringify({ overlay, taskId: activeTaskId }))
+      localStorage.setItem(VIEW_KEY, JSON.stringify({ tab: view }))
     } catch { /* ignore */ }
-  }, [overlay, activeTaskId])
+  }, [view])
+
+  // 正在看的任务被删除 / 归属员工变更：回到任务面板，避免停在空对话
+  useEffect(() => {
+    if (view === 'chat' && !activeTask) setView('tasks')
+  }, [view, activeTask])
+
+  // 面板卸载时清掉通知卡片计时器
+  useEffect(() => () => {
+    if (popupTimerRef.current) window.clearTimeout(popupTimerRef.current)
+  }, [])
 
   // 员工信息变更（如更换头像）：面板常驻时实时刷新，避免需重启才生效
   useEffect(() => {
@@ -345,7 +391,7 @@ const SecretaryPanel: React.FC = () => {
           ...(pluginId ? { ns: pluginId } : {}),
         }))
       }
-      addNotice({
+      const notice: SecretaryNotice = {
         id: generateId(),
         title: localize(payload.i18nTitleKey, payload.title) || payload.title,
         body: localize(payload.i18nKey, payload.body),
@@ -354,12 +400,16 @@ const SecretaryPanel: React.FC = () => {
         clickId: payload.clickId,
         createdAt: payload.createdAt || Date.now(),
         viewed: false,
-      })
+      }
+      addNotice(notice)
+      // 主窗口不在前台：面板直接弹出这张通知卡片，用户可一键「知道了」或在 10s 后自动收起
+      // 确认框打开时不抢焦点，通知只进列表
+      if (payload.autoPopup && !pendingRef.current) showNoticePopup(notice)
     })
     // 监听注册完成后再上报，主进程据此补发窗口加载期间积压的通知
     window.electronAPI.secretary.notifyReady('panel')
     return () => { off() }
-  }, [addNotice, t])
+  }, [addNotice, showNoticePopup, t])
 
   // 交互请求已在其他窗口（主窗口 / 任务页）处理：撤回对应提醒，避免重复展示同一条待确认通知
   useEffect(() => {
@@ -479,92 +529,39 @@ const SecretaryPanel: React.FC = () => {
   const interactionRequest = useInteractionStore(selectModalRequest)
   const modalOpen = !!interactionRequest
 
-  // 面板内容高度 → 主进程同步窗口高度。
-  // 弹窗打开时面板整体让位，窗口收紧到弹窗本身的高度，避免弹窗落在一块多余的面板底色上。
-  useEffect(() => {
-    if (modalOpen) {
-      let ro: ResizeObserver | null = null
-      let raf = 0
-      let alive = true
-      const report = (el: HTMLElement) => {
-        // 用 offsetHeight 而不是 getBoundingClientRect：弹窗开场缩放动画会让 rect 偏小，且动画结束不会触发 ResizeObserver
-        const height = el.offsetHeight
-        if (height > 0) window.electronAPI.secretary.setPanelHeight(Math.ceil(height) + 16)
-      }
-      const attach = () => {
-        if (!alive) return
-        const dialog = document.querySelector<HTMLElement>('.wa-approval-modal-compact .ant-modal')
-        if (!dialog) {
-          raf = window.requestAnimationFrame(attach)
-          return
-        }
-        report(dialog)
-        ro = new ResizeObserver(() => report(dialog))
-        ro.observe(dialog)
-      }
-      attach()
-      // 文案/选项异步渲染会让高度再变一次，补一次上报
-      const timer = window.setTimeout(() => {
-        const dialog = document.querySelector<HTMLElement>('.wa-approval-modal-compact .ant-modal')
-        if (dialog) report(dialog)
-      }, 300)
-      return () => {
-        alive = false
-        window.cancelAnimationFrame(raf)
-        window.clearTimeout(timer)
-        ro?.disconnect()
-      }
-    }
-    const el = rootRef.current
-    if (!el) return
-    // 高度随对话内容自适应：卡片被 max-height 夹住时 rect 只有上限高度，按内容实测自然高度
-    const report = () => {
-      const inner = el.firstElementChild as HTMLElement | null
-      const last = inner?.lastElementChild as HTMLElement | null
-      let natural = el.getBoundingClientRect().height
-      if (inner && last) {
-        const padBottom = parseFloat(getComputedStyle(inner).paddingBottom) || 0
-        natural = last.getBoundingClientRect().bottom
-          - inner.getBoundingClientRect().top
-          + inner.scrollTop
-          + padBottom
-      }
-      const target = Math.min(natural, PANEL_MAX_HEIGHT)
-      window.electronAPI.secretary.setPanelHeight(Math.ceil(target) + 2)
-    }
-    report()
-    const ro = new ResizeObserver(report)
-    ro.observe(el)
-    // 内容被 max-height 夹住后盒子不再变化，同时观察内容层，切换对话/浮层时窗口才能跟着收放
-    if (el.firstElementChild) ro.observe(el.firstElementChild)
-    // 字体/头像与消息渲染会让高度在首帧后再变，补两次上报避免窗口停在初始高度
-    const t1 = window.setTimeout(report, 300)
-    const t2 = window.setTimeout(report, 1200)
-    return () => {
-      ro.disconnect()
-      window.clearTimeout(t1)
-      window.clearTimeout(t2)
-    }
-  }, [modalOpen])
-
-  /** 左右边缘拖拽柄：只调宽度，高度随内容自适应 */
-  const startResize = useCallback((edge: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
+  /** 拖拽边缘/角调整面板宽高；鼠标位移按保持不动的那条边换算 */
+  const startResize = useCallback((edge: ResizeEdge) => (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
-    resizeOriginRef.current = { edge, x: e.screenX, width: window.innerWidth }
+    resizeOriginRef.current = {
+      edge,
+      x: e.screenX,
+      y: e.screenY,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }
   }, [])
 
   const resizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const origin = resizeOriginRef.current
     if (!origin) return
     const dx = e.screenX - origin.x
-    // 拖左边缘时右边缘不动（anchor: right），拖右边缘时左边缘不动
-    const raw = origin.edge === 'left' ? origin.width - dx : origin.width + dx
-    const width = Math.min(Math.max(Math.round(raw), PANEL_MIN_WIDTH), PANEL_MAX_WIDTH)
+    const dy = e.screenY - origin.y
+    const fromLeft = origin.edge.includes('left')
+    const fromRight = origin.edge.includes('right')
+    const fromTop = origin.edge.includes('top')
+    const fromBottom = origin.edge.includes('bottom')
+    const rawWidth = fromLeft ? origin.width - dx : fromRight ? origin.width + dx : origin.width
+    const rawHeight = fromTop ? origin.height - dy : fromBottom ? origin.height + dy : origin.height
+    const width = Math.min(Math.max(Math.round(rawWidth), PANEL_MIN_WIDTH), PANEL_MAX_WIDTH)
+    const height = Math.min(Math.max(Math.round(rawHeight), PANEL_MIN_HEIGHT), PANEL_MAX_HEIGHT)
     window.electronAPI.secretary.setPanelSize({
       width,
-      anchor: origin.edge === 'left' ? 'right' : 'left',
+      height,
+      // anchor 是保持不动的那条边：拖左/上边缘时右/下边缘固定
+      anchorX: fromLeft ? 'right' : 'left',
+      anchorY: fromTop ? 'bottom' : 'top',
     })
   }, [])
 
@@ -574,9 +571,14 @@ const SecretaryPanel: React.FC = () => {
     try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
   }, [])
 
-  /** 双击边缘拖拽柄：恢复默认宽度 */
+  /** 双击边缘：恢复默认宽高 */
   const resetPanelSize = useCallback(() => {
-    window.electronAPI.secretary.setPanelSize({ width: PANEL_DEFAULT_WIDTH, anchor: 'left' })
+    window.electronAPI.secretary.setPanelSize({
+      width: PANEL_DEFAULT_WIDTH,
+      height: PANEL_DEFAULT_HEIGHT,
+      anchorX: 'left',
+      anchorY: 'top',
+    })
   }, [])
 
   // 请求到达后把对应任务标记为“等待确认”（挂件据此进入等待态），结束后恢复执行中
@@ -605,36 +607,93 @@ const SecretaryPanel: React.FC = () => {
     window.electronAPI.secretary.showPanel()
   }, [interactionRequest])
 
+  /** 收起当前确认框：请求保留并落到通知列表，面板隐藏；下次点通知再继续处理 */
+  const pendingInteractionId = interactionRequest?.id
+  const hideInteraction = useCallback((requestId?: string) => {
+    const id = requestId || pendingInteractionId
+    if (!id) return
+    const request = useInteractionStore.getState().requests.find((r) => r.id === id)
+    if (!request) return
+    const state = useSecretaryStore.getState()
+    const hasNotice = state.notices.some((n) => n.clickTarget === 'ask_user' && n.clickId === request.id)
+    if (!hasNotice) {
+      state.addNotice({
+        id: generateId(),
+        title: request.title || String(t('interaction.defaultTitle')),
+        body: request.message,
+        clickTarget: 'ask_user',
+        clickId: request.id,
+        createdAt: Date.now(),
+        viewed: false,
+      })
+    }
+    // 收起后不再自动弹回确认框：后续打开面板回到通知列表，用户点通知才继续处理
+    useInteractionStore.getState().suppress(request.id)
+    setView('notices')
+    autoHidingRef.current = true
+    window.electronAPI.secretary.hidePanel()
+  }, [pendingInteractionId, t])
+
+  // 确认框在小秘书里长时间无操作：自动收起，保留请求；从通知显式打开的确认框不自动收起
+  useEffect(() => {
+    if (!pendingInteractionId || !panelVisible || pendingInteractionId === manualInteractionId) return
+    const timer = window.setTimeout(() => hideInteraction(pendingInteractionId), INTERACTION_AUTO_HIDE_MS)
+    return () => window.clearTimeout(timer)
+  }, [pendingInteractionId, panelVisible, manualInteractionId, hideInteraction])
+
+  // 请求已处理 / 失效 / 切换到下一个请求：清掉手动处理标记
+  useEffect(() => {
+    if (manualInteractionId && interactionRequest?.id !== manualInteractionId) setManualInteractionId(null)
+  }, [interactionRequest?.id, manualInteractionId])
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       // 弹窗打开时 Esc 不能收起面板，否则确认框会被一起藏起来
       if (interactionRequest) return
-      // Esc 依次收：浮层 → 面板
-      if (overlay) {
-        setOverlay(null)
+      // Esc 依次收：通知卡片 → 对话/浮层 → 面板
+      if (popup) {
+        clearPopup()
+        return
+      }
+      if (view === 'chat') {
+        setView('tasks')
+        return
+      }
+      if (view === 'employee' || view === 'settings') {
+        setView(overlayReturnRef.current)
         return
       }
       window.electronAPI.secretary.hidePanel()
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [overlay, interactionRequest])
+  }, [popup, view, interactionRequest, clearPopup])
 
-  /** 新会话：清空当前对话，发送时再创建任务 */
-  const startNewChat = useCallback(() => {
-    setNewChat(true)
-    setActiveTaskId(null)
-    setOverlay(null)
-    composerRef.current?.clear()
-    window.setTimeout(() => composerRef.current?.focus(), 60)
-  }, [])
+  /** 顶部 Tab 切换：任务 / 通知；顺手收起通知卡片 */
+  const openTab = useCallback((tab: PanelTab) => {
+    clearPopup()
+    setView(tab)
+  }, [clearPopup])
+
+  /** 从对话返回任务面板 */
+  const backFromChat = useCallback(() => setView('tasks'), [])
+
+  /** 员工切换 / 设置页：记住进入前的视图，关闭后回到原处 */
+  const openOverlay = useCallback((target: 'employee' | 'settings') => {
+    if (view === target) {
+      setView(overlayReturnRef.current === target ? 'tasks' : overlayReturnRef.current)
+      return
+    }
+    overlayReturnRef.current = view
+    setView(target)
+  }, [view])
 
   /** 在对话里发送：没有任务就创建，已有任务就在同一会话继续追问，回答直接流式显示在面板里 */
   const handleSend = useCallback(async (text: string, files: ComposerFile[]) => {
     if (!employee || busy) return
-    // 列表态输入当作派发新任务；只有对话态才继续当前会话
-    const continuingTask = overlay ? undefined : activeTask
+    // 任务/通知面板输入当作派发新任务；只有对话视图才继续当前会话
+    const continuingTask = view === 'chat' ? activeTask : undefined
     if (continuingTask?.origin === 'main') return
     const prompt = text.trim()
     if (!prompt && files.length === 0) {
@@ -642,7 +701,6 @@ const SecretaryPanel: React.FC = () => {
       return
     }
     setSending(true)
-    setOverlay(null)
     try {
       if (continuingTask) {
         await continueSecretaryTask({
@@ -662,8 +720,8 @@ const SecretaryPanel: React.FC = () => {
           modelId,
           enableThinking: thinking,
         })
-        setNewChat(false)
         setActiveTaskId(taskId)
+        setView('chat')
       }
       composerRef.current?.clear()
       // 面板保持打开：回答在对话区流式呈现，关掉面板也不影响任务继续执行
@@ -673,16 +731,15 @@ const SecretaryPanel: React.FC = () => {
     } finally {
       setSending(false)
     }
-  }, [employee, busy, activeTask, overlay, message, t, modelProviderId, modelId, thinking])
+  }, [employee, busy, activeTask, view, message, t, modelProviderId, modelId, thinking])
 
-  /** 任务行点击：直接在面板对话区打开（执行中的任务也能实时看） */
+  /** 任务行点击：进入对话视图（执行中的任务也能实时看） */
   const openTask = useCallback((task: SecretaryTask) => {
     if (!task.conversationId) return
     // 任务可能属于其他员工：先把身份切过去，对话与头部才一致
     if (employee && task.employee.id !== employee.id) setEmployeeId(task.employee.id)
-    setNewChat(false)
     setActiveTaskId(task.id)
-    setOverlay(null)
+    setView('chat')
     if (!task.viewed) markViewed(task.id)
     if (task.origin !== 'main') window.setTimeout(() => composerRef.current?.focus(), 60)
   }, [employee, markViewed])
@@ -691,10 +748,10 @@ const SecretaryPanel: React.FC = () => {
   const dismissTask = useCallback((task: SecretaryTask) => {
     if (task.origin === 'main') dismissRemoteTask(task)
     else removeTask(task.id)
-    // 收掉正在看的对话后回到新会话，不要自动跳到另一条历史任务
+    // 收掉正在看的对话后回到任务面板，不要自动跳到另一条历史任务
     if (activeTaskId === task.id) {
-      setNewChat(true)
       setActiveTaskId(null)
+      setView('tasks')
     }
   }, [removeTask, activeTaskId])
 
@@ -769,8 +826,19 @@ const SecretaryPanel: React.FC = () => {
     } catch { /* ignore */ }
   }, [insertPaths])
 
-  /** 通知条目点击：标记已读并跳转主窗口对应目标（无目标时仅标记已读） */
+  /** 通知条目点击：待确认交互重新拉起面板，其余标记已读并跳转主窗口对应目标 */
   const openNotice = useCallback((notice: SecretaryNotice) => {
+    // 确认框超时收起后仍保留在交互 store 里：点击通知直接回到小秘书继续处理，
+    // 同时移除这条通知（确认框已重新展示；再次收起时会重新生成未读通知）
+    if (notice.clickTarget === 'ask_user' && notice.clickId
+      && useInteractionStore.getState().requests.some((r) => r.id === notice.clickId)) {
+      removeNotice(notice.id)
+      useInteractionStore.getState().unsuppress(notice.clickId)
+      // 用户从通知里主动打开：视为开始处理，不再倒计时自动隐藏
+      setManualInteractionId(notice.clickId)
+      window.electronAPI.secretary.showPanel()
+      return
+    }
     if (!notice.viewed) markNoticeViewed(notice.id)
     if (!notice.clickTarget) return
     window.electronAPI.secretary.openNotice({
@@ -779,7 +847,21 @@ const SecretaryPanel: React.FC = () => {
       source: notice.source,
     })
     window.electronAPI.secretary.hidePanel()
-  }, [markNoticeViewed])
+  }, [markNoticeViewed, removeNotice])
+
+  /** 通知弹出卡片：知道了 = 该通知完成并从列表移除 */
+  const ackPopup = useCallback(() => {
+    if (popup) removeNotice(popup.id)
+    clearPopup(true)
+  }, [popup, removeNotice, clearPopup])
+
+  /** 通知弹出卡片：查看目标（标记已读并交给主窗口跳转） */
+  const viewPopup = useCallback(() => {
+    if (!popup) return
+    const target = popup
+    clearPopup()
+    openNotice(target)
+  }, [popup, clearPopup, openNotice])
 
   const noticeRow = (notice: SecretaryNotice) => (
     <div
@@ -826,8 +908,14 @@ const SecretaryPanel: React.FC = () => {
       {task.status === 'waiting' && <ExclamationCircleOutlined style={{ color: token.colorWarning }} />}
       {task.status === 'done' && <CheckCircleOutlined style={{ color: token.colorSuccess }} />}
       {task.status === 'failed' && <CloseCircleOutlined style={{ color: token.colorError }} />}
-      <span className="secretary-task-title" style={{ flex: 1, minWidth: 0 }} title={task.title}>
-        {task.title}
+      <span className="secretary-task-main">
+        <span className="secretary-task-title" title={task.title}>{task.title}</span>
+        <span className="secretary-task-meta">
+          {task.employee.name}
+          {(task.status === 'running' || task.status === 'waiting') && (
+            <> · {task.status === 'waiting' ? t('secretary.waiting') : (task.step || t('secretary.working'))}</>
+          )}
+        </span>
       </span>
       {!task.viewed && (task.status === 'done' || task.status === 'failed') && (
         <span className="secretary-unread-dot" />
@@ -863,16 +951,32 @@ const SecretaryPanel: React.FC = () => {
     </div>
   )
 
+  /** 头部员工身份：任务对话里只做展示（不可切换），其他页面可点击切换员工 */
+  const headIdentity = (
+    <>
+      {employee && (
+        <EmployeeAvatar
+          employeeId={employee.id}
+          avatarIcon={employee.avatar_icon}
+          avatarColor={employee.avatar_color}
+          avatarImage={employee.avatar_image}
+          avatarType={employee.avatar_type}
+          source={employee.source}
+          size={26}
+          shape="square"
+        />
+      )}
+      <span className="secretary-head-name" style={{ color: token.colorText }}>
+        {employee?.name || t('secretary.title')}
+      </span>
+    </>
+  )
+
   return (
     <>
       <div
         className={`secretary-panel${modalOpen ? ' is-modal-open' : ''}`}
-        ref={rootRef}
-        style={{
-          background: token.colorBgElevated,
-          borderColor: token.colorBorder,
-          maxHeight: PANEL_MAX_HEIGHT,
-        }}
+        style={{ background: token.colorBgElevated }}
         onDragOver={(e) => { e.preventDefault(); setDropping(true) }}
         onDragLeave={() => setDropping(false)}
         onDrop={(e) => {
@@ -886,62 +990,56 @@ const SecretaryPanel: React.FC = () => {
         className="secretary-panel-inner"
         style={{ outline: dropping ? `1px dashed ${token.colorPrimary}` : 'none', outlineOffset: -6, borderRadius: 16 }}
       >
-        {/* 头部：员工 / 状态 / 新会话 / 任务 / 通知 / 设置 / 关闭，单行紧凑排布 */}
+        {/* 头部：返回 / 员工 / 状态 / 任务·通知切换 / 设置 / 关闭，单行紧凑排布 */}
         <div className="secretary-head">
-          <button
-            type="button"
-            className="secretary-head-id"
-            title={t('secretary.switchEmployee')}
-            onClick={() => setOverlay((prev) => (prev === 'employee' ? null : 'employee'))}
-          >
-            {employee && (
-              <EmployeeAvatar
-                employeeId={employee.id}
-                avatarIcon={employee.avatar_icon}
-                avatarColor={employee.avatar_color}
-                avatarImage={employee.avatar_image}
-                avatarType={employee.avatar_type}
-                source={employee.source}
-                size={26}
-                shape="square"
+          {view === 'chat' && (
+            <Tooltip title={t('secretary.back')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<ArrowLeftOutlined />}
+                data-testid="secretary-back"
+                style={{ color: token.colorTextSecondary, marginLeft: -4, paddingInline: 4 }}
+                onClick={backFromChat}
               />
-            )}
-            <span className="secretary-head-name" style={{ color: token.colorText }}>
-              {employee?.name || t('secretary.title')}
-            </span>
-            <SwapOutlined
-              style={{
-                color: overlay === 'employee' ? token.colorText : token.colorTextTertiary,
-                fontSize: 12,
-                flexShrink: 0,
-              }}
-            />
-          </button>
-          {(activeTask?.status === 'running' || activeTask?.status === 'waiting') && (
+            </Tooltip>
+          )}
+          {view === 'chat' ? (
+            <div className="secretary-head-id is-static" title={employee?.name || t('secretary.title')}>
+              {headIdentity}
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="secretary-head-id"
+              title={t('secretary.switchEmployee')}
+              onClick={() => openOverlay('employee')}
+            >
+              {headIdentity}
+              <SwapOutlined
+                style={{
+                  color: token.colorTextTertiary,
+                  fontSize: 12,
+                  flexShrink: 0,
+                }}
+              />
+            </button>
+          )}
+          {(headTask?.status === 'running' || headTask?.status === 'waiting') && (
             <span
               className="secretary-head-status"
-              style={{ color: activeTask.status === 'waiting' ? token.colorWarning : token.colorTextTertiary }}
+              style={{ color: headTask.status === 'waiting' ? token.colorWarning : token.colorTextTertiary }}
             >
               <span
                 className="secretary-status-dot"
-                style={{ background: activeTask.status === 'waiting' ? token.colorWarning : token.colorPrimary }}
+                style={{ background: headTask.status === 'waiting' ? token.colorWarning : token.colorPrimary }}
               />
               <span className="secretary-head-status-text">
-                {activeTask.status === 'waiting' ? t('secretary.waiting') : (activeTask.step || t('secretary.working'))}
+                {headTask.status === 'waiting' ? t('secretary.waiting') : (headTask.step || t('secretary.working'))}
               </span>
             </span>
           )}
           <div className="secretary-head-actions">
-            <Tooltip title={t('secretary.newChat')}>
-              <Button
-                type="text"
-                size="small"
-                icon={<PlusOutlined />}
-                data-testid="secretary-new-chat"
-                style={{ color: token.colorTextTertiary }}
-                onClick={startNewChat}
-              />
-            </Tooltip>
             <Tooltip title={t('secretary.tasks')}>
               <Badge
                 count={running.length + finished.length}
@@ -954,8 +1052,12 @@ const SecretaryPanel: React.FC = () => {
                   size="small"
                   icon={<UnorderedListOutlined />}
                   data-testid="secretary-open-tasks"
-                  style={{ color: overlay === 'tasks' ? token.colorText : token.colorTextTertiary }}
-                  onClick={() => setOverlay((prev) => (prev === 'tasks' ? null : 'tasks'))}
+                  aria-pressed={view === 'tasks' || view === 'chat'}
+                  style={{
+                    color: view === 'tasks' || view === 'chat' ? token.colorText : token.colorTextTertiary,
+                    background: view === 'tasks' || view === 'chat' ? token.colorFillTertiary : 'transparent',
+                  }}
+                  onClick={() => openTab('tasks')}
                 />
               </Badge>
             </Tooltip>
@@ -971,8 +1073,12 @@ const SecretaryPanel: React.FC = () => {
                   size="small"
                   icon={<BellOutlined />}
                   data-testid="secretary-open-notices"
-                  style={{ color: overlay === 'notices' ? token.colorText : token.colorTextTertiary }}
-                  onClick={() => setOverlay((prev) => (prev === 'notices' ? null : 'notices'))}
+                  aria-pressed={view === 'notices'}
+                  style={{
+                    color: view === 'notices' ? token.colorText : token.colorTextTertiary,
+                    background: view === 'notices' ? token.colorFillTertiary : 'transparent',
+                  }}
+                  onClick={() => openTab('notices')}
                 />
               </Badge>
             </Tooltip>
@@ -981,8 +1087,12 @@ const SecretaryPanel: React.FC = () => {
                 type="text"
                 size="small"
                 icon={<SettingOutlined />}
-                style={{ color: overlay === 'settings' ? token.colorText : token.colorTextTertiary }}
-                onClick={() => setOverlay((prev) => (prev === 'settings' ? null : 'settings'))}
+                aria-pressed={view === 'settings'}
+                style={{
+                  color: view === 'settings' ? token.colorText : token.colorTextTertiary,
+                  background: view === 'settings' ? token.colorFillTertiary : 'transparent',
+                }}
+                onClick={() => openOverlay('settings')}
               />
             </Tooltip>
             <Tooltip title={t('common.close')}>
@@ -997,40 +1107,71 @@ const SecretaryPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* 对话区：窗口主体；任务 / 通知 / 员工 / 设置直接替换对话区内容，窗口高度随内容自适应 */}
-        {(activeTask || overlay) && (
+
+        {/* 主体：通知卡片 / 对话 / 员工·设置 / 任务·通知列表，固定窗口内自适应布局 */}
+        {popup ? (
           <div className="secretary-stage">
-            {overlay ? (
-              <div className="secretary-overlay">
-                <div className="secretary-overlay-head">
-                  <span className="secretary-overlay-title" style={{ color: token.colorText }}>
-                    {overlay === 'employee'
-                      ? t('secretary.switchEmployee')
-                      : overlay === 'settings'
-                        ? t('secretary.settings')
-                        : overlay === 'tasks'
-                          ? t('secretary.tasks')
-                          : t('secretary.notices')}
-                  </span>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<CloseOutlined />}
-                    style={{ color: token.colorTextTertiary }}
-                    onClick={() => setOverlay(null)}
-                  />
+            <div key={popup.id} className="secretary-notice-popup" style={{ borderColor: token.colorBorderSecondary }}>
+              {/* 倒计时进度条贴卡片顶边：播完自动收起面板，通知保留在通知列表 */}
+              <div className="wa-countdown-bar is-overlay" style={{ background: token.colorFillSecondary }}>
+                <div
+                  className="wa-countdown-bar-fill"
+                  style={{ background: token.colorPrimary, animationDuration: `${NOTICE_POPUP_TIMEOUT_MS}ms` }}
+                />
+              </div>
+              <div className="secretary-notice-popup-head">
+                <BellOutlined style={{ color: token.colorPrimary }} />
+                <span className="secretary-notice-popup-title" style={{ color: token.colorText }}>{popup.title}</span>
+              </div>
+              {popup.body && (
+                <div className="secretary-notice-popup-body" style={{ color: token.colorTextSecondary }}>
+                  {popup.body}
                 </div>
-              <div
-                className={`secretary-overlay-body${overlay === 'tasks' || overlay === 'notices' || overlay === 'employee' ? ' is-fixed' : ''}`}
-              >
-                {overlay === 'employee' && employees.map((emp) => (
+              )}
+              <div className="secretary-notice-popup-actions">
+                {popup.clickTarget && (
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ color: token.colorTextSecondary }}
+                    onClick={viewPopup}
+                  >
+                    {t('secretary.noticeView')}
+                  </Button>
+                )}
+                <Button size="small" type="primary" onClick={ackPopup}>
+                  {t('secretary.noticeAck')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : view === 'chat' && activeTask ? (
+          <div className="secretary-stage">
+            <SecretaryChat task={activeTask} onOpenInMain={openInMain} />
+          </div>
+        ) : view === 'employee' || view === 'settings' ? (
+          <div className="secretary-stage">
+            <div className="secretary-overlay">
+              <div className="secretary-overlay-head">
+                <span className="secretary-overlay-title" style={{ color: token.colorText }}>
+                  {view === 'employee' ? t('secretary.switchEmployee') : t('secretary.settings')}
+                </span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ArrowLeftOutlined />}
+                  style={{ color: token.colorTextTertiary }}
+                  onClick={() => setView(overlayReturnRef.current)}
+                />
+              </div>
+              <div className={`secretary-overlay-body${view === 'employee' ? ' is-fixed' : ''}`}>
+                {view === 'employee' && employees.map((emp) => (
                   <button
                     key={emp.id}
                     className={`secretary-menu-item ${emp.id === employee?.id ? 'is-active' : ''}`}
                     onClick={() => {
                       setEmployeeId(emp.id)
-                      setOverlay(null)
-                      setNewChat(true)
+                      setView('tasks')
                       setActiveTaskId(null)
                       composerRef.current?.clear()
                       window.setTimeout(() => composerRef.current?.focus(), 60)
@@ -1057,12 +1198,12 @@ const SecretaryPanel: React.FC = () => {
                   </button>
                 ))}
 
-                {overlay === 'settings' && (
+                {view === 'settings' && (
                   <button
                     className="secretary-menu-item"
                     style={{ color: token.colorText }}
                     onClick={async () => {
-                      setOverlay(null)
+                      setView('tasks')
                       await window.electronAPI.secretary.setSettings({ enabled: false }).catch(() => {})
                       window.electronAPI.secretary.hidePanel()
                     }}
@@ -1071,8 +1212,14 @@ const SecretaryPanel: React.FC = () => {
                     <span>{t('secretary.hidePet')}</span>
                   </button>
                 )}
-
-                {overlay === 'tasks' && (running.length === 0 && finished.length === 0 ? (
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="secretary-stage">
+            <div className="secretary-overlay">
+              <div className="secretary-overlay-body is-fixed">
+                {view === 'tasks' && (running.length === 0 && finished.length === 0 ? (
                   <div className="secretary-empty" style={{ color: token.colorTextQuaternary }}>
                     <UnorderedListOutlined style={{ fontSize: 18, opacity: .55 }} />
                     <span>{t('secretary.noTasks')}</span>
@@ -1084,22 +1231,20 @@ const SecretaryPanel: React.FC = () => {
                   </>
                 ))}
 
-                {overlay === 'notices' && (notices.length === 0 ? (
+                {view === 'notices' && (notices.length === 0 ? (
                   <div className="secretary-empty" style={{ color: token.colorTextQuaternary }}>
                     <BellOutlined style={{ fontSize: 18, opacity: .55 }} />
                     <span>{t('secretary.noNotices')}</span>
                   </div>
                 ) : notices.map(noticeRow))}
-                </div>
               </div>
-            ) : (
-              <SecretaryChat task={activeTask} onOpenInMain={openInMain} />
-            )}
+            </div>
           </div>
         )}
 
-        {/* 底部输入条：对话态续聊 / 主窗口任务只读；任务列表态输入当作派发新任务 */}
-        {!overlay && activeTask?.origin === 'main' ? (
+        {/* 底部输入条：任务面板发起新任务 / 对话续聊 / 主窗口任务只读 */}
+        {!popup && (view === 'tasks' || view === 'chat') && (
+          view === 'chat' && activeTask?.origin === 'main' ? (
           <div
             className="secretary-composer is-readonly"
             style={{ borderColor: token.colorBorderSecondary }}
@@ -1135,7 +1280,7 @@ const SecretaryPanel: React.FC = () => {
           >
             <SecretaryComposer
               ref={composerRef}
-              placeholder={!overlay && activeTask
+              placeholder={view === 'chat' && activeTask
                 ? t('secretary.replyPlaceholder')
                 : t('secretary.placeholder', { name: employee?.name || '' })}
               onSend={handleSend}
@@ -1152,7 +1297,7 @@ const SecretaryPanel: React.FC = () => {
               </Tooltip>
               <Tooltip title={t('secretary.inputHint')}>
                 <span className="secretary-composer-hint" style={{ color: token.colorTextQuaternary }}>
-                  {!overlay && activeTask?.status === 'waiting'
+                  {view === 'chat' && activeTask?.status === 'waiting'
                     ? t('secretary.waiting')
                     : busy ? t('secretary.responding') : t('secretary.inputHint')}
                 </span>
@@ -1203,7 +1348,7 @@ const SecretaryPanel: React.FC = () => {
                   ) : thinkingTrigger
                 )}
               </div>
-              {!overlay && activeTask && (activeTask.status === 'running' || activeTask.status === 'waiting') && (
+              {view === 'chat' && activeTask && (activeTask.status === 'running' || activeTask.status === 'waiting') && (
                 <Tooltip title={t('secretary.stop')}>
                   <Button
                     type="text"
@@ -1237,10 +1382,10 @@ const SecretaryPanel: React.FC = () => {
               }}
             />
           </div>
-        )}
+        ))}
       </div>
-      {/* 左右边缘拖拽柄：只调整宽度（高度固定），双击恢复默认宽度 */}
-      {(['left', 'right'] as const).map((edge) => (
+      {/* 边缘/角拖拽柄：宽高都可调，双击恢复默认尺寸 */}
+      {(['left', 'right', 'top', 'bottom', 'top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map((edge) => (
         <div
           key={edge}
           className={`secretary-resize-edge is-${edge}`}
@@ -1255,7 +1400,12 @@ const SecretaryPanel: React.FC = () => {
       ))}
       </div>
       {/* 权限 / ask_user：交互会话绑定本窗口，弹窗必须挂在这里；小窗宽度有限，用紧凑版弹窗 */}
-      <UnifiedInteractionModal compact />
+      <UnifiedInteractionModal
+        compact
+        autoHideMs={INTERACTION_AUTO_HIDE_MS}
+        active={panelVisible && interactionRequest?.id !== manualInteractionId}
+        onHide={() => hideInteraction()}
+      />
     </>
   )
 }

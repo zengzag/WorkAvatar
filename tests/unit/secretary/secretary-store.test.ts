@@ -123,6 +123,19 @@ describe('secretary.store 通知操作', () => {
     ])
     expect(summary.status).toBe('idle')
     expect(summary.unreadCount).toBe(1)
+    // 通知与任务结果分开计数：挂件气泡据此区分「通知待查看」与「结果等你来看」
+    expect(summary.unreadTaskCount).toBe(0)
+    expect(summary.unreadNoticeCount).toBe(1)
+  })
+
+  it('任务结果与通知分别计数，角标为两者之和', () => {
+    const summary = selectBusSummary(
+      [{ id: 't1', title: 'T', employee: { id: 'e1', name: '员工' }, status: 'done', step: '', startedAt: 1, viewed: false, conversationId: 'c1' } as any],
+      [{ id: 'n1', title: 'T', body: 'B', createdAt: 1, viewed: false }],
+    )
+    expect(summary.unreadTaskCount).toBe(1)
+    expect(summary.unreadNoticeCount).toBe(1)
+    expect(summary.unreadCount).toBe(2)
   })
 })
 

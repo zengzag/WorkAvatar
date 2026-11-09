@@ -137,6 +137,8 @@ export function broadcastSecretaryState(): void {
           : '',
       runningCount: summary.runningCount,
       unreadCount: summary.unreadCount,
+      unreadTaskCount: summary.unreadTaskCount,
+      unreadNoticeCount: summary.unreadNoticeCount,
       petColor: focus?.employee.avatarColor || undefined,
       petImage: focus?.employee.avatarImage || null,
       petIcon: focus?.employee.avatarIcon || undefined,
