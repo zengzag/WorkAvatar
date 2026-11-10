@@ -24,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import type { Conversation } from '../../types'
 import { getDirName } from '../../utils/format'
-import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 
 const { Text } = Typography
 
@@ -394,12 +393,12 @@ const TaskItem = memo(({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 21 }}>
+            {/* 运行态用静态圆点：无限动画会让带玻璃背景的窗口持续整帧重合成 */}
             {streaming && (
               <span style={{
                 width: 6, height: 6, borderRadius: '50%',
                 background: token.colorPrimary, flexShrink: 0,
                 boxShadow: `0 0 0 3px ${token.colorPrimaryBg}`,
-                animation: 'pulse 1.5s infinite',
               }} />
             )}
             {isEditing ? (
@@ -562,7 +561,6 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const glassRef = useLiquidGlass<HTMLDivElement>()
 
   // 侧栏宽度：支持拖拽调整并持久化
   const [width, setWidth] = useState<number>(() => {
@@ -576,12 +574,6 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const sidebarRef = useRef<HTMLDivElement>(null)
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
-
-  // 同一个根节点既服务于拖宽计算，也作为玻璃折射的宿主
-  const setSidebarNode = useCallback((node: HTMLDivElement | null) => {
-    sidebarRef.current = node
-    glassRef.current = node
-  }, [glassRef])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -769,7 +761,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   )
 
   return (
-    <div ref={setSidebarNode} className="wa-task-sidebar" data-testid="task-sidebar" style={{
+    <div ref={sidebarRef} className="wa-task-sidebar" data-testid="task-sidebar" style={{
       width,
       flexShrink: 0,
       display: 'flex',
@@ -1108,12 +1100,6 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
         onMouseLeave={(e) => { if (!resizing) e.currentTarget.style.background = 'transparent' }}
       />
 
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
-        }
-      `}</style>
     </div>
   )
 }

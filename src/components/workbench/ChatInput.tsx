@@ -7,7 +7,6 @@ import { getDirName } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import EmployeeAvatar from '../common/EmployeeAvatar'
-import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -401,7 +400,6 @@ const ChatInput: React.FC<{
     if (conversationId) setDraftFullAllow(false)
   }, [conversationId])
   const editorRef = useRef<HTMLDivElement>(null)
-  const composerGlassRef = useLiquidGlass<HTMLDivElement>()
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
 
@@ -1977,7 +1975,7 @@ const ChatInput: React.FC<{
           })}
         </div>
       )}
-      <div ref={composerGlassRef} className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 20, padding: '10px 10px 10px 16px', border: `1px solid ${isDragOver ? token.colorPrimary : 'var(--wa-glass-border)'}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
+      <div className="wa-composer" style={{ position: 'relative', display: 'flex', gap: 10, alignItems: 'flex-end', borderRadius: 20, padding: '10px 10px 10px 16px', border: `1px solid ${isDragOver ? token.colorPrimary : 'var(--wa-glass-border)'}`, transition: 'border-color 0.2s, box-shadow 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

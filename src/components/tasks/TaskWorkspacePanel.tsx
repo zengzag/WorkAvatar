@@ -18,7 +18,6 @@ import WorkspaceEntryMenu from './WorkspaceEntryMenu'
 import TaskTerminal from './TaskTerminal'
 import FilePreview, { getFileColor, getFileIcon } from '../workbench/FilePreview'
 import { pathToAppFileUrl } from '../../utils/file-url'
-import { useLiquidGlass } from '../../hooks/useLiquidGlass'
 
 const { Text } = Typography
 
@@ -166,15 +165,8 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
   })
   const [resizing, setResizing] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
-  const glassRef = useLiquidGlass<HTMLDivElement>()
   const widthRef = useRef(width)
   useEffect(() => { widthRef.current = width }, [width])
-
-  // 同一个根节点既服务于拖宽计算，也作为玻璃折射的宿主
-  const setPanelNode = useCallback((node: HTMLDivElement | null) => {
-    panelRef.current = node
-    glassRef.current = node
-  }, [glassRef])
 
   useEffect(() => {
     if (!resizing) return
@@ -370,7 +362,7 @@ const TaskWorkspacePanel: React.FC<TaskWorkspacePanelProps> = ({ rootPath, termi
 
   return (
     <div
-      ref={setPanelNode}
+      ref={panelRef}
       className="wa-workspace-panel"
       data-testid="workspace-panel"
       style={{

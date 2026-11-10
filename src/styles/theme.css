@@ -207,7 +207,7 @@ html.dark {
   z-index: 0;
   pointer-events: none;
   opacity: var(--wa-noise-opacity);
-  mix-blend-mode: soft-light;
+  /* 不用 mix-blend-mode：混合会让整窗成为单一图层，任何动画都要整窗重合成 */
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
@@ -222,9 +222,9 @@ html.dark {
 }
 
 /* ---------- 液态玻璃材质 ----------
-   玻璃分档使用：壳层/工具条用 .wa-glass（折射 + 边缘高光），
-   小徽标用 .wa-glass-chip（仅染色与模糊，数量多、尺寸小），
-   浮层菜单用 .wa-glass-menu（重模糊 + 表面洗涤，保证文字可读）。
+   只有真正压在可变内容上的浮层才做背景模糊：菜单 .wa-glass-menu、Popover/弹窗。
+   壳层（标题栏/导航/侧栏/工作区/输入区）背后是静态环境光或高不透明底色，
+   模糊不可见却会在每帧重新采样，因此统一改为「染色 + 内侧边光」的静态表面。
    内容卡片保持实色，不做玻璃。 */
 
 .wa-glass {
@@ -275,8 +275,8 @@ html.dark {
   border: 1px solid var(--wa-glass-border);
   border-radius: var(--wa-radius-md);
   box-shadow: var(--wa-glass-menu-shadow), inset 0 1px 0 var(--wa-glass-rim-top);
-  backdrop-filter: blur(22px) saturate(140%);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
 }
 
 /* 玻璃面板内的控件：不叠加第二层玻璃表面，只用间距与低透明度凹槽表达层级 */
@@ -408,8 +408,6 @@ html.wa-secretary-window #root::after {
 .app-sider {
   position: relative;
   background: var(--wa-glass-tint) !important;
-  backdrop-filter: blur(26px) saturate(1.4);
-  -webkit-backdrop-filter: blur(26px) saturate(1.4);
   box-shadow: inset -1px 0 0 var(--wa-glass-border) !important;
   border-right: none !important;
 }
@@ -494,8 +492,8 @@ html.wa-secretary-window #root::after {
 .ant-picker-dropdown .ant-picker-panel-container,
 .ant-popover-inner {
   background: color-mix(in srgb, var(--wa-glass-menu-surface) 82%, transparent) !important;
-  backdrop-filter: blur(26px) saturate(150%);
-  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
   border: 1px solid var(--wa-glass-border);
   box-shadow: var(--wa-glass-menu-shadow), inset 0 1px 0 var(--wa-glass-rim-top) !important;
 }
@@ -542,8 +540,8 @@ html.dark .ant-tooltip .ant-tooltip-arrow::after {
 .ant-drawer .ant-drawer-content,
 .ant-modal .ant-modal-content {
   background: color-mix(in srgb, var(--wa-panel) 92%, transparent) !important;
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
   box-shadow: var(--wa-glass-shadow), inset 0 1px 0 var(--wa-glass-rim-top) !important;
 }
 
@@ -1152,8 +1150,6 @@ html.dark .wa-plugin-host > * {
     var(--wa-glass-shadow),
     inset 0 1px 0 var(--wa-glass-rim-top),
     inset 0 0 0 1px var(--wa-glass-rim-hairline);
-  backdrop-filter: var(--wa-glass-blur);
-  -webkit-backdrop-filter: var(--wa-glass-blur);
 }
 
 .wa-settings-tabs .ant-tabs-nav::before {
@@ -1303,8 +1299,6 @@ html.dark .wa-settings-panel {
     var(--wa-glass-shadow),
     inset 0 1px 0 var(--wa-glass-rim-top),
     inset 0 0 0 1px var(--wa-glass-rim-hairline);
-  backdrop-filter: var(--wa-glass-blur);
-  -webkit-backdrop-filter: var(--wa-glass-blur);
 }
 
 /* ---------- 任务页布局：浮在环境光上的玻璃侧栏 + 内容主舞台 ---------- */
@@ -1526,14 +1520,14 @@ html.dark .wa-chat-area::before {
   pointer-events: none;
 }
 
-/* 消息滚入输入区时逐渐淡出，保留玻璃可采样到的背景层次 */
+/* 消息滚入输入区时只在贴近输入框的一小段内淡出，避免大面积遮挡正文 */
 .wa-composer-dock::before {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 168%;
+  height: 112%;
   z-index: -1;
   pointer-events: none;
   background: linear-gradient(
@@ -1700,12 +1694,11 @@ html.dark .wa-inline-approval {
   border-radius: 999px;
   border: 1px solid var(--wa-glass-border);
   background: var(--wa-glass-tint);
-  backdrop-filter: blur(14px) saturate(130%);
-  -webkit-backdrop-filter: blur(14px) saturate(130%);
 }
 
-/* 输入区：浮在消息之上的玻璃胶囊（折射由 useLiquidGlass 注入）
-   底色刻意接近不透明：编辑区是阅读/输入的主表面，背后的正文不能透上来干扰 */
+/* 输入区：浮在消息之上的玻璃胶囊
+   底色本就 96% 不透明，背后的正文不会透上来，因此不做 backdrop 模糊——
+   浮层压在滚动正文上时，每帧重采样是主窗口最贵的开销之一 */
 .wa-composer {
   background: color-mix(in srgb, var(--wa-panel) 96%, transparent) !important;
   box-shadow:
@@ -1713,8 +1706,6 @@ html.dark .wa-inline-approval {
     inset 0 1px 0 var(--wa-glass-rim-top),
     inset 0 0 0 1px var(--wa-glass-rim-hairline),
     inset 0 -1px 0 var(--wa-glass-rim-bottom) !important;
-  backdrop-filter: blur(20px) saturate(130%);
-  -webkit-backdrop-filter: blur(20px) saturate(130%);
   transition: box-shadow 0.18s var(--wa-ease), border-color 0.18s var(--wa-ease);
 }
 
@@ -1741,8 +1732,6 @@ html.dark .wa-inline-approval {
     inset 0 1px 0 var(--wa-glass-rim-top),
     inset 0 0 0 1px var(--wa-glass-rim-hairline),
     inset 0 -1px 0 var(--wa-glass-rim-bottom);
-  backdrop-filter: var(--wa-glass-blur);
-  -webkit-backdrop-filter: var(--wa-glass-blur);
 }
 
 /* 工作区面板内部控件：实色漂浮面 + 极淡描边，暗色下靠略亮的表面区分层级 */
@@ -1855,8 +1844,6 @@ html.dark .wa-inline-approval {
 
 .wa-titlebar {
   background: color-mix(in srgb, var(--wa-bg) 78%, transparent) !important;
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
   box-shadow: inset 0 1px 0 var(--wa-glass-rim-top);
 }
 
