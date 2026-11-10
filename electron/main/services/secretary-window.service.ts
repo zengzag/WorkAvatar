@@ -168,14 +168,16 @@ class SecretaryWindowService {
     if (!this.settings.enabled) return false
     const panel = this.ensurePanelWindow()
     if (!panel) return false
+    // 在 showPanel 之前判定面板原本是否打开：用户处理完自动弹出的确认框后要恢复隐藏
+    const payload: InteractionRequest = { ...request, panelAutoOpened: !this.isPanelOpen() }
     if (this.panelReady) {
       try {
-        panel.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, request)
+        panel.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, payload)
       } catch { /* 窗口正在销毁时忽略 */ }
     } else {
       this.pendingInteractions = [
-        ...this.pendingInteractions.filter((item) => item.id !== request.id),
-        request,
+        ...this.pendingInteractions.filter((item) => item.id !== payload.id),
+        payload,
       ].slice(-10)
     }
     this.showPanel()

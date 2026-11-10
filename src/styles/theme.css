@@ -1894,6 +1894,23 @@ html.dark .wa-inline-approval {
   background: var(--wa-accent);
 }
 
+/* 运行中任务的呼吸点：只动 opacity 并单独提层，不触发壳层重绘 */
+.wa-task-running-dot {
+  animation: wa-task-pulse 1.6s ease-in-out infinite;
+  will-change: opacity;
+}
+
+@keyframes wa-task-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-task-running-dot {
+    animation: none;
+  }
+}
+
 .wa-task-item.is-selected {
   background: var(--wa-accent-soft);
   border-color: var(--wa-accent-line);

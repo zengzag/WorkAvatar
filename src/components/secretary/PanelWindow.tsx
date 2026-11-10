@@ -43,7 +43,7 @@ import {
 } from './secretary-runner'
 import { syncRemoteTasks, abortRemoteTask, dismissRemoteTask } from './secretary-remote'
 import { postSecretaryMessage, subscribeSecretaryBus, SECRETARY_PENDING_FILES_KEY } from './secretary-bus'
-import { selectModalRequest, useInteractionStore } from '../../stores/interaction.store'
+import { selectModalRequest, useInteractionStore, type InteractionRequest } from '../../stores/interaction.store'
 import UnifiedInteractionModal from '../common/UnifiedInteractionModal'
 import SecretaryComposer, { type ComposerFile, type ComposerHandle } from './SecretaryComposer'
 import SecretaryChat from './SecretaryChat'
@@ -132,10 +132,20 @@ const SecretaryPanel: React.FC = () => {
   const popupTimerRef = useRef(0)
   /** 面板当前是否可见：确认框的自动收起倒计时只在可见时进行 */
   const [panelVisible, setPanelVisible] = useState(false)
-  /** 本次收起是确认框超时自动触发，跳过「有确认框时拒绝收起」的保护 */
+  /** 同步可见性：IPC 事件回调里要立即读到「请求到达前面板是否已打开」 */
+  const panelVisibleRef = useRef(false)
+  const updatePanelVisible = useCallback((open: boolean) => {
+    panelVisibleRef.current = open
+    setPanelVisible(open)
+  }, [])
+  /** 本次确认框是否由小秘书自动弹出（请求到达前面板未打开）：处理完自动收起面板 */
+  const interactionAutoOpenedRef = useRef(false)
+  /** 程序主动收起（确认框超时 / 处理完成），跳过「有确认框时拒绝收起」的保护 */
   const autoHidingRef = useRef(false)
   /** 从通知列表显式打开确认框：用户已主动开始处理，不再倒计时自动隐藏 */
   const [manualInteractionId, setManualInteractionId] = useState<string | null>(null)
+  /** 上一次可见的确认框 id：用于判断交互队列是否已清空 */
+  const prevInteractionIdRef = useRef<string | undefined>(undefined)
   /** 拖拽边缘调整宽高时的起点 */
   const resizeOriginRef = useRef<{ edge: ResizeEdge; x: number; y: number; width: number; height: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -297,8 +307,20 @@ const SecretaryPanel: React.FC = () => {
     document.body.style.overflow = 'hidden'
     // 面板可能在渲染端重建时已经处于显示状态：先取一次真实可见性，确认框倒计时才不会误判
     window.electronAPI.secretary.getState()
-      .then((state) => setPanelVisible(!!state.panelOpen))
+      .then((state) => updatePanelVisible(!!state.panelOpen))
       .catch(() => {})
+  }, [updatePanelVisible])
+
+  // 交互请求到达：面板此前未打开说明是本次交互自动弹出的，处理完后要恢复隐藏
+  useEffect(() => {
+    const off = window.electronAPI.interaction.onRequest((request: InteractionRequest) => {
+      // 主进程转交的请求直接带判定结果，避免可见性事件与请求的到达顺序造成误判
+      const autoOpened = request.panelAutoOpened !== undefined
+        ? request.panelAutoOpened
+        : !panelVisibleRef.current
+      if (autoOpened) interactionAutoOpenedRef.current = true
+    })
+    return () => { off() }
   }, [])
 
   // 主窗口发起的任务也要显示执行细节：面板常驻，挂载即接管会话流事件
@@ -335,13 +357,13 @@ const SecretaryPanel: React.FC = () => {
     const off = window.electronAPI.secretary.onPanelVisibility((open) => {
       if (open) {
         autoHidingRef.current = false
-        setPanelVisible(true)
+        updatePanelVisible(true)
         loadEmployees()
         loadProviders()
         // 不重置页面：面板挂载时已恢复上次关闭的浮层/对话，隐藏期间状态也一直保留
         return
       }
-      setPanelVisible(false)
+      updatePanelVisible(false)
       // 确认框还挂着时拒绝收起（挂件点击/快捷键/托盘都可能触发），否则弹窗跟着被藏起来，任务只能等超时；
       // 确认框自身超时自动收起是例外，此时请求仍保留，下次打开可继续处理
       if (pendingRef.current && !autoHidingRef.current) {
@@ -353,7 +375,7 @@ const SecretaryPanel: React.FC = () => {
       clearPopup()
     })
     return () => { off() }
-  }, [loadEmployees, loadProviders, clearPopup])
+  }, [loadEmployees, loadProviders, clearPopup, updatePanelVisible])
 
   // 记住当前 Tab（任务/通知），下次打开面板回到同一页；对话不恢复
   useEffect(() => {
@@ -646,6 +668,18 @@ const SecretaryPanel: React.FC = () => {
     if (manualInteractionId && interactionRequest?.id !== manualInteractionId) setManualInteractionId(null)
   }, [interactionRequest?.id, manualInteractionId])
 
+  // 自动弹出的确认框全部处理完后，恢复面板原来的隐藏状态
+  useEffect(() => {
+    const prev = prevInteractionIdRef.current
+    const next = interactionRequest?.id
+    prevInteractionIdRef.current = next
+    if (!prev || prev === next) return
+    if (next || !interactionAutoOpenedRef.current) return
+    interactionAutoOpenedRef.current = false
+    autoHidingRef.current = true
+    window.electronAPI.secretary.hidePanel()
+  }, [interactionRequest?.id])
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -834,7 +868,8 @@ const SecretaryPanel: React.FC = () => {
       && useInteractionStore.getState().requests.some((r) => r.id === notice.clickId)) {
       removeNotice(notice.id)
       useInteractionStore.getState().unsuppress(notice.clickId)
-      // 用户从通知里主动打开：视为开始处理，不再倒计时自动隐藏
+      // 用户从通知里主动打开：视为开始处理，不再倒计时自动隐藏，处理完也不强制收起面板
+      interactionAutoOpenedRef.current = false
       setManualInteractionId(notice.clickId)
       window.electronAPI.secretary.showPanel()
       return

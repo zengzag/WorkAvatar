@@ -393,13 +393,15 @@ const TaskItem = memo(({
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 21 }}>
-            {/* 运行态用静态圆点：无限动画会让带玻璃背景的窗口持续整帧重合成 */}
             {streaming && (
-              <span style={{
-                width: 6, height: 6, borderRadius: '50%',
-                background: token.colorPrimary, flexShrink: 0,
-                boxShadow: `0 0 0 3px ${token.colorPrimaryBg}`,
-              }} />
+              <span
+                className="wa-task-running-dot"
+                style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: token.colorPrimary, flexShrink: 0,
+                  boxShadow: `0 0 0 3px ${token.colorPrimaryBg}`,
+                }}
+              />
             )}
             {isEditing ? (
               <Input

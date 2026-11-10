@@ -37,6 +37,8 @@ export interface InteractionRequest {
   taskFullAccess?: boolean
   /** 发起请求的会话 id：任务对话据此内联展示确认卡 */
   conversationId?: string
+  /** 小秘书转交请求时面板原本是否未打开（由主进程判定） */
+  panelAutoOpened?: boolean
 }
 
 export interface InteractionResponse {

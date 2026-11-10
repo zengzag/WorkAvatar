@@ -40,6 +40,8 @@ export interface InteractionRequest {
   taskFullAccess?: boolean
   /** 发起请求的会话 id：前端据此把"本轮任务不再提醒"的高权限状态标记到对应会话 */
   conversationId?: string
+  /** 小秘书转交请求时面板原本是否未打开（由主进程判定，避免渲染端可见性事件时序误判） */
+  panelAutoOpened?: boolean
 }
 
 export interface InteractionResponse {
