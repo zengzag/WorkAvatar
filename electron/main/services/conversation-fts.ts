@@ -48,9 +48,9 @@ export function segmentConversationText(text: string): string {
   return kmsTokenizer.segment(text)
 }
 
-/** 索引侧：从 messages_json 抽取可检索正文（分词前的原文，供展示片段使用） */
-export function buildConversationPreview(messagesJson: string): string {
-  return extractMessagePreview(messagesJson, CONVERSATION_PREVIEW_MAX_CHARS)
+/** 索引侧：从消息数组（或旧 JSON 字符串）抽取可检索正文（分词前的原文，供展示片段使用） */
+export function buildConversationPreview(messages: string | any[]): string {
+  return extractMessagePreview(messages, CONVERSATION_PREVIEW_MAX_CHARS)
 }
 
 /** 剔除 FTS5 语法字符，避免用户输入触发 syntax error */

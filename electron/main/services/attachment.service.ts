@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import PathService from './path.service'
 import DatabaseService from './database.service'
+import ConversationMessageStore from './conversation-message-store.service'
 import { createLogger } from './logger'
 
 const logger = createLogger('AttachmentService')
@@ -227,14 +228,10 @@ class AttachmentService {
   /** 查询若干会话消息中引用的附件（必须在会话删除前调用候选收集） */
   collectRefsForConversations(convIds: string[]): string[] {
     try {
-      const db = DatabaseService.getInstance().getDb()
-      const stmt = db.prepare('SELECT messages_json FROM conversations WHERE id = ?')
       const refs = new Set<string>()
+      const store = ConversationMessageStore.getInstance()
       for (const id of convIds) {
-        const row = stmt.get(id) as any
-        if (row?.messages_json) {
-          try { collectAttachmentRefs(JSON.parse(row.messages_json), refs) } catch { /* skip */ }
-        }
+        try { collectAttachmentRefs(store.getAll(id), refs) } catch { /* skip */ }
       }
       return [...refs]
     } catch (err: any) {
@@ -262,13 +259,21 @@ class AttachmentService {
     }
   }
 
-  /** 收集数据库中全部对话引用的附件引用集合 */
+  /** 收集数据库中全部对话引用的附件引用集合（行存储 + 尚未迁移的旧 JSON） */
   private collectAllRefs(): Set<string> {
     const refs = new Set<string>()
     try {
       const db = DatabaseService.getInstance().getDb()
-      const rows = db.prepare('SELECT messages_json FROM conversations WHERE messages_json LIKE \'%wa-attachment://%\'').all() as any[]
-      for (const row of rows) {
+      const messageRows = db.prepare(
+        "SELECT data_json FROM conversation_messages WHERE data_json LIKE '%wa-attachment://%'"
+      ).all() as Array<{ data_json: string }>
+      for (const row of messageRows) {
+        try { collectAttachmentRefs(JSON.parse(row.data_json), refs) } catch { /* skip */ }
+      }
+      const legacyRows = db.prepare(
+        "SELECT messages_json FROM conversations WHERE messages_json LIKE '%wa-attachment://%'"
+      ).all() as Array<{ messages_json: string }>
+      for (const row of legacyRows) {
         try { collectAttachmentRefs(JSON.parse(row.messages_json), refs) } catch { /* skip */ }
       }
     } catch (err: any) {
@@ -367,10 +372,15 @@ class AttachmentService {
    *  【WA-COMPAT:legacy-base64-migration】旧版本兼容，稳定后整体移除（含 LEGACY_MIGRATION_FLAG KV 键） */
   migrateExistingDataUrls(): void {
     const db = DatabaseService.getInstance().getDb()
+    // 行存储中的历史消息
+    const messageRows = db.prepare(
+      "SELECT conversation_id, message_id, data_json FROM conversation_messages WHERE data_json LIKE '%data:image/%'"
+    ).all() as Array<{ conversation_id: string; message_id: string; data_json: string }>
+    // 尚未迁移的旧 JSON
     const rows = db.prepare(
-      'SELECT id, messages_json FROM conversations WHERE messages_json LIKE \'%data:image/%\''
+      "SELECT id, messages_json FROM conversations WHERE messages_json LIKE '%data:image/%'"
     ).all() as Array<{ id: string; messages_json: string }>
-    if (rows.length === 0) {
+    if (rows.length === 0 && messageRows.length === 0) {
       // 无存量数据即可置位完成标记，后续启动不再做 LIKE 扫描
       this.markLegacyMigrationDone()
       return
@@ -379,6 +389,23 @@ class AttachmentService {
     let failed = 0
 
     let migrated = 0
+    const updateMessage = db.prepare(
+      'UPDATE conversation_messages SET data_json = ?, updated_at = unixepoch() WHERE conversation_id = ? AND message_id = ?'
+    )
+    for (const row of messageRows) {
+      try {
+        const message = JSON.parse(row.data_json)
+        const replaced = replaceDataUrlsWithRefs([message])
+        if (replaced.changed) {
+          updateMessage.run(JSON.stringify(replaced.value[0]), row.conversation_id, row.message_id)
+          migrated++
+        }
+      } catch (err: any) {
+        failed++
+        logger.warn(`迁移消息 ${row.message_id} 失败，跳过:`, err?.message || err)
+      }
+    }
+
     const update = db.prepare('UPDATE conversations SET messages_json = ? WHERE id = ?')
     for (const row of rows) {
       try {
@@ -396,7 +423,7 @@ class AttachmentService {
         logger.warn(`迁移对话 ${row.id} 失败，跳过:`, err?.message || err)
       }
     }
-    if (migrated > 0) logger.info(`存量图片迁移完成：${migrated} 条对话的 base64 数据已转为附件引用`)
+    if (migrated > 0) logger.info(`存量图片迁移完成：${migrated} 条记录已转为附件引用`)
     if (failed === 0) this.markLegacyMigrationDone()
   }
 }

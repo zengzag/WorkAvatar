@@ -28,6 +28,15 @@ type StubOpts = {
 function installDb(opts: StubOpts = {}) {
   dbState.calls = []
   const record = (sql: string, args: any[]) => dbState.calls.push({ sql, args })
+  /** 会话消息行存储：把 fixture 里的 messages_json 当作已迁移的行数据返回 */
+  const messageRows = () => {
+    try {
+      const parsed = JSON.parse(opts.row?.messages_json || '[]')
+      return Array.isArray(parsed) ? parsed.map(m => ({ data_json: JSON.stringify(m) })) : []
+    } catch {
+      return []
+    }
+  }
   dbState.db = {
     prepare(sql: string) {
       return {
@@ -37,6 +46,8 @@ function installDb(opts: StubOpts = {}) {
             if (opts.failOn === 'count') throw new Error('db down')
             return { n: opts.count ?? 0 }
           }
+          // 懒迁移标记：fixture 视为已完成迁移，避免走迁移写库
+          if (sql.includes('messages_migrated')) return { messages_migrated: 1 }
           if (opts.failOn === 'detail') throw new Error('db down')
           return opts.row
         },
@@ -46,6 +57,7 @@ function installDb(opts: StubOpts = {}) {
             if (opts.failOn === 'fts') throw new Error('fts broken')
             return opts.ftsRows ?? []
           }
+          if (sql.includes('FROM conversation_messages')) return messageRows()
           if (opts.failOn === 'rows') throw new Error('db down')
           return opts.rows ?? []
         },

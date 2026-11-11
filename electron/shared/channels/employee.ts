@@ -12,6 +12,20 @@ export const EMPLOYEE_CHANNELS = {
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_LIST_ALL: 'conversation:list-all',
   CONVERSATION_GET: 'conversation:get',
+  /** 打开会话视图：元信息 + 最近 N 条消息（切换任务恒定开销） */
+  CONVERSATION_OPEN_VIEW: 'conversation:open-view',
+  /** 向上补载更早的消息 */
+  CONVERSATION_LOAD_OLDER: 'conversation:load-older',
+  /** 读取会话全部消息（发送/编辑/分支/导出等需要完整历史的操作） */
+  CONVERSATION_GET_MESSAGES: 'conversation:get-messages',
+  /** 追加一条新消息（用户消息/助手占位） */
+  CONVERSATION_APPEND_MESSAGE: 'conversation:append-message',
+  /** 更新单条消息（流式收尾/错误收尾） */
+  CONVERSATION_UPSERT_MESSAGE: 'conversation:upsert-message',
+  /** 会话产物文件聚合（任务侧栏） */
+  CONVERSATION_GET_ARTIFACTS: 'conversation:get-artifacts',
+  /** 大任务会话：按需拉取某个委托段的完整子过程（裁剪视图的补充加载） */
+  CONVERSATION_GET_DELEGATION_DETAIL: 'conversation:get-delegation-detail',
   CONVERSATION_CREATE: 'conversation:create',
   CONVERSATION_UPDATE: 'conversation:update',
   CONVERSATION_DELETE: 'conversation:delete',

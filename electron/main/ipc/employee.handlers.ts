@@ -43,6 +43,11 @@ import EmployeeAgentService from '../services/employee-agent.service'
 import AttachmentService from '../services/attachment.service'
 import BackgroundShellService from '../services/background-shell.service'
 import { broadcastToRenderers, safeHandle } from './_shared'
+import {
+  getCompactMessagesJson,
+  compactMessagesForView,
+  findSegmentSubSegments,
+} from '../services/conversation-messages.compact'
 
 /** 删除某员工所有顶层会话及其子会话，并清理授权缓存和插件关联记录（与 CONVERSATION_DELETE 一致） */
 function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerService, employeeId: string): void {
@@ -160,7 +165,62 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_GET, (id: string) => {
-    return workspaceManager.getConversation(id)
+    const conv = workspaceManager.getConversationWithMessages(id)
+    if (!conv) return conv
+    // 大任务会话只回传渲染所需视图：已完成委托的子过程按需拉取，避免十几 MB JSON 阻塞渲染进程
+    return { ...conv, messages_json: getCompactMessagesJson(id, conv.messages_json || '[]') }
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_OPEN_VIEW, (params: { id: string; limit?: number }) => {
+    const conv = workspaceManager.getConversationMeta(params?.id)
+    if (!conv) return null
+    const page = workspaceManager.getConversationMessagesPage(params.id, params.limit ?? 40)
+    compactMessagesForView(page.messages)
+    const { messages_json: _omit, ...meta } = conv as any
+    return { conversation: meta, ...page }
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_LOAD_OLDER, (params: { id: string; before_seq: number; limit?: number }) => {
+    if (!params?.id || params.before_seq === undefined) return { messages: [], total: 0, hasOlder: false, oldestSeq: null }
+    const page = workspaceManager.getConversationMessagesPage(params.id, params.limit ?? 40, params.before_seq)
+    compactMessagesForView(page.messages)
+    return page
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_GET_MESSAGES, (id: string) => {
+    const messages = workspaceManager.getConversationMessages(id)
+    compactMessagesForView(messages)
+    return { messages, total: messages.length }
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_APPEND_MESSAGE, (params: { id: string; message: any; last_message_at?: number }) => {
+    if (!params?.id || !params?.message?.id) return { ok: false }
+    const seq = workspaceManager.appendConversationMessage(params.id, params.message)
+    if (params.last_message_at !== undefined) {
+      workspaceManager.updateConversation(params.id, { last_message_at: params.last_message_at })
+    }
+    return { ok: true, seq }
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_UPSERT_MESSAGE, (params: { id: string; message: any; last_message_at?: number }) => {
+    if (!params?.id || !params?.message?.id) return { ok: false }
+    const seq = workspaceManager.upsertConversationMessage(params.id, params.message)
+    if (params.last_message_at !== undefined) {
+      workspaceManager.updateConversation(params.id, { last_message_at: params.last_message_at })
+    }
+    return { ok: true, seq }
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_GET_ARTIFACTS, (id: string) => {
+    if (!id) return []
+    return workspaceManager.getConversationArtifacts(id)
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_GET_DELEGATION_DETAIL, (params: { conversation_id: string; message_id: string; segment_id: string }) => {
+    if (!params?.conversation_id || !params?.message_id || !params?.segment_id) return { subSegments: [] }
+    const message = workspaceManager.getConversationMessage(params.conversation_id, params.message_id)
+    if (!message) return { subSegments: [] }
+    return { subSegments: findSegmentSubSegments([message], params.message_id, params.segment_id) || [] }
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_CREATE, (params: ConversationCreateParams) => {
@@ -181,6 +241,7 @@ export function registerEmployeeHandlers(
 
   safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }) => {
     const { id, ...data } = params
+    // 消息全量写入由行存储处理：按消息 id 还原裁剪视图外置的子过程后再落库
     const ok = workspaceManager.updateConversation(id, data)
     // 只有影响任务列表展示的字段变更才广播：流式过程中每个 chunk 也会 update（写入 messages_json），
     // 若全部广播会让各窗口持续重拉列表

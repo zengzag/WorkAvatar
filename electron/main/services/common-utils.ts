@@ -86,9 +86,11 @@ export function getDefaultProviderId(db: { getDb(): any }): string | null {
   return row ? row.id : null
 }
 
-export function extractMessagePreview(messagesJson: string, maxChars: number = 4000): string {
+export function extractMessagePreview(messagesInput: string | any[], maxChars: number = 4000): string {
   try {
-    const messages = JSON.parse(messagesJson || '[]')
+    const messages = typeof messagesInput === 'string'
+      ? JSON.parse(messagesInput || '[]')
+      : messagesInput
     if (!Array.isArray(messages)) return ''
     const parts: string[] = []
     for (const m of messages) {

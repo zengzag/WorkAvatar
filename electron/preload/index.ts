@@ -169,6 +169,21 @@ const electronAPI = {
     list: (params: ConversationListParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST, params),
     listAll: (params?: ConversationListWithEmployeeParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST_ALL, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET, id),
+    /** 打开会话：元信息 + 最近 N 条消息（切换任务恒定开销） */
+    openView: (params: { id: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_OPEN_VIEW, params),
+    /** 向上补载更早的消息 */
+    loadOlder: (params: { id: string; before_seq: number; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LOAD_OLDER, params),
+    /** 读取全部消息（发送/编辑/分支/导出等需要完整历史的操作） */
+    getMessages: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET_MESSAGES, id),
+    /** 追加一条消息 */
+    appendMessage: (params: { id: string; message: any; last_message_at?: number }) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_APPEND_MESSAGE, params),
+    /** 更新单条消息 */
+    upsertMessage: (params: { id: string; message: any; last_message_at?: number }) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPSERT_MESSAGE, params),
+    /** 会话产物聚合（任务侧栏） */
+    getArtifacts: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET_ARTIFACTS, id),
+    /** 大任务会话裁剪视图的补充加载：指定消息/委托段的完整子过程 */
+    getDelegationDetail: (params: { conversation_id: string; message_id: string; segment_id: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET_DELEGATION_DETAIL, params),
     create: (params: ConversationCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_CREATE, params),
     update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),

@@ -3,6 +3,7 @@ import EmployeeMemoryService from './employee-memory.service'
 import EmployeeMemoryEmbeddingService from './employee-memory-embedding.service'
 import EmployeeRegistryService from './employee-registry.service'
 import LLMClientService from './llm-client.service'
+import ConversationMessageStore from './conversation-message-store.service'
 import { ScheduledTaskBase } from './scheduled-task-base'
 import { createLogger } from './logger'
 import { EXTRACTION_MAX_ATTEMPTS } from './employee-memory-types'
@@ -49,7 +50,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
     const placeholders = enabledEmployeeIds.map(() => '?').join(',')
 
     const candidates = this.db.getDb().prepare(`
-      SELECT c.id, c.employee_id, c.title, c.messages_json, c.message_count,
+      SELECT c.id, c.employee_id, c.title, c.message_count,
              c.memory_extracted_message_count, c.memory_extract_attempts,
              e.name as employee_name
       FROM conversations c
@@ -83,10 +84,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
   }
 
   private async extractMemoriesForConversation(conv: any): Promise<void> {
-    const messages = (() => {
-      try { return JSON.parse(conv.messages_json || '[]') } catch { return [] }
-    })()
-
+    const messages = ConversationMessageStore.getInstance().getAll(conv.id)
     if (messages.length === 0) {
       this.markExtracted(conv.id, 0)
       return
@@ -152,15 +150,13 @@ class MemoryRefinementService extends ScheduledTaskBase {
    */
   async extractManually(conversationId: string): Promise<{ success: boolean; error?: string }> {
     const conv = this.db.getDb().prepare(
-      'SELECT id, employee_id, title, messages_json, message_count, memory_extracted_message_count FROM conversations WHERE id = ?'
+      'SELECT id, employee_id, title, message_count, memory_extracted_message_count FROM conversations WHERE id = ?'
     ).get(conversationId) as any
     if (!conv) return { success: false, error: 'CONVERSATION_NOT_FOUND' }
 
     if (!this.isEmployeeMemoryEnabled(conv.employee_id)) return { success: false, error: 'MEMORY_NOT_ENABLED' }
 
-    const messages = (() => {
-      try { return JSON.parse(conv.messages_json || '[]') } catch { return [] }
-    })()
+    const messages = ConversationMessageStore.getInstance().getAll(conv.id)
     if (messages.length === 0) return { success: false, error: 'NO_MESSAGES' }
 
     const resolved = await this.resolveEmployeeLLM()

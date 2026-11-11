@@ -14,7 +14,7 @@ export interface DataAccessDeps {
   workspace: {
     getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): unknown[]
     getConversation(id: string): unknown
-    /** 返回某对话的全部消息（解析 messages_json 为数组；无则返回 []） */
+    /** 返回某对话的全部消息（消息行存储读取；无则返回 []） */
     getConversationMessages(conversationId: string): unknown[]
     createConversation(employeeId: string, skillId?: string, title?: string, minimalMode?: boolean, parentConversationId?: string): unknown
     updateConversation(id: string, data: Record<string, unknown>): boolean

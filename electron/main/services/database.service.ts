@@ -34,6 +34,12 @@ class DatabaseService {
     this.db.pragma('foreign_keys = ON')
     // 设置 WAL 自动检查点阈值（每 1000 页自动 checkpoint）
     this.db.pragma('wal_autocheckpoint = 1000')
+    // 读多写少 + WAL：降低 fsync 频率（崩溃安全，仅断电可能丢最后一条事务），
+    // 并放大页缓存/内存映射，减少大会话 JSON 读写的磁盘抖动
+    this.db.pragma('synchronous = NORMAL')
+    this.db.pragma('cache_size = -65536')
+    this.db.pragma('mmap_size = 268435456')
+    this.db.pragma('temp_store = MEMORY')
 
     this.initializeSchema()
     startupMark('数据库 schema 初始化完成')
@@ -98,23 +104,64 @@ class DatabaseService {
       logger.warn('启动清理空对话失败:', err?.message || err)
     }
 
-    // 2. 裁剪 180 天前的大对话（messages_json > 2MB），保留最近 50 条消息
+    // 2. 裁剪 180 天前的大对话，保留最近 50 条消息（行存储 + 尚未迁移的旧 JSON）
     try {
       const cutoff = now - 180 * 86400
       const sizeThreshold = 2 * 1024 * 1024
+      let trimmed = 0
+      const ftsUpdate = this.db.prepare(
+        `UPDATE conversations_fts SET content_preview = ?, content_raw = ? WHERE conversation_id = ?`
+      )
+
+      // 2.1 行存储：按消息体积聚合找出大会话
+      const rowConvos = this.db.prepare(`
+        SELECT c.id AS id, COUNT(m.seq) AS n, SUM(LENGTH(m.data_json)) AS bytes
+        FROM conversations c
+        JOIN conversation_messages m ON m.conversation_id = c.id
+        WHERE c.updated_at < ?
+        GROUP BY c.id
+        HAVING bytes > ? AND n > 50
+      `).all(cutoff, sizeThreshold) as Array<{ id: string; n: number; bytes: number }>
+      const trimTx = this.db.transaction(() => {
+        const cutoffStmt = this.db.prepare(
+          'SELECT seq FROM conversation_messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT 1 OFFSET 49'
+        )
+        const deleteStmt = this.db.prepare(
+          'DELETE FROM conversation_messages WHERE conversation_id = ? AND seq < ?'
+        )
+        const collectStmt = this.db.prepare(
+          'SELECT data_json FROM conversation_messages WHERE conversation_id = ? ORDER BY seq ASC'
+        )
+        const countStmt = this.db.prepare(
+          'SELECT COUNT(*) AS n FROM conversation_messages WHERE conversation_id = ?'
+        )
+        const updateCount = this.db.prepare('UPDATE conversations SET message_count = ? WHERE id = ?')
+        for (const c of rowConvos) {
+          const cut = cutoffStmt.get(c.id) as { seq: number } | undefined
+          if (!cut) continue
+          deleteStmt.run(c.id, cut.seq)
+          const remaining = collectStmt.all(c.id) as Array<{ data_json: string }>
+          const messages = remaining.flatMap(row => {
+            try { return [JSON.parse(row.data_json)] } catch { return [] }
+          })
+          const count = Number((countStmt.get(c.id) as { n?: number } | undefined)?.n || messages.length)
+          updateCount.run(count, c.id)
+          const rawPreview = buildConversationPreview(messages)
+          ftsUpdate.run(segmentConversationText(rawPreview), rawPreview, c.id)
+          trimmed++
+        }
+      })
+      trimTx()
+
+      // 2.2 旧 JSON：尚未迁移的会话保持原有裁剪逻辑
       const oldConvos = this.db.prepare(
         `SELECT id, messages_json FROM conversations
          WHERE updated_at < ? AND length(messages_json) > ?`
       ).all(cutoff, sizeThreshold) as any[]
-
-      let trimmed = 0
       const updateStmt = this.db.prepare(
         'UPDATE conversations SET messages_json = ?, message_count = ? WHERE id = ?'
       )
-      const trimTx = this.db.transaction(() => {
-        const ftsUpdate = this.db.prepare(
-          `UPDATE conversations_fts SET content_preview = ?, content_raw = ? WHERE conversation_id = ?`
-        )
+      const legacyTx = this.db.transaction(() => {
         for (const c of oldConvos) {
           try {
             const messages = JSON.parse(c.messages_json)
@@ -122,15 +169,15 @@ class DatabaseService {
               const trimmedMessages = messages.slice(-50)
               const trimmedJson = JSON.stringify(trimmedMessages)
               updateStmt.run(trimmedJson, trimmedMessages.length, c.id)
-              // 同步 FTS 索引，避免搜索结果展示与实际内容永久不一致（索引列存分词结果）
-              const rawPreview = buildConversationPreview(trimmedJson)
+              const rawPreview = buildConversationPreview(trimmedMessages)
               ftsUpdate.run(segmentConversationText(rawPreview), rawPreview, c.id)
               trimmed++
             }
           } catch { /* skip invalid JSON */ }
         }
       })
-      trimTx()
+      legacyTx()
+
       if (trimmed > 0) {
         logger.info(`启动清理：裁剪 ${trimmed} 条 180 天前大对话（保留最近 50 条消息）`)
       }
@@ -219,9 +266,24 @@ class DatabaseService {
         -- 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤
         parent_conversation_id TEXT DEFAULT '',
         last_message_at INTEGER,
+        -- 消息已迁移到 conversation_messages 行表（1=已迁移，messages_json 仅作旧数据源）
+        messages_migrated INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
+
+      -- 会话消息按行存储：切换只读最近 N 条，写入只改变化的单条消息
+      CREATE TABLE IF NOT EXISTS conversation_messages (
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        data_json TEXT NOT NULL,
+        -- 该消息声明的产物文件（generatedFiles），任务侧栏聚合时避免解析整条消息
+        artifacts_json TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (conversation_id, message_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversation_messages_seq ON conversation_messages(conversation_id, seq);
 
       CREATE TABLE IF NOT EXISTS feedbacks (
         id TEXT PRIMARY KEY,
@@ -473,6 +535,7 @@ class DatabaseService {
       ['workspace_path', "TEXT DEFAULT ''"],
       ['workspace_mode', "TEXT DEFAULT 'default'"],
       ['parent_conversation_id', "TEXT DEFAULT ''"],
+      ['messages_migrated', 'INTEGER NOT NULL DEFAULT 0'],
     ] as const) {
       if (conversationColumns.length > 0 && !conversationColumns.some(c => c.name === name)) {
         this.db.exec(`ALTER TABLE conversations ADD COLUMN ${name} ${ddl}`)

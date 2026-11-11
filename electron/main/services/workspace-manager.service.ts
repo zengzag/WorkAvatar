@@ -18,6 +18,8 @@ import {
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { sanitizeAvatarImage } from '../../shared/avatar'
+import { invalidateCompactViewCache } from './conversation-messages.compact'
+import ConversationMessageStore from './conversation-message-store.service'
 
 const logger = createLogger('WorkspaceManager')
 
@@ -384,6 +386,18 @@ class WorkspaceManagerService {
     return this.db.getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation || null
   }
 
+  /** 会话元信息（不含 messages_json）：任务切换只取元信息 + 最近一页消息，避免读取未迁移的旧大字段 */
+  getConversationMeta(id: string): Conversation | null {
+    return this.db.getDb().prepare(`
+      SELECT id, employee_id, skill_id, title, summary, message_count, status, minimal_mode, system_prompt,
+             memory_extracted_at, memory_extracted_message_count, memory_extract_attempts,
+             context_stats_json, default_model_json, collection_ids_json,
+             workspace_path, workspace_mode, parent_conversation_id, last_message_at,
+             messages_migrated, created_at, updated_at
+      FROM conversations WHERE id = ?
+    `).get(id) as Conversation || null
+  }
+
   createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string, reuseWorkspacePath?: string, customWorkspacePath?: string): Conversation {
     // 注册员工（内置/插件）提前同步影子记录到 employees 表，保证 conversations 外键引用有效（id 稳定不变）
     if (EmployeeRegistryService.getInstance().isRegistered(employeeId)) {
@@ -440,7 +454,7 @@ class WorkspaceManagerService {
 
     // 子会话（有 parentConversationId）不写入 FTS 索引，避免污染检索结果
     if (!parentConversationId) {
-      this.syncConversationFTS(conversationId, employeeId, title, '', '[]')
+      this.syncConversationFTS(conversationId, employeeId, title, '', [])
     }
     this.touchEmployeeLastActive(employeeId, now)
 
@@ -525,10 +539,10 @@ class WorkspaceManagerService {
     return this.isWithinEmployeesRoot(p) || this.isWithinCustomWorkspaceRoot(p)
   }
 
-  private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messagesJson: string): void {
+  private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messages: any[]): void {
     this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
     // 索引列存 jieba 分词结果（unicode61 无法切分中文），content_raw 保留原文供结果片段展示
-    const rawPreview = buildConversationPreview(messagesJson)
+    const rawPreview = buildConversationPreview(messages)
     this.db.getDb().prepare(
       'INSERT INTO conversations_fts (title, summary, content_preview, content_raw, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(
@@ -541,12 +555,106 @@ class WorkspaceManagerService {
     )
   }
 
+  /** 延迟 FTS 重建的任务（消息频繁变化时避免每次写入都跑 jieba 分词） */
+  private ftsTimers = new Map<string, NodeJS.Timeout>()
+
+  private runConversationFts(id: string, titleOverride?: string): void {
+    try {
+      const row = this.db.getDb().prepare(
+        'SELECT employee_id, title, summary FROM conversations WHERE id = ?'
+      ).get(id) as { employee_id?: string; title?: string; summary?: string } | undefined
+      if (!row?.employee_id) return
+      this.syncConversationFTS(
+        id,
+        row.employee_id,
+        titleOverride !== undefined ? titleOverride : (row.title || ''),
+        row.summary || '',
+        ConversationMessageStore.getInstance().getAll(id),
+      )
+    } catch (err: any) {
+      logger.warn(`会话 ${id} FTS 同步失败:`, err?.message)
+    }
+  }
+
+  private scheduleConversationFts(id: string, immediate: boolean): void {
+    const existing = this.ftsTimers.get(id)
+    if (existing) {
+      clearTimeout(existing)
+      this.ftsTimers.delete(id)
+    }
+    if (immediate) {
+      this.runConversationFts(id)
+      return
+    }
+    const timer = setTimeout(() => {
+      this.ftsTimers.delete(id)
+      this.runConversationFts(id)
+    }, 600)
+    timer.unref?.()
+    this.ftsTimers.set(id, timer)
+  }
+
+  /** 会话完整消息（旧字段兼容：行列组装为 JSON 字符串） */
+  getConversationWithMessages(id: string): Conversation | null {
+    const conv = this.getConversation(id)
+    if (!conv) return null
+    const messages = ConversationMessageStore.getInstance().getAll(id)
+    return { ...conv, messages_json: JSON.stringify(messages), message_count: messages.length }
+  }
+
+  /** 会话消息数组（解析后，行存储来源） */
+  getConversationMessages(id: string): any[] {
+    return ConversationMessageStore.getInstance().getAll(id)
+  }
+
+  getConversationMessagesPage(id: string, limit: number, beforeSeq?: number) {
+    return ConversationMessageStore.getInstance().getPage(id, limit, beforeSeq)
+  }
+
+  appendConversationMessage(id: string, message: any): number {
+    const seq = ConversationMessageStore.getInstance().append(id, message)
+    invalidateCompactViewCache(id)
+    this.scheduleConversationFts(id, false)
+    return seq
+  }
+
+  upsertConversationMessage(id: string, message: any): number {
+    const seq = ConversationMessageStore.getInstance().upsert(id, message)
+    invalidateCompactViewCache(id)
+    this.scheduleConversationFts(id, false)
+    return seq
+  }
+
+  getConversationArtifacts(id: string): any[] {
+    return ConversationMessageStore.getInstance().listArtifacts(id)
+  }
+
+  getConversationMessage(id: string, messageId: string): any | null {
+    return ConversationMessageStore.getInstance().getMessage(id, messageId)
+  }
+
   updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }): boolean {
     const ALLOWED_CONVERSATION_COLUMNS = [
       'title', 'messages_json', 'message_count',
       'status', 'minimal_mode', 'last_message_at', 'employee_id',
       'context_stats_json', 'default_model_json', 'collection_ids_json'
     ]
+
+    let messagesChanged = false
+    // 消息改走行表：全量替换时按消息还原裁剪视图外置的子过程，不再写入整段 JSON
+    if (data.messages_json !== undefined) {
+      let messages: any[] = []
+      try {
+        const parsed = JSON.parse(data.messages_json || '[]')
+        if (Array.isArray(parsed)) messages = parsed
+      } catch {
+        messages = []
+      }
+      ConversationMessageStore.getInstance().replaceAll(id, messages)
+      messagesChanged = true
+      delete (data as any).messages_json
+      delete (data as any).message_count
+    }
 
     const updates: string[] = []
     const values: any[] = []
@@ -563,7 +671,9 @@ class WorkspaceManagerService {
       }
     })
 
-    if (updates.length === 0) return false
+    if (updates.length === 0 && !messagesChanged) return false
+
+    if (messagesChanged) invalidateCompactViewCache(id)
 
     updates.push('updated_at = unixepoch()')
     values.push(id)
@@ -584,25 +694,10 @@ class WorkspaceManagerService {
       }
     }
 
-    // FTS 同步：在 title / messages_json / employee_id 变化时执行
-    // 优化：避免 SELECT * 加载完整 messages_json 大字段，只查必要的小字段
-    if (data.title !== undefined || data.messages_json !== undefined || data.employee_id !== undefined) {
-      const needMessagesJson = data.messages_json === undefined
-      const cols = needMessagesJson
-        ? 'employee_id, title, summary, messages_json'
-        : 'employee_id, title, summary'
-      const row = this.db.getDb().prepare(
-        `SELECT ${cols} FROM conversations WHERE id = ?`
-      ).get(id) as any
-      if (row) {
-        this.syncConversationFTS(
-          id,
-          row.employee_id,
-          data.title !== undefined ? data.title : row.title,
-          row.summary || '',
-          data.messages_json !== undefined ? data.messages_json : (row.messages_json || '[]')
-        )
-      }
+    // FTS 同步：标题/归属变化立即重建；消息变化延迟合并（避免每次流式收尾都跑分词）
+    if (messagesChanged || data.title !== undefined || data.employee_id !== undefined) {
+      const immediate = data.title !== undefined || data.employee_id !== undefined
+      this.scheduleConversationFts(id, immediate)
     }
 
     this.notifyPluginEvent('conversation:updated', { id, data })
@@ -635,6 +730,15 @@ class WorkspaceManagerService {
       }
     })
     delTx()
+    for (const cid of toDelete) {
+      invalidateCompactViewCache(cid)
+      ConversationMessageStore.getInstance().forget(cid)
+      const timer = this.ftsTimers.get(cid)
+      if (timer) {
+        clearTimeout(timer)
+        this.ftsTimers.delete(cid)
+      }
+    }
     const ok = deletedCount > 0
 
     // 清理子会话运行记录并中止在途 run（懒加载避免循环依赖）

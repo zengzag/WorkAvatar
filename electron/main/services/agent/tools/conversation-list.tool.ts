@@ -1,4 +1,5 @@
 import DatabaseService from '../../database.service'
+import ConversationMessageStore from '../../conversation-message-store.service'
 import { parseNaturalTime } from './utils'
 import type { ToolDefinition } from './types'
 
@@ -31,10 +32,9 @@ function formatMsgTime(ms?: number): string {
   return new Date(ms).toLocaleString('zh-CN')
 }
 
-/** 从 messages_json 中抽取干净的对话文本：仅保留 user/assistant 的 answer 内容，剥离 thinking/tool_call */
-function extractConversationEntries(messagesJson: string): ConvEntry[] {
+/** 从消息数组抽取干净的对话文本：仅保留 user/assistant 的 answer 内容，剥离 thinking/tool_call */
+function extractConversationEntries(messages: any[]): ConvEntry[] {
   try {
-    const messages = JSON.parse(messagesJson || '[]')
     if (!Array.isArray(messages)) return []
     const entries: ConvEntry[] = []
     for (const m of messages) {
@@ -356,7 +356,6 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
             c.title,
             c.summary,
             c.message_count,
-            c.messages_json,
             c.last_message_at,
             c.created_at,
             c.employee_id,
@@ -371,7 +370,9 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
           return { success: false, error: `未找到 conversation_id=${conversationId} 的对话` }
         }
 
-        const entries = extractConversationEntries(row.messages_json || '[]')
+        const entries = extractConversationEntries(
+          ConversationMessageStore.getInstance().getAll(conversationId)
+        )
         const totalEntries = entries.length
         const slice = sliceEntries(entries, cursor, maxChars)
 

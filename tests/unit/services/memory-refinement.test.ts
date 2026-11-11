@@ -14,6 +14,17 @@ const mockState = vi.hoisted(() => {
   const updates: Array<{ sql: string; args: any[]; text: string }> = []
   const candidateRows: any[] = []
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
+  /** 行存储桩：会话消息从 fixtures（conversations / candidateRows）的 messages_json 还原 */
+  const messageRows = (id: string) => {
+    const raw = conversations.get(id)?.messages_json
+      ?? candidateRows.find(r => r.id === id)?.messages_json
+    try {
+      const parsed = JSON.parse(raw || '[]')
+      return Array.isArray(parsed) ? parsed.map((m: any) => ({ data_json: JSON.stringify(m) })) : []
+    } catch {
+      return []
+    }
+  }
 
   const db = {
     prepare(sql: string) {
@@ -21,7 +32,16 @@ const mockState = vi.hoisted(() => {
       if (s.startsWith('SELECT c.id, c.employee_id') && s.includes('FROM conversations c')) {
         return { all: (..._args: any[]) => candidateRows }
       }
+      if (s === 'SELECT messages_migrated, messages_json FROM conversations WHERE id = ?') {
+        return { get: () => ({ messages_migrated: 1 }) }
+      }
+      if (s.startsWith('SELECT data_json FROM conversation_messages WHERE conversation_id = ?')) {
+        return { all: (id: string) => messageRows(id) }
+      }
       if (s === 'SELECT id, employee_id, title, messages_json, message_count, memory_extracted_message_count FROM conversations WHERE id = ?') {
+        return { get: (id: string) => conversations.get(id) }
+      }
+      if (s === 'SELECT id, employee_id, title, message_count, memory_extracted_message_count FROM conversations WHERE id = ?') {
         return { get: (id: string) => conversations.get(id) }
       }
       if (s === 'SELECT memory_enabled FROM employees WHERE id = ?') {

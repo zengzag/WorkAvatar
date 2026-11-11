@@ -49,6 +49,37 @@ vi.mock('../../../electron/main/services/database.service', () => ({
 /** 极简 sqlite 打桩：按 SQL 关键字路由到内存 Map */
 const fakeDb = {
   prepare(sql: string) {
+    if (sql === 'SELECT messages_migrated, messages_json FROM conversations WHERE id = ?') {
+      // 会话消息行存储桩：视为已完成迁移，消息直接取自 messages_json fixture
+      return { get: () => ({ messages_migrated: 1 }) }
+    }
+    if (sql.startsWith('SELECT data_json FROM conversation_messages WHERE conversation_id = ?')) {
+      return {
+        all: (id: string) => {
+          const json = mockState.rows.get(id)
+          return json === undefined ? [] : [{ data_json: json }]
+        },
+      }
+    }
+    if (sql.startsWith('SELECT conversation_id, message_id, data_json FROM conversation_messages')) {
+      return {
+        all: () => {
+          const rows: Array<{ conversation_id: string; message_id: string; data_json: string }> = []
+          for (const [id, json] of mockState.rows) {
+            if (json.includes('data:image/')) rows.push({ conversation_id: id, message_id: `${id}:0`, data_json: json })
+          }
+          return rows
+        },
+      }
+    }
+    if (sql.startsWith('UPDATE conversation_messages')) {
+      return {
+        run: (dataJson: string, conversationId: string) => {
+          mockState.rows.set(conversationId, dataJson)
+          return { changes: 1 }
+        },
+      }
+    }
     if (sql.includes('settings WHERE key = ?') && sql.startsWith('SELECT')) {
       return {
         get: (key: string) => {

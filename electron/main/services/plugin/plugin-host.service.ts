@@ -929,11 +929,8 @@ class PluginHostService {
           getAllConversationsWithEmployee: (p) => WorkspaceManagerService.getInstance().getAllConversationsWithEmployee(p),
           getConversation: (id) => WorkspaceManagerService.getInstance().getConversation(id),
           getConversationMessages: (id) => {
-            const conv = WorkspaceManagerService.getInstance().getConversation(id) as { messages_json?: string } | null
-            if (!conv) return []
             try {
-              const arr = JSON.parse(conv.messages_json ?? '[]')
-              return Array.isArray(arr) ? arr : []
+              return WorkspaceManagerService.getInstance().getConversationMessages(id)
             } catch {
               return []
             }
