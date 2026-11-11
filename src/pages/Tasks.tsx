@@ -80,6 +80,9 @@ const Tasks: React.FC = () => {
   // loadedCount 镜像：供 loadGlobalTasks 读取最新已加载条数，且不进入其依赖（避免刷新函数频繁变化）
   const loadedCountRef = useRef(0)
   useEffect(() => { loadedCountRef.current = loadedCount }, [loadedCount])
+  // 页面可见性镜像 + 后台期间积压的任务列表刷新标记
+  const pageVisibleRef = useRef(false)
+  const pendingListRefreshRef = useRef(false)
 
   // 任务模式：'new' = 新任务（居中输入框），'chat' = 对话模式
   const [taskMode, setTaskMode] = useState<'new' | 'chat'>('new')
@@ -145,18 +148,23 @@ const Tasks: React.FC = () => {
         // 全量模式：一次加载所有
         const result = await window.electronAPI.conversation.listAll()
         const arr = Array.isArray(result) ? result : []
-        setGlobalTasks(arr)
-        setLoadedCount(arr.length)
-        setHasMore(false)
+        // 列表刷新属于非紧急更新：放到 transition，避免大量任务项渲染时抢占输入
+        startTransition(() => {
+          setGlobalTasks(arr)
+          setLoadedCount(arr.length)
+          setHasMore(false)
+        })
       } else {
         // 分页模式：保持当前已加载条数，避免刷新（如选中任务）后列表被截断回 PAGE_SIZE
         // 导致容器高度骤减、滚动位置被浏览器钳制而出现"弹跳"；reset 时按首页大小重新加载
         const limit = opts?.reset ? PAGE_SIZE : Math.max(PAGE_SIZE, loadedCountRef.current)
         const result = await window.electronAPI.conversation.listAll({ limit, offset: 0, keyword: keyword || undefined })
         const arr = Array.isArray(result) ? result : []
-        setGlobalTasks(arr)
-        setLoadedCount(arr.length)
-        setHasMore(arr.length === limit)
+        startTransition(() => {
+          setGlobalTasks(arr)
+          setLoadedCount(arr.length)
+          setHasMore(arr.length === limit)
+        })
       }
     } catch {
       setGlobalTasks([])
@@ -307,8 +315,25 @@ const Tasks: React.FC = () => {
     })
   }, [contentQuery])
 
+  // 页面是否处于前台可见（KeepAlive 后台 / 窗口隐藏为 false）：
+  // 后台时暂停消息渲染与列表刷新，避免抢占主线程影响前台导航与鼠标操作
+  const pageVisible = usePageVisible()
   // 使用 useEmployeeChat，传入 skipAutoInit 避免自动选择对话
-  const chatHook = useEmployeeChat({ id: currentEmployeeId, message, skipAutoInit: true })
+  const chatHook = useEmployeeChat({
+    id: currentEmployeeId,
+    message,
+    skipAutoInit: true,
+    renderPaused: !pageVisible,
+  })
+
+  // 页面重新可见：补做后台期间积压的任务列表刷新
+  useEffect(() => {
+    pageVisibleRef.current = pageVisible
+    if (pageVisible && pendingListRefreshRef.current) {
+      pendingListRefreshRef.current = false
+      loadGlobalTasksRef.current()
+    }
+  }, [pageVisible])
 
   const {
     employee,
@@ -316,6 +341,10 @@ const Tasks: React.FC = () => {
     messages,
     isStreaming,
     loadingConversationId,
+    hasOlderMessages,
+    loadingOlderMessages,
+    loadOlderMessages,
+    totalMessageCount,
     getInputDraft,
     setInputDraft,
     getInputModels,
@@ -413,7 +442,6 @@ const Tasks: React.FC = () => {
     ? (panelRootPath || undefined)
     : (statusWorkspacePath || undefined)
   // ---- 任务级交互确认：任务页可见时由对话内联卡承接，不再弹全局模态 ----
-  const pageVisible = usePageVisible()
   const setTaskInlineHost = useInteractionStore((s) => s.setTaskInlineHost)
   const respondInteraction = useInteractionStore((s) => s.respondById)
   const interactionRequests = useInteractionStore(useShallow((s) => s.requests))
@@ -481,8 +509,9 @@ const Tasks: React.FC = () => {
     }
   }, [taskMode, isComparisonMode, chatContainerRef])
 
-  // 侧边栏产物列表：聚合本任务消息中产物工具声明的文件，按最新调用倒序，同路径只保留最新一次
-  const taskArtifacts = useMemo(() => {
+  // 侧边栏产物列表：优先使用主进程按消息聚合的全量产物（分页视图只持有最近一页，
+  // 本地扫描会漏掉更早消息声明的文件），取到之前先用本地结果占位
+  const localArtifacts = useMemo(() => {
     const latest = new Map<string, { file: GeneratedFileInfo; order: number; index: number }>()
     let order = 0
     for (const msg of messages) {
@@ -500,6 +529,28 @@ const Tasks: React.FC = () => {
       .sort((a, b) => b.order - a.order || a.index - b.index)
       .map(item => item.file)
   }, [messages])
+
+  const [serverArtifacts, setServerArtifacts] = useState<GeneratedFileInfo[] | null>(null)
+  useEffect(() => {
+    if (!activeConversationId || taskMode !== 'chat') {
+      setServerArtifacts(null)
+      return
+    }
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      window.electronAPI.conversation.getArtifacts(activeConversationId)
+        .then((list: GeneratedFileInfo[]) => {
+          if (!cancelled) setServerArtifacts(Array.isArray(list) ? list : [])
+        })
+        .catch(() => { if (!cancelled) setServerArtifacts(null) })
+    }, 300)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [activeConversationId, taskMode, messages.length])
+
+  const taskArtifacts = serverArtifacts ?? localArtifacts
 
   // 切换任务时清理预览标签，避免面板展示上一个任务的文件
   useEffect(() => { resetPanel() }, [activeConversationId, taskMode, resetPanel])
@@ -1093,13 +1144,6 @@ const Tasks: React.FC = () => {
     .markdown-content img { max-width: 100%; border-radius: 4px; }
   `, [token])
 
-  // 监听 activeConversationId 变化，刷新全局列表
-  useEffect(() => {
-    if (activeConversationId && taskMode === 'chat') {
-      loadGlobalTasks()
-    }
-  }, [activeConversationId, taskMode, loadGlobalTasks])
-
   // 监听对话标题生成完成，刷新任务列表让新标题立即可见
   useEffect(() => {
     const handler = () => loadGlobalTasks()
@@ -1111,6 +1155,11 @@ const Tasks: React.FC = () => {
   useEffect(() => {
     let timer: number | null = null
     const off = window.electronAPI.conversation.onChanged(() => {
+      // 页面不可见时只标记待刷新，等切回任务页再拉取，避免后台页面占用主线程
+      if (!pageVisibleRef.current) {
+        pendingListRefreshRef.current = true
+        return
+      }
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         timer = null
@@ -1331,6 +1380,10 @@ const Tasks: React.FC = () => {
                   <MessageList
                     messages={messages}
                     loadingConversationId={loadingConversationId}
+                    hasOlderMessages={hasOlderMessages}
+                    loadingOlderMessages={loadingOlderMessages}
+                    onLoadOlderMessages={loadOlderMessages}
+                    totalMessageCount={totalMessageCount}
                     activeConversationId={activeConversationId}
                     chatContainerRef={chatContainerRef as React.RefObject<HTMLDivElement | null>}
                     onCopy={handleCopy}

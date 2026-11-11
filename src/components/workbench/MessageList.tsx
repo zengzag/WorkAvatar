@@ -7,11 +7,12 @@ import { MessageBubble } from './index'
 import type { MessageWithThought } from './types'
 import type { Employee } from '../../types'
 import { formatMessageTime, shouldShowTimeSeparator } from '../../utils/format'
+import { setActiveWorkbenchConversation } from './active-conversation'
 
 const { Text, Paragraph } = Typography
 
-const INITIAL_VISIBLE_COUNT = 30
-const VISIBLE_INCREMENT = 30
+const INITIAL_VISIBLE_COUNT = 8
+const VISIBLE_INCREMENT = 20
 
 interface MessageListProps {
   messages: MessageWithThought[]
@@ -38,6 +39,14 @@ interface MessageListProps {
   hideMessageActions?: boolean
   /** 当前数字员工，用于助手消息展示其真实头像 */
   assistantEmployee?: Employee | null
+  /** 是否还有更早的历史消息（行存储分页） */
+  hasOlderMessages?: boolean
+  /** 正在补载更早消息 */
+  loadingOlderMessages?: boolean
+  /** 补载更早消息 */
+  onLoadOlderMessages?: () => void
+  /** 会话消息总条数（用于"加载更早消息"数量提示） */
+  totalMessageCount?: number
 }
 
 const MessageList: React.FC<MessageListProps> = ({
@@ -62,6 +71,10 @@ const MessageList: React.FC<MessageListProps> = ({
   onCompact,
   hideMessageActions,
   assistantEmployee,
+  hasOlderMessages,
+  loadingOlderMessages,
+  onLoadOlderMessages,
+  totalMessageCount,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -77,6 +90,11 @@ const MessageList: React.FC<MessageListProps> = ({
       prevScrollHeightRef.current = 0
       needScrollOnLoadRef.current = true
     }
+  }, [activeConversationId])
+
+  // 委托卡片按需拉取子过程时依赖当前会话（轻量对话视图同样适用）
+  useEffect(() => {
+    setActiveWorkbenchConversation(activeConversationId)
   }, [activeConversationId])
 
   // 消息加载完成后（loading 结束、messages 有内容）再滚动到底部
@@ -132,9 +150,52 @@ const MessageList: React.FC<MessageListProps> = ({
 
   const handleLoadMoreOlder = useCallback(() => {
     if (!chatContainerRef.current) return
+    // 还有更早的历史：交给分页接口补载；否则扩大本地可视窗口
+    if (hasOlderMessages) {
+      if (!loadingOlderMessages) onLoadOlderMessages?.()
+      return
+    }
     prevScrollHeightRef.current = chatContainerRef.current.scrollHeight
     setVisibleCount(prev => Math.min(prev + VISIBLE_INCREMENT, messages.length))
-  }, [messages.length])
+  }, [messages.length, hasOlderMessages, loadingOlderMessages, onLoadOlderMessages])
+
+  // 更早一页消息被前置插入：保留当前滚动位置并同步扩大可视窗口
+  // prevCount > 0 用来排除首屏加载（0 → N），否则窗口会被一次性撑满整页，失去窗口化收益
+  const prevCountRef = useRef(messages.length)
+  const prevFirstIdRef = useRef(messages[0]?.id)
+  useLayoutEffect(() => {
+    const prevCount = prevCountRef.current
+    const prevFirstId = prevFirstIdRef.current
+    const firstId = messages[0]?.id
+    prevCountRef.current = messages.length
+    prevFirstIdRef.current = firstId
+    if (prevCount > 0 && messages.length > prevCount && firstId !== prevFirstId) {
+      const delta = messages.length - prevCount
+      prevScrollHeightRef.current = chatContainerRef.current?.scrollHeight || 0
+      // 只扩大"原有窗口 + 新增条数"，避免把整页消息全部渲染出来
+      setVisibleCount(prev => Math.min(prev + delta, messages.length))
+    }
+  }, [messages, chatContainerRef])
+
+  // 滚动到接近顶部时自动补载更早的消息，保持"向上翻阅历史"的连续体验
+  useEffect(() => {
+    const container = chatContainerRef.current
+    if (!container) return
+    let scheduled = false
+    const onScroll = () => {
+      if (scheduled) return
+      scheduled = true
+      requestAnimationFrame(() => {
+        scheduled = false
+        const el = chatContainerRef.current
+        if (!el) return
+        const aboveBottom = el.scrollHeight - el.scrollTop > el.clientHeight + 120
+        if (aboveBottom && el.scrollTop < 80) handleLoadMoreOlder()
+      })
+    }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => container.removeEventListener('scroll', onScroll)
+  }, [chatContainerRef, handleLoadMoreOlder])
 
   const isLoading = loadingConversationId && loadingConversationId === activeConversationId
 
@@ -170,15 +231,21 @@ const MessageList: React.FC<MessageListProps> = ({
         </div>
       )}
 
-      {visibleStartIndex > 0 && (
+      {(visibleStartIndex > 0 || hasOlderMessages) && (
         <div style={{ textAlign: 'center', padding: '4px 0 8px' }}>
           <Button
             type="link"
             size="small"
+            loading={!!loadingOlderMessages}
             onClick={handleLoadMoreOlder}
             style={{ fontSize: 12.5, color: token.colorTextTertiary }}
           >
-            {t('workbench.loadOlderMessages', { count: visibleStartIndex })}
+            {t('workbench.loadOlderMessages', {
+              count: Math.max(
+                1,
+                visibleStartIndex + Math.max(0, (totalMessageCount ?? messages.length) - messages.length),
+              ),
+            })}
           </Button>
         </div>
       )}
@@ -254,6 +321,9 @@ export default memo(MessageList, (prev, next) => {
     prev.providers === next.providers &&
     prev.contextStats === next.contextStats &&
     prev.isCompacting === next.isCompacting &&
-    prev.assistantEmployee === next.assistantEmployee
+    prev.assistantEmployee === next.assistantEmployee &&
+    prev.hasOlderMessages === next.hasOlderMessages &&
+    prev.loadingOlderMessages === next.loadingOlderMessages &&
+    prev.totalMessageCount === next.totalMessageCount
   )
 })

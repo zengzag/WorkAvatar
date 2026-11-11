@@ -246,6 +246,7 @@ export default {
     delegationUnknown: '未知员工',
     delegationWaiting: '等待子员工响应...',
     delegationNoOutput: '（无输出）',
+    delegationLoadingDetail: '加载子任务过程...',
     delegationSubCost: '子员工消耗',
     delegationEphemeral: '临时角色',
     runQueued: '排队中',

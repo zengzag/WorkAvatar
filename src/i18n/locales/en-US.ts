@@ -246,6 +246,7 @@ export default {
     delegationUnknown: 'Unknown Employee',
     delegationWaiting: 'Waiting for response...',
     delegationNoOutput: '(No output)',
+    delegationLoadingDetail: 'Loading sub-task steps...',
     delegationSubCost: 'Sub-employee cost',
     delegationEphemeral: 'Ephemeral',
     runQueued: 'Queued',

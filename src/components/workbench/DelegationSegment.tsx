@@ -7,11 +7,13 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import { SegmentList } from './message-shared'
 import { formatDuration } from '../../utils/format'
 import SegmentRow from './SegmentRow'
+import { getActiveWorkbenchConversation } from './active-conversation'
+import { getCachedDelegationSubSegments, loadDelegationSubSegments } from './delegation-detail'
 
 const { Text } = Typography
 
@@ -94,7 +96,42 @@ const DelegationSegmentInner: React.FC<{
   const subSegments = seg.subSegments || []
   const instruction = seg.instruction || ''
   const summary = seg.resultSummary || seg.runResult?.summary || ''
-  const hasSubContent = subSegments.length > 0
+
+  // 大任务会话的子过程被外置：展开时才按需拉取，避免切换任务时解析十几 MB JSON
+  const subSegmentsOmitted = !!seg.subSegmentsOmitted && subSegments.length === 0
+  const [lazySubSegments, setLazySubSegments] = useState<MessageSegment[] | null>(null)
+  const [lazyLoading, setLazyLoading] = useState(false)
+  // 外置子段不在消息状态里，展开态由组件本地维护（与消息状态的折叠树互不影响）
+  const [lazyExpanded, setLazyExpanded] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!isExpanded || !subSegmentsOmitted) return
+    const conversationId = getActiveWorkbenchConversation()
+    if (!conversationId) return
+    const cached = getCachedDelegationSubSegments(conversationId, msgId, seg.id)
+    if (cached) {
+      setLazySubSegments(cached)
+      return
+    }
+    let alive = true
+    setLazyLoading(true)
+    loadDelegationSubSegments(conversationId, msgId, seg.id)
+      .then((subs) => { if (alive) setLazySubSegments(subs) })
+      .finally(() => { if (alive) setLazyLoading(false) })
+    return () => { alive = false }
+  }, [isExpanded, subSegmentsOmitted, msgId, seg.id])
+
+  const effectiveSubSegments = subSegmentsOmitted ? (lazySubSegments || []) : subSegments
+  const effectiveHasSubContent = effectiveSubSegments.length > 0
+
+  const handleToggleLazySub = useCallback((subSegId: string) => {
+    setLazyExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(subSegId)) next.delete(subSegId)
+      else next.add(subSegId)
+      return next
+    })
+  }, [])
 
   // 折叠态预览：子员工最新输出（写满一行后整行跳到下一行）
   const lastContentful = [...subSegments].reverse().find(
@@ -147,14 +184,21 @@ const DelegationSegmentInner: React.FC<{
       <div data-testid="delegation-segment" data-status={status} data-target={seg.targetEmployeeName || ''} style={{ marginBottom: 2 }}>
         {header}
         <div className="wa-seg-body">
-          {hasSubContent ? (
+          {effectiveHasSubContent ? (
             <>
               <SegmentList
-                segments={subSegments}
+                segments={subSegmentsOmitted
+                  ? effectiveSubSegments.map(ss => ({
+                      ...ss,
+                      collapsed: lazyExpanded.has(ss.id) ? false : (ss.collapsed ?? true),
+                    }))
+                  : effectiveSubSegments}
                 msgId={`${msgId}_del_${seg.id}`}
                 isError={false}
                 onToggleSegment={(_subMsgId, subSegId) => {
-                  onToggle(msgId, `${seg.id}__sub__${subSegId}`)
+                  // 外置子段不在消息状态里：走本地展开态，避免父级折叠树找不到该段
+                  if (subSegmentsOmitted) handleToggleLazySub(subSegId)
+                  else onToggle(msgId, `${seg.id}__sub__${subSegId}`)
                 }}
                 getToolDisplayName={getToolDisplayName}
                 isStreaming={seg.delegationStatus === 'streaming'}
@@ -203,6 +247,11 @@ const DelegationSegmentInner: React.FC<{
             }}>
               {seg.toolError}
             </div>
+          ) : subSegmentsOmitted && lazyLoading ? (
+            <Text type="secondary" style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <LoadingOutlined spin style={{ fontSize: 11 }} />
+              {t('workbench.delegationLoadingDetail')}
+            </Text>
           ) : (
             <Text type="secondary" style={{ fontSize: 12 }}>
               {isRunning ? t('workbench.delegationWaiting') : t('workbench.delegationNoOutput')}

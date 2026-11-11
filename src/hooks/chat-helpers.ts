@@ -16,6 +16,31 @@ export const MIN_LOADING_DISPLAY_MS = 120
 export const CONVERSATION_PAGE_SIZE = 20
 export const SCROLL_BOTTOM_THRESHOLD_PX = 10
 export const DEFAULT_TEMPERATURE = 0.7
+/** 会话首屏加载的消息条数（更早的历史滚动补载） */
+export const CONVERSATION_MESSAGE_PAGE_SIZE = 40
+
+/**
+ * 完整消息缓存：行存储后 UI 默认只加载最近一页，
+ * 发送/编辑/分支等需要完整历史的操作按需拉取，避免切换任务时加载全量。
+ * 会话被标记 complete 时，UI 消息缓存本身就是全量。
+ */
+export const fullMessagesCache = new LRUCache<string, MessageWithThought[]>(3)
+export const completeConversations = new Set<string>()
+
+export const markConversationComplete = (convId: string): void => {
+  completeConversations.add(convId)
+}
+
+export const isConversationComplete = (convId: string): boolean => completeConversations.has(convId)
+
+export const invalidateFullMessages = (convId: string): void => {
+  fullMessagesCache.delete(convId)
+}
+
+export const rememberFullMessages = (convId: string, messages: MessageWithThought[]): void => {
+  fullMessagesCache.set(convId, messages)
+  completeConversations.add(convId)
+}
 
 /** 段是否命中指定 runId（delegation 段用 runId/delegationId 关联后端运行） */
 function isRunSegment(s: MessageSegment, runId: string): boolean {

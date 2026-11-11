@@ -14,6 +14,7 @@ import {
   markLlmRequestStart,
   peekLlmRequestSegStart,
   clearLlmRequestSegStart,
+  invalidateFullMessages,
 } from './chat-helpers'
 
 export interface StreamListenerDeps {
@@ -958,14 +959,13 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           isAborted: metadata?.aborted === true,
         }
         clearLlmRequestSegStart(assistantMsg.id)
-        window.electronAPI.conversation.update({
+        // 只更新这一条助手消息（行存储增量写入），避免整段会话重新序列化
+        window.electronAPI.conversation.upsertMessage({
           id: streamState.conversationId,
-          messages_json: JSON.stringify(prev.map((m) =>
-            m.id === streamState.assistantMessageId ? savedAssistantMsg : m
-          )),
-          message_count: prev.length,
+          message: savedAssistantMsg,
           last_message_at: doneLastMsgTime,
         }).catch(() => {})
+        invalidateFullMessages(streamState.conversationId)
         return prev.map((m) =>
           m.id === streamState.assistantMessageId ? savedAssistantMsg : m
         )
@@ -1060,13 +1060,16 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           }
         })
 
-        // 持久化错误态消息（中断提醒在重载后仍可见）
-        window.electronAPI.conversation.update({
-          id: streamState.conversationId,
-          messages_json: JSON.stringify(errorMsgs),
-          message_count: errorMsgs.length,
-          last_message_at: Math.floor(Date.now() / 1000),
-        }).catch(() => {})
+        // 持久化错误态消息（中断提醒在重载后仍可见）：只更新这一条
+        const failedMsg = errorMsgs.find(m => m.id === streamState.assistantMessageId)
+        if (failedMsg) {
+          window.electronAPI.conversation.upsertMessage({
+            id: streamState.conversationId,
+            message: failedMsg,
+            last_message_at: Math.floor(Date.now() / 1000),
+          }).catch(() => {})
+          invalidateFullMessages(streamState.conversationId)
+        }
 
         return errorMsgs
       })

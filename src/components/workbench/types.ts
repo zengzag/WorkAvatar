@@ -63,6 +63,10 @@ export interface MessageSegment {
   delegationStatus?: 'queued' | 'streaming' | 'completed' | 'failed' | 'timed_out' | 'cancelled'
   /** 子员工完整执行流（递归渲染） */
   subSegments?: MessageSegment[]
+  /** 大任务会话的裁剪视图：子过程已外置，展开时按需拉取 */
+  subSegmentsOmitted?: boolean
+  /** 外置的子过程条数（折叠态/加载中提示用） */
+  subSegmentCount?: number
   /** 子员工 token 消耗 */
   delegationTokenUsage?: TokenUsage
   /** 折叠态展示的结果摘要 */
