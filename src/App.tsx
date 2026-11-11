@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react'
+import { useMemo, useCallback, useEffect, useState, useRef, useLayoutEffect, startTransition } from 'react'
 import { Layout, Menu, Dropdown, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import { PluginViewSlot } from './plugins/view-slot'
@@ -174,7 +174,11 @@ const App: React.FC = () => {
       return
     }
     // 内置页直接 /<key>，插件页挂 /plugin/<key> 命名空间
-    navigate(key.includes('/') ? key : `/${key}`)
+    // 导航作为低优先级更新：新页面挂载/首屏较重时，旧页面保持可交互（点击、悬停不冻结），
+    // 视觉切换晚一点完成也比整段主线程被占满更符合体感预期
+    startTransition(() => {
+      navigate(key.includes('/') ? key : `/${key}`)
+    })
   }, [navigate, detachedTabs])
 
   // 折叠图标栏单个菜单项的高度（留余量，宁少勿溢）
@@ -210,7 +214,7 @@ const App: React.FC = () => {
       'settings': {
         icon: <span data-nav-key="settings"><SettingOutlined /></span>,
         label: t('nav.settings'),
-        onClick: () => navigate('/settings'),
+        onClick: () => startTransition(() => navigate('/settings')),
       },
     }
   }, [t, navigate, handleNavClick, detachedTabs])

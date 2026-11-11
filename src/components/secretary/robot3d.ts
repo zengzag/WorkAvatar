@@ -763,9 +763,11 @@ export async function createRobotStage(
   const tick = (now: number) => {
     if (disposed) return
     raf = requestAnimationFrame(tick)
-    // 静止待机 30fps、动作与任务态 60fps、睡眠 15fps：常驻小挂件没必要跑满刷新率
-    const interval = state.status === 'idle' && !state.play ? (state.sleep ? 66 : 30) : 15
+    // 常驻挂件不需要跑满刷新率：待机 20fps、睡眠 10fps、动作/任务态 60fps。
+    // 降低待机帧率可显著减少后台 GPU/DWM 合成开销（系统级输入卡顿的主要来源之一）。
+    const interval = state.status === 'idle' && !state.play ? (state.sleep ? 100 : 50) : 15
     if (now - lastDraw < interval) return
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
     draw(now)
   }
 
