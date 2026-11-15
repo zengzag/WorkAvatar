@@ -308,6 +308,9 @@ const electronAPI = {
     // 防休眠：查询/设置"窗口未全部关闭时禁止系统熄屏/休眠"
     getPreventSleep: () => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_GET),
     setPreventSleep: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_SET, enabled),
+    // 防休眠：查询/设置"小秘书浮窗显示时禁止系统熄屏/休眠"
+    getSecretaryPreventSleep: () => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_SECRETARY_GET),
+    setSecretaryPreventSleep: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_SECRETARY_SET, enabled),
     // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件
     log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) =>
       ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),

@@ -18,6 +18,9 @@ export const APP_CHANNELS = {
   // 防休眠：仍有可见窗口时禁止系统自动熄屏/休眠（查询/设置开关）
   POWER_SAVE_GET: 'power-save:get',
   POWER_SAVE_SET: 'power-save:set',
+  // 防休眠：小秘书浮窗显示时禁止系统自动熄屏/休眠
+  POWER_SAVE_SECRETARY_GET: 'power-save:secretary-get',
+  POWER_SAVE_SECRETARY_SET: 'power-save:secretary-set',
   // 插件变更生效：增量扫描磁盘并加载/卸载受影响插件（不重启应用）
   APP_RESTART: 'app:restart',
   // 渲染进程日志转发（fire-and-forget）：渲染进程 console 输出转发到主进程写入日志文件

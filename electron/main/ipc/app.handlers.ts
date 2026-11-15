@@ -305,6 +305,16 @@ export function registerAppHandlers(
     return { success: true }
   })
 
+  // 小秘书常亮开关：小秘书浮窗显示时禁止系统熄屏/休眠
+  safeHandle(IPC_CHANNELS.POWER_SAVE_SECRETARY_GET, () => {
+    return PowerSaveService.getInstance().getSecretaryEnabled()
+  })
+
+  safeHandle(IPC_CHANNELS.POWER_SAVE_SECRETARY_SET, (enabled: boolean) => {
+    PowerSaveService.getInstance().setSecretaryEnabled(!!enabled)
+    return { success: true }
+  })
+
   safeHandle(IPC_CHANNELS.PATH_GET_DATA_DIR, () => {
     return PathService.getInstance().getDataDir()
   })

@@ -53,7 +53,7 @@ vi.mock('../../../electron/main/services/database.service', () => ({
   default: { getInstance: () => ({ getDb: () => mockState.db }) },
 }))
 
-import PowerSaveService, { PREVENT_SLEEP_SETTING_KEY, markPowerSaveIgnored } from '../../../electron/main/services/power-save.service'
+import PowerSaveService, { PREVENT_SLEEP_SETTING_KEY, PREVENT_SLEEP_SECRETARY_SETTING_KEY, markPowerSaveIgnored } from '../../../electron/main/services/power-save.service'
 
 function makeWindow(init: { visible?: boolean; destroyed?: boolean } = {}) {
   const s = { visible: true, destroyed: false, ...init }
@@ -77,6 +77,7 @@ function reset() {
   const service = PowerSaveService.getInstance()
   service.shutdown()
   service.setEnabled(true)
+  service.setSecretaryEnabled(false)
   service.shutdown()
   // 单例跨用例复用：清掉 init 幂等标记，让每个用例都能重新 init
   ;(service as any).initialized = false
@@ -246,5 +247,84 @@ describe('power-save / blocker 生命周期', () => {
     service.init()
     service.init()
     expect(mockState.appListeners.get('browser-window-created')!.length).toBe(1)
+  })
+})
+
+describe('power-save / 小秘书常亮开关', () => {
+  it('默认关闭', () => {
+    const service = PowerSaveService.getInstance()
+    expect(service.getSecretaryEnabled()).toBe(false)
+  })
+
+  it('setSecretaryEnabled 写入 settings 且重复设置同值不写库', () => {
+    const service = PowerSaveService.getInstance()
+    service.setSecretaryEnabled(true)
+    expect(mockState.settings.get(PREVENT_SLEEP_SECRETARY_SETTING_KEY)).toBe('1')
+    expect(service.getSecretaryEnabled()).toBe(true)
+    mockState.settings.clear()
+    service.setSecretaryEnabled(true)
+    expect(mockState.settings.size).toBe(0)
+
+    service.setSecretaryEnabled(false)
+    expect(mockState.settings.get(PREVENT_SLEEP_SECRETARY_SETTING_KEY)).toBe('0')
+  })
+
+  it('持久化为 1 时 init 后开启', () => {
+    mockState.settings.set(PREVENT_SLEEP_SECRETARY_SETTING_KEY, '1')
+    const service = PowerSaveService.getInstance()
+    service.init()
+    expect(service.getSecretaryEnabled()).toBe(true)
+  })
+
+  it('开启后小秘书浮窗可见即启动 blocker（主开关关闭也生效）', () => {
+    mockState.settings.set(PREVENT_SLEEP_SETTING_KEY, '0')
+    mockState.settings.set(PREVENT_SLEEP_SECRETARY_SETTING_KEY, '1')
+    const pet = makeWindow({ visible: true })
+    markPowerSaveIgnored(pet as any)
+    mockState.windows.push(pet)
+    const service = PowerSaveService.getInstance()
+    service.init()
+    expect(mockState.blocker.active.size).toBe(1)
+  })
+
+  it('开启但小秘书浮窗隐藏时不启动 blocker', () => {
+    mockState.settings.set(PREVENT_SLEEP_SETTING_KEY, '0')
+    mockState.settings.set(PREVENT_SLEEP_SECRETARY_SETTING_KEY, '1')
+    const pet = makeWindow({ visible: false })
+    markPowerSaveIgnored(pet as any)
+    mockState.windows.push(pet)
+    const service = PowerSaveService.getInstance()
+    service.init()
+    expect(mockState.blocker.start).not.toHaveBeenCalled()
+  })
+
+  it('小秘书浮窗隐藏后释放 blocker', () => {
+    mockState.settings.set(PREVENT_SLEEP_SETTING_KEY, '0')
+    const pet = makeWindow({ visible: true })
+    markPowerSaveIgnored(pet as any)
+    mockState.windows.push(pet)
+    const service = PowerSaveService.getInstance()
+    service.init()
+    emitApp('browser-window-created', {}, pet)
+    service.setSecretaryEnabled(true)
+    expect(mockState.blocker.active.size).toBe(1)
+
+    pet.s.visible = false
+    pet.emit('hide')
+    expect(mockState.blocker.active.size).toBe(0)
+  })
+
+  it('关闭小秘书常亮后立即释放 blocker', () => {
+    mockState.settings.set(PREVENT_SLEEP_SETTING_KEY, '0')
+    const pet = makeWindow({ visible: true })
+    markPowerSaveIgnored(pet as any)
+    mockState.windows.push(pet)
+    const service = PowerSaveService.getInstance()
+    service.init()
+    service.setSecretaryEnabled(true)
+    expect(mockState.blocker.active.size).toBe(1)
+
+    service.setSecretaryEnabled(false)
+    expect(mockState.blocker.active.size).toBe(0)
   })
 })

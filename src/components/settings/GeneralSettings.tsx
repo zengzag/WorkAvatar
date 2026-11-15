@@ -10,12 +10,17 @@ const GeneralSettings: React.FC = () => {
   const { message } = App.useApp()
   const navigate = useNavigate()
   const [preventSleep, setPreventSleep] = useState(true)
+  const [secretaryPreventSleep, setSecretaryPreventSleep] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const loadSettings = useCallback(async () => {
     try {
-      const enabled = await window.electronAPI.app.getPreventSleep()
+      const [enabled, secretaryEnabled] = await Promise.all([
+        window.electronAPI.app.getPreventSleep(),
+        window.electronAPI.app.getSecretaryPreventSleep(),
+      ])
       setPreventSleep(!!enabled)
+      setSecretaryPreventSleep(!!secretaryEnabled)
     } catch {
       // 加载失败保持默认值
     }
@@ -33,6 +38,17 @@ const GeneralSettings: React.FC = () => {
       message.success(t('settings.saved'))
     } catch {
       setPreventSleep(!checked)
+      message.error(t('common.saveFailed'))
+    }
+  }, [message, t])
+
+  const handleSecretaryPreventSleepChange = useCallback(async (checked: boolean) => {
+    setSecretaryPreventSleep(checked)
+    try {
+      await window.electronAPI.app.setSecretaryPreventSleep(checked)
+      message.success(t('settings.saved'))
+    } catch {
+      setSecretaryPreventSleep(!checked)
       message.error(t('common.saveFailed'))
     }
   }, [message, t])
@@ -60,6 +76,16 @@ const GeneralSettings: React.FC = () => {
             </Text>
           </div>
           <Switch checked={preventSleep} loading={loading} onChange={handlePreventSleepChange} data-testid="settings-prevent-sleep" />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ flex: 1, marginRight: 16 }}>
+            <Text strong>{t('settings.secretaryPreventSleep')}</Text>
+            <br />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('settings.secretaryPreventSleepDesc')}
+            </Text>
+          </div>
+          <Switch checked={secretaryPreventSleep} loading={loading} onChange={handleSecretaryPreventSleepChange} data-testid="settings-secretary-prevent-sleep" />
         </div>
       </div>
     </div>
