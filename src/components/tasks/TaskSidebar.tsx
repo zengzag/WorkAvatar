@@ -35,12 +35,11 @@ export type TaskViewMode = 'list' | 'employee' | 'workspace'
 type TaskGroupKey = 'today' | 'yesterday' | 'week' | 'earlier'
 
 /** 任务按最后活跃时间分组：今日 / 昨天 / 本周（周一起算）/ 更早 */
-function getTaskTimeGroup(ts: string | number | null | undefined): TaskGroupKey {
+function getTaskTimeGroup(ts: string | number | null | undefined, now: dayjs.Dayjs): TaskGroupKey {
   if (!ts) return 'earlier'
   // 时间戳统一按秒存储，转换为毫秒后再交给 dayjs
   const d = typeof ts === 'number' ? dayjs(ts < 1e12 ? ts * 1000 : ts) : dayjs(ts)
   if (!d.isValid()) return 'earlier'
-  const now = dayjs()
   if (!d.isBefore(now.startOf('day'))) return 'today'
   if (!d.isBefore(now.subtract(1, 'day').startOf('day'))) return 'yesterday'
   const weekday = (now.day() + 6) % 7
@@ -50,7 +49,7 @@ function getTaskTimeGroup(ts: string | number | null | undefined): TaskGroupKey 
 
 const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 560
-const SIDEBAR_DEFAULT_WIDTH = 260
+const SIDEBAR_DEFAULT_WIDTH = 220
 
 /** 员工分组视图下每组默认展示的任务数，超出部分点击「显示更多」分批展开 */
 const GROUP_PAGE_SIZE = 5
@@ -90,9 +89,8 @@ interface TaskSidebarProps {
   onLoadMore?: () => void
 }
 
-export const formatTaskTime = (timestamp: number | null, t: (key: string, options?: Record<string, any>) => string): string => {
+export const formatTaskTime = (timestamp: number | null, t: (key: string, options?: Record<string, any>) => string, now: dayjs.Dayjs = dayjs()): string => {
   if (!timestamp) return ''
-  const now = dayjs()
   const time = dayjs(timestamp * 1000)
   const diffMin = now.diff(time, 'minute')
   if (diffMin < 1) return t('workbench.justNow')
@@ -236,6 +234,7 @@ const TaskItem = memo(({
   selectionMode,
   selected,
   onToggleSelect,
+  now,
   t,
   token,
 }: {
@@ -253,6 +252,8 @@ const TaskItem = memo(({
   selectionMode?: boolean
   selected?: boolean
   onToggleSelect?: (id: string) => void
+  /** 当前时间（每分钟刷新），用于相对时间展示 */
+  now: dayjs.Dayjs
   t: (key: string, options?: any) => string
   token: any
 }) => {
@@ -452,7 +453,7 @@ const TaskItem = memo(({
                 </>
               )}
               <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                {formatTaskTime(task.last_message_at ?? task.created_at, t)}
+                {formatTaskTime(task.last_message_at ?? task.created_at, t, now)}
               </span>
               {pendingRequests > 0 && (
                 <span style={{
@@ -563,6 +564,14 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // 当前时间刻度：每分钟刷新，保证跨天（以 0 点为界）后时间分组与相对时间自动更新
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  const now = useMemo(() => dayjs(nowTick), [nowTick])
 
   // 侧栏宽度：支持拖拽调整并持久化
   const [width, setWidth] = useState<number>(() => {
@@ -679,7 +688,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const groupedTasks = useMemo(() => {
     const buckets: Record<TaskGroupKey, TaskWithEmployee[]> = { today: [], yesterday: [], week: [], earlier: [] }
     for (const task of tasks) {
-      buckets[getTaskTimeGroup(task.last_message_at ?? task.created_at)].push(task)
+      buckets[getTaskTimeGroup(task.last_message_at ?? task.created_at, now)].push(task)
     }
     return ([
       { key: 'today' as const, label: t('tasks.groupToday') },
@@ -687,7 +696,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       { key: 'week' as const, label: t('tasks.groupWeek') },
       { key: 'earlier' as const, label: t('tasks.groupEarlier') },
     ]).filter((g) => buckets[g.key].length > 0).map((g) => ({ ...g, tasks: buckets[g.key] }))
-  }, [tasks, t])
+  }, [tasks, t, now])
 
   // 按员工分组：分组顺序取任务首次出现的顺序，组内保持原顺序
   const employeeGroups = useMemo(() => {
@@ -757,6 +766,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       onGenerateTitle={onGenerateTitle}
       onRename={onRename}
       onExtractMemory={onExtractMemory}
+      now={now}
       t={t}
       token={token}
     />
