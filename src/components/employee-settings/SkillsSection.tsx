@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -14,6 +14,7 @@ import {
 } from 'antd'
 import {
   BookOutlined,
+  CaretRightOutlined,
   DeleteOutlined,
   FolderOpenOutlined,
   FileZipOutlined,
@@ -72,6 +73,8 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  /** 已安装 Skills 面板默认折叠，避免长列表挤占空间 */
+  const [installedCollapsed, setInstalledCollapsed] = useState(true)
 
   // 已启用技能 id 集合，使用 useMemo 缓存避免每次渲染重新构造
   const enabledSkillIds = useMemo(
@@ -101,7 +104,15 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
       <Card
         title={
-          <Space>
+          <Space
+            data-testid="installed-skills-toggle"
+            style={{ cursor: 'pointer', userSelect: 'none' }}
+            onClick={() => setInstalledCollapsed((prev) => !prev)}
+          >
+            <CaretRightOutlined
+              rotate={installedCollapsed ? 0 : 90}
+              style={{ fontSize: 10, transition: 'transform 0.15s' }}
+            />
             <BookOutlined />
             <span>{t('employeeSettings.installedSkills', { count: installedSkills.length })}</span>
           </Space>
@@ -116,6 +127,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
             </Button>
           </Space>
         }
+        styles={{ body: installedCollapsed ? { display: 'none' } : undefined }}
       >
         {installedSkills.length === 0 ? (
           <Empty description={t('employeeSettings.noInstalledSkills')} />
