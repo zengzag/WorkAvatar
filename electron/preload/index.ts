@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
-import type { SecretaryCharacterId, SecretaryNotifyDismissPayload, SecretaryNotifyPayload } from '../shared/channels/secretary'
+import type { SecretaryCharacterId, SecretaryDockEdge, SecretaryNotifyDismissPayload, SecretaryNotifyPayload } from '../shared/channels/secretary'
 import type {
   WorkspaceOpenInExplorerParams,
   WorkspaceListFilesParams,
@@ -406,6 +406,15 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_SIDE_CHANGED, handler)
     },
+    /** 主进程 → 挂件窗：贴边位置变化（null = 已脱离贴边） */
+    onDockChanged: (callback: (edge: SecretaryDockEdge | null) => void) => {
+      const handler = (_event: any, edge: SecretaryDockEdge | null) => callback(edge ?? null)
+      ipcRenderer.on(IPC_CHANNELS.SECRETARY_DOCK_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SECRETARY_DOCK_CHANGED, handler)
+    },
+    /** 贴边条展开 / 收起：主进程据此调整透明区域命中范围 */
+    setDockExpanded: (expanded: boolean) =>
+      ipcRenderer.send(IPC_CHANNELS.SECRETARY_SET_DOCK_EXPANDED, expanded),
     /** 宿主通知改由小秘书承接时推送到挂件窗/面板窗 */
     onNotify: (callback: (payload: SecretaryNotifyPayload) => void) => {
       const handler = (_event: any, payload: SecretaryNotifyPayload) => callback(payload)

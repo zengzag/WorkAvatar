@@ -160,6 +160,9 @@ const SecretarySettingsPanel: React.FC = () => {
       <Text style={{ display: 'block', marginTop: 8, fontSize: 12, color: token.colorTextTertiary }}>
         {t('secretary.hotkeyHint')}
       </Text>
+      <Text style={{ display: 'block', marginTop: 4, fontSize: 12, color: token.colorTextTertiary }}>
+        {t('secretary.dockSettingHint')}
+      </Text>
       {settings.enabled && settings.hotkey && !state.hotkeyRegistered && (
         <Text style={{ display: 'block', marginTop: 4, fontSize: 12, color: token.colorError }}>
           {t('secretary.hotkeyConflict')}

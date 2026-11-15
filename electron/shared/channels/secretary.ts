@@ -40,6 +40,10 @@ export const SECRETARY_CHANNELS = {
   SECRETARY_NOTIFY_CLICK: 'secretary:notify-click',
   /** 渲染端 → 主进程：窗口已完成挂载，可以接收通知（挂件窗/面板窗各自上报） */
   SECRETARY_WINDOW_READY: 'secretary:window-ready',
+  /** 主进程 → 挂件窗：贴边模式变化（贴到哪条边 / 取消贴边） */
+  SECRETARY_DOCK_CHANGED: 'secretary:dock-changed',
+  /** 渲染端 → 主进程：贴边条已展开 / 收起，主进程据此调整透明区域命中范围 */
+  SECRETARY_SET_DOCK_EXPANDED: 'secretary:set-dock-expanded',
 } as const
 
 /** 撤回提醒的关联键：交互请求 id（通知下发时写入 clickId） */
@@ -93,9 +97,29 @@ export interface SecretaryRuntimeState {
   hotkeyRegistered: boolean
   /** 挂件当前靠屏幕哪一侧：决定窗口内挂件位置与气泡展开方向 */
   side: SecretarySide
+  /** 当前贴边位置；null 表示自由浮动的挂件 */
+  dockEdge: SecretaryDockEdge | null
 }
 
 export type SecretarySide = 'left' | 'right'
+
+/** 可贴边的屏幕边缘：把挂件推进任意一条边都会进入贴边模式 */
+export const SECRETARY_DOCK_EDGES = ['left', 'right', 'top', 'bottom'] as const
+
+export type SecretaryDockEdge = (typeof SECRETARY_DOCK_EDGES)[number]
+
+export function isSecretaryDockEdge(value: unknown): value is SecretaryDockEdge {
+  return typeof value === 'string' && (SECRETARY_DOCK_EDGES as readonly string[]).includes(value)
+}
+
+/** 贴边条收起态尺寸（与主进程命中区、渲染端布局共用） */
+export const SECRETARY_DOCK_STRIP_THICKNESS = 8
+export const SECRETARY_DOCK_STRIP_LENGTH = 56
+/** 贴边条展开后的灵动岛尺寸（单行状态文案） */
+export const SECRETARY_DOCK_ISLAND_WIDTH = 176
+export const SECRETARY_DOCK_ISLAND_HEIGHT = 36
+/** 收起态向屏幕内侧扩出的悬停热区，避免必须精准命中细条 */
+export const SECRETARY_DOCK_HOVER_PADDING = 8
 
 export const DEFAULT_SECRETARY_SETTINGS: SecretarySettings = {
   enabled: false,

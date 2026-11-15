@@ -1934,6 +1934,8 @@ export default {
     resizeHint: '拖拽边缘调整宽高 · 双击恢复默认',
     bubbleUnread: '{{n}} 个结果等你来看',
     bubbleUnreadNotices: '{{n}} 条通知待查看',
+    dockIdle: '小秘书待命中',
+    dockSettingHint: '把挂件推进屏幕边缘会吸附成贴边条；拖动贴边条离开边缘即可还原挂件',
     noticeAck: '知道了',
     noticeView: '查看',
     noProvider: '还没有可用的模型，请先在设置里配置模型服务',

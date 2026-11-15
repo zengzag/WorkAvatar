@@ -4,11 +4,16 @@ import { useTranslation } from 'react-i18next'
 import {
   DEFAULT_SECRETARY_SETTINGS,
   isSecretaryCharacterId,
+  isSecretaryDockEdge,
   type SecretaryCharacterId,
+  type SecretaryDockEdge,
   type SecretarySettings,
 } from '../../../electron/shared/channels/secretary'
+import { isPointInDockHit } from '../../../electron/shared/secretary-dock'
+import { dockPeekForStatus } from './secretary-dock-peek'
 import { CHARACTER_PLAYS, type PlayAction } from './characters'
 import { SecretaryAvatar } from './SecretaryAvatar'
+import SecretaryDock from './SecretaryDock'
 import { subscribeSecretaryBus, postSecretaryMessage, SECRETARY_PENDING_FILES_KEY, type SecretaryBusState } from './secretary-bus'
 import './secretary.css'
 
@@ -23,6 +28,12 @@ const INITIAL_SETTINGS: Partial<SecretarySettings> = (() => {
   }
 })()
 
+/** 建窗时已经贴边的话首帧直接渲染贴边条，避免先闪一下挂件 */
+const INITIAL_DOCK: SecretaryDockEdge | null = (() => {
+  const raw = new URLSearchParams(window.location.search).get('dock')
+  return isSecretaryDockEdge(raw) ? raw : null
+})()
+
 /** 无交互多久后进入睡眠（毫秒）：睡眠时只保留极缓呼吸，不再做小动作吸引注意 */
 const SLEEP_AFTER_MS = 3 * 60 * 1000
 
@@ -33,6 +44,8 @@ const PetWindow: React.FC = () => {
   const [state, setState] = useState<SecretaryBusState>({
     status: 'idle', bubble: '', runningCount: 0, unreadCount: 0, unreadTaskCount: 0, unreadNoticeCount: 0,
   })
+  /** 展示态：完成/失败停留 6s 后回到 idle；不直接改总线 status，避免轮询重发时被误判成新的完成事件 */
+  const [displayStatus, setDisplayStatus] = useState<SecretaryBusState['status']>('idle')
   const [size, setSize] = useState(INITIAL_SETTINGS.size || DEFAULT_SECRETARY_SETTINGS.size)
   const [opacity, setOpacity] = useState(INITIAL_SETTINGS.opacity || DEFAULT_SECRETARY_SETTINGS.opacity)
 
@@ -59,13 +72,38 @@ const PetWindow: React.FC = () => {
   /** 睡眠态：长时间无交互且没有任务时进入，减少一切多余动作 */
   const [sleeping, setSleeping] = useState(false)
   const sleepingRef = useRef(false)
-  const statusRef = useRef(state.status)
-  statusRef.current = state.status
+  const statusRef = useRef(displayStatus)
+  statusRef.current = displayStatus
   const lastActiveRef = useRef(Date.now())
   /** 面板打开时用户正在和小秘书交互，不进入睡眠 */
   const panelOpenRef = useRef(false)
   /** 面板打开时隐藏气泡：膨胀的提示会被面板窗口挡住，状态改为在面板内展示 */
   const [panelOpen, setPanelOpen] = useState(false)
+
+  /** 贴边位置：null 为自由挂件 */
+  const [dockEdge, setDockEdge] = useState<SecretaryDockEdge | null>(INITIAL_DOCK)
+  /** 贴边条悬停 / 拖拽 / 提醒临时展开 */
+  const [dockHovered, setDockHovered] = useState(false)
+  const [dockPressed, setDockPressed] = useState(false)
+  const [dockPeek, setDockPeek] = useState(false)
+  const dockRef = useRef<HTMLDivElement>(null)
+  const dockPeekTimerRef = useRef(0)
+  const dockEdgeRef = useRef(dockEdge)
+  dockEdgeRef.current = dockEdge
+  const prevStatusRef = useRef(state.status)
+  /** 上一次气泡文案：执行中步骤变化时重新弹出灵动岛 */
+  const prevBubbleRef = useRef(state.bubble)
+  /** 步骤更新的弹出节流：避免长任务里气泡持续展开 */
+  const lastStepPeekRef = useRef(0)
+  /** 面板打开时贴边条保持收起：灵动岛会盖住面板，点击贴边条即可收起面板 */
+  const dockExpanded = !!dockEdge && !panelOpen && (dockHovered || dockPressed || dockPeek)
+
+  const peekDock = useCallback((ms: number) => {
+    if (!dockEdgeRef.current) return
+    setDockPeek(true)
+    window.clearTimeout(dockPeekTimerRef.current)
+    dockPeekTimerRef.current = window.setTimeout(() => setDockPeek(false), ms)
+  }, [])
 
   const setSleep = useCallback((value: boolean) => {
     if (sleepingRef.current === value) return
@@ -161,6 +199,7 @@ const PetWindow: React.FC = () => {
       setOpacity(s.settings.opacity)
       panelOpenRef.current = s.panelOpen
       setPanelOpen(s.panelOpen)
+      setDockEdge(s.dockEdge ?? null)
       if (isSecretaryCharacterId(s.settings.character)) setCharacter(s.settings.character)
     }).catch(() => {})
     const offSettings = window.electronAPI.secretary.onSettingsChanged((s) => {
@@ -174,11 +213,14 @@ const PetWindow: React.FC = () => {
       setPanelOpen(open)
       touch()
     })
+    // 主进程决定贴边 / 脱离贴边后同步给渲染端
+    const offDock = window.electronAPI.secretary.onDockChanged((edge) => setDockEdge(edge))
     // 拖动中窗口失焦（如 Alt+Tab）时结束拖动，避免窗口黏在光标上
     const resetDrag = () => {
       if (!dragRef.current) return
       dragRef.current = null
       setPressed(false)
+      setDockPressed(false)
       updateLook(0, 0)
       window.electronAPI.secretary.dragEnd()
     }
@@ -187,6 +229,7 @@ const PetWindow: React.FC = () => {
       alive = false
       offSettings()
       offPanel()
+      offDock()
       window.removeEventListener('blur', resetDrag)
     }
   }, [updateLook, touch])
@@ -197,6 +240,8 @@ const PetWindow: React.FC = () => {
       setNotice({ title: payload.title, body: payload.body, clickId: payload.clickId })
       window.clearTimeout(noticeTimerRef.current)
       noticeTimerRef.current = window.setTimeout(() => setNotice(null), 8000)
+      // 贴边时用「灵动岛」短暂展开承接提醒，收起态也能看到发生了什么
+      peekDock(6000)
       touch()
     })
     // 交互请求已在其他窗口处理：若气泡正展示同一条提醒则立即收起
@@ -215,20 +260,79 @@ const PetWindow: React.FC = () => {
       offDismiss?.()
       window.clearTimeout(noticeTimerRef.current)
     }
-  }, [touch])
+  }, [touch, peekDock])
+
+  // 贴边时任务开始 / 等待确认 / 完成 / 失败：自动展开灵动岛提示，避免收起态错过状态变化
+  useEffect(() => {
+    const prev = prevStatusRef.current
+    prevStatusRef.current = state.status
+    if (!dockEdgeRef.current) return
+    const reason = dockPeekForStatus(prev, state.status)
+    if (reason === 'running') peekDock(5000)
+    else if (reason === 'waiting') peekDock(8000)
+    else if (reason === 'terminal') peekDock(4500)
+  }, [state.status, peekDock])
+
+  // 未读结果增加时也弹一次：覆盖「快速任务」直接从 running 变为新的 done（聚合状态没变）的情况
+  const prevUnreadTaskCountRef = useRef(state.unreadTaskCount)
+  useEffect(() => {
+    const prev = prevUnreadTaskCountRef.current
+    prevUnreadTaskCountRef.current = state.unreadTaskCount
+    if (!dockEdgeRef.current || state.unreadTaskCount <= prev) return
+    peekDock(4500)
+  }, [state.unreadTaskCount, peekDock])
+
+  // 执行中的步骤文案变化也要弹出消息；6s 内的连续变化只展开一次，避免长任务一直挡在桌面上
+  useEffect(() => {
+    const prev = prevBubbleRef.current
+    prevBubbleRef.current = state.bubble
+    if (!dockEdgeRef.current) return
+    if (state.status !== 'running' && state.status !== 'waiting') return
+    if (!state.bubble || state.bubble === prev) return
+    const now = Date.now()
+    if (now - lastStepPeekRef.current < 6000) return
+    lastStepPeekRef.current = now
+    peekDock(5000)
+  }, [state.bubble, state.status, peekDock])
+
+  // 贴边条展开 / 收起通知主进程调整透明区域命中范围
+  useEffect(() => {
+    if (!dockEdge) return
+    window.electronAPI.secretary.setDockExpanded(dockExpanded)
+  }, [dockEdge, dockExpanded])
+
+  // 脱离贴边后复位临时展开状态，避免下次贴边时还没悬停就展开
+  useEffect(() => {
+    if (dockEdge) return
+    setDockHovered(false)
+    setDockPressed(false)
+    setDockPeek(false)
+    window.clearTimeout(dockPeekTimerRef.current)
+  }, [dockEdge])
+
+  // 面板打开时清掉尚未结束的弹出，避免关闭面板后灵动岛突然展开
+  useEffect(() => {
+    if (!panelOpen) return
+    window.clearTimeout(dockPeekTimerRef.current)
+    setDockPeek(false)
+  }, [panelOpen])
+
+  useEffect(() => () => window.clearTimeout(dockPeekTimerRef.current), [])
+
+  // 总线状态变化驱动展示态；完成 / 失败的表情停留 6 秒后回到空闲（只改展示态）
+  useEffect(() => {
+    setDisplayStatus(state.status)
+  }, [state.status])
 
   useEffect(() => {
-    // 完成 / 失败的表情停留 6 秒后回到空闲，期间若有新状态会重置计时
-    if (state.status !== 'done' && state.status !== 'failed') return
-    const timer = setTimeout(() => {
-      setState((prev) => ({ ...prev, status: 'idle', bubble: '' }))
-    }, 6000)
+    if (displayStatus !== 'done' && displayStatus !== 'failed') return
+    const timer = setTimeout(() => setDisplayStatus('idle'), 6000)
     return () => clearTimeout(timer)
-  }, [state.status, state.bubble])
+  }, [displayStatus])
 
   // 空闲且长时间无交互进入睡眠；任务活动或用户交互都会立即唤醒
   useEffect(() => {
-    if (state.status !== 'idle') {
+    if (displayStatus !== 'idle') {
       setSleep(false)
       return
     }
@@ -240,11 +344,11 @@ const PetWindow: React.FC = () => {
       if (Date.now() - lastActiveRef.current >= SLEEP_AFTER_MS) setSleep(true)
     }, 10000)
     return () => window.clearInterval(timer)
-  }, [state.status, setSleep])
+  }, [displayStatus, setSleep])
 
   // 空闲时每隔几秒来一个随机小动作；任务状态一变或进入睡眠就收起
   useEffect(() => {
-    if (state.status !== 'idle' || sleeping) {
+    if (displayStatus !== 'idle' || sleeping) {
       setPlay('')
       return
     }
@@ -262,7 +366,7 @@ const PetWindow: React.FC = () => {
       alive = false
       window.clearTimeout(next)
     }
-  }, [state.status, sleeping, triggerPlay])
+  }, [displayStatus, sleeping, triggerPlay])
 
   useEffect(() => () => window.clearTimeout(playTimerRef.current), [])
 
@@ -276,7 +380,7 @@ const PetWindow: React.FC = () => {
 
   // 空闲时视线随机游移，制造“东张西望”的灵动效果；hover 跟随由 handleMouseMove 覆盖
   useEffect(() => {
-    if (state.status !== 'idle' || sleeping) return
+    if (displayStatus !== 'idle' || sleeping) return
     let alive = true
     let timer = 0
     const glance = () => {
@@ -294,7 +398,7 @@ const PetWindow: React.FC = () => {
       alive = false
       window.clearTimeout(timer)
     }
-  }, [state.status, sleeping])
+  }, [displayStatus, sleeping])
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
@@ -353,15 +457,77 @@ const PetWindow: React.FC = () => {
     updateLook(nx * near, ny * near)
   }
 
-  const statusClass = state.status === 'waiting' ? 'confirm' : state.status === 'failed' ? 'error' : state.status
+  /** 贴边条的悬停判定：向屏幕内侧与两端扩出热区，与主进程命中区一致（展开态也不收回热区） */
+  const isInsideDock = (e: React.MouseEvent): boolean => {
+    if (!dockEdge) return false
+    const rect = dockRef.current?.getBoundingClientRect()
+    if (!rect) return false
+    return isPointInDockHit(
+      dockEdge,
+      { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      e.clientX,
+      e.clientY,
+    )
+  }
+
+  const handleWindowMouseMove = (e: React.MouseEvent) => {
+    if (!dockEdge) {
+      handleMouseMove(e)
+      return
+    }
+    if (dragRef.current) return
+    touch()
+    const inside = isInsideDock(e)
+    setDockHovered(inside)
+    setIgnore(!inside)
+  }
+
+  const handleDockPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    touch()
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch { /* 指针已失效时忽略，不影响后续点击判定 */ }
+    dragRef.current = { startX: e.screenX, startY: e.screenY, moved: false }
+    setDockPressed(true)
+    window.electronAPI.secretary.dragStart()
+  }
+
+  const handleDockPointerMove = (e: React.PointerEvent) => {
+    const drag = dragRef.current
+    if (!drag) return
+    if (!drag.moved && Math.abs(e.screenX - drag.startX) + Math.abs(e.screenY - drag.startY) < 3) return
+    drag.moved = true
+    window.electronAPI.secretary.movePetTo()
+  }
+
+  const handleDockPointerUp = () => {
+    const drag = dragRef.current
+    dragRef.current = null
+    setDockPressed(false)
+    if (!drag) return
+    // 主进程决定回贴还是脱离贴边；结果通过 onDockChanged 回到这里
+    window.electronAPI.secretary.dragEnd()
+    if (!drag.moved) window.electronAPI.secretary.togglePanel()
+  }
+
+  const statusClass = displayStatus === 'waiting' ? 'confirm' : displayStatus === 'failed' ? 'error' : displayStatus
   // 任务态优先展示执行阶段；空闲时优先展示刚收到的通知标题，其次是未读汇总
-  const bubbleText = state.status === 'waiting' || state.status === 'running'
+  const bubbleText = displayStatus === 'waiting' || displayStatus === 'running'
     ? state.bubble
     : notice?.title || (state.unreadTaskCount > 0
         ? t('secretary.bubbleUnread', { n: state.unreadTaskCount })
         : state.unreadNoticeCount > 0
           ? t('secretary.bubbleUnreadNotices', { n: state.unreadNoticeCount })
           : '')
+  /** 贴边条展开后的标题：通知优先展示标题，其次任务步骤与空闲文案 */
+  const dockTitle = notice?.title || bubbleText || (
+    displayStatus === 'running' ? t('secretary.working')
+      : displayStatus === 'waiting' ? t('secretary.waiting')
+        : displayStatus === 'done' ? t('secretary.done')
+          : displayStatus === 'failed' ? t('secretary.failed')
+            : t('secretary.dockIdle')
+  )
 
   // 气泡文案/挂件尺寸变化后重新贴边；首帧同理（布局效果早于绘制，不会闪）
   useLayoutEffect(() => {
@@ -383,9 +549,10 @@ const PetWindow: React.FC = () => {
   return (
     <div
       className="pet-window"
-      onMouseMove={handleMouseMove}
+      onMouseMove={handleWindowMouseMove}
       onMouseLeave={() => {
         setIgnore(true)
+        setDockHovered(false)
         petRef.current?.style.setProperty('--look-x', '0')
         petRef.current?.style.setProperty('--look-y', '0')
         updateLook(0, 0)
@@ -412,6 +579,27 @@ const PetWindow: React.FC = () => {
       }}
       style={{ background: 'transparent' }}
     >
+      {dockEdge ? (
+        <SecretaryDock
+          edge={dockEdge}
+          expanded={dockExpanded}
+          pressed={dockPressed}
+          statusClass={statusClass}
+          title={dockTitle}
+          opacity={opacity}
+          unreadCount={state.unreadCount}
+          rootRef={dockRef}
+          onPointerDown={handleDockPointerDown}
+          onPointerMove={handleDockPointerMove}
+          onPointerUp={handleDockPointerUp}
+          onPointerCancel={handleDockPointerUp}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            touch()
+            window.electronAPI.secretary.showContextMenu()
+          }}
+        />
+      ) : (
       <div
         className={`pet-anchor pc-scope ${pressed ? 'is-pressed' : ''}`}
         data-state={statusClass}
@@ -472,6 +660,7 @@ const PetWindow: React.FC = () => {
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

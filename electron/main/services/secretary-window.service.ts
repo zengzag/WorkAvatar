@@ -9,12 +9,22 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import {
   DEFAULT_SECRETARY_SETTINGS,
   isSecretaryCharacterId,
+  isSecretaryDockEdge,
+  type SecretaryDockEdge,
   type SecretaryNotifyDismissPayload,
   type SecretaryNotifyPayload,
   type SecretaryRuntimeState,
   type SecretarySettings,
   type SecretarySide,
 } from '../../shared/channels/secretary'
+import {
+  dockBodyInWindow,
+  dockDistance,
+  dockHitRectInWindow,
+  dockWindowPosition,
+  nearestDockEdge,
+  panelPositionForDock,
+} from '../../shared/secretary-dock'
 import type { InteractionRequest } from './unified-interaction.service'
 
 const logger = createLogger('Secretary')
@@ -43,6 +53,10 @@ const PET_ANCHOR_GAP = 12
 const EDGE_MARGIN = 12
 /** 挂件边到屏幕边小于该距离才吸附，避免“一拖就贴边” */
 const SNAP_DISTANCE = 48
+/** 把挂件推进屏幕边缘（越过或贴边 4px 内）时进入贴边模式 */
+const DOCK_ENTRY_DISTANCE = 4
+/** 拖动贴边条时离当前边超过该距离即脱离贴边、还原挂件 */
+const DOCK_RELEASE_DISTANCE = 40
 /** 停用后延迟销毁窗口的时间：留给面板窗中止在跑的任务并落状态 */
 const DISABLE_GRACE_MS = 400
 /** 面板窗底色（跟随宿主主题）：透明改不透明后，show 前的底色必须与卡片一致，否则会闪色块 */
@@ -77,6 +91,12 @@ class SecretaryWindowService {
   private dragOrigin: { cursorX: number; cursorY: number; winX: number; winY: number } | null = null
   /** 挂件靠屏幕哪一侧（决定窗口留白与气泡方向） */
   private side: SecretarySide = 'right'
+  /** 贴边位置：null 为自由浮动的挂件 */
+  private dockEdge: SecretaryDockEdge | null = null
+  /** 贴边条是否展开为灵动岛（渲染端上报，决定透明区域命中范围） */
+  private dockExpanded = false
+  /** 本次拖动开始前是否已贴边：拖动结束据此决定回贴还是脱离 */
+  private dragWasDocked: SecretaryDockEdge | null = null
   /** 挂件窗当前是否忽略鼠标（透明区域穿透） */
   private ignoreMouse = true
   private cursorTimer: NodeJS.Timeout | null = null
@@ -120,8 +140,10 @@ class SecretaryWindowService {
   deliverNotification(payload: Omit<SecretaryNotifyPayload, 'createdAt'>): boolean {
     if (!this.settings.enabled) return false
     // 主窗口不在前台且面板未打开时，提醒直接弹一张带「知道了」的通知卡片；
+    // 贴边模式下改由挂件窗的灵动岛短暂弹出，不再自动弹整个面板；
     // ask_user 由交互请求本身弹确认框，不再叠一层通知卡片。
-    const autoPopup = this.isMainWindowInactive()
+    const autoPopup = !this.dockEdge
+      && this.isMainWindowInactive()
       && !this.isPanelOpen()
       && payload.clickTarget !== 'ask_user'
     const data: SecretaryNotifyPayload = { ...payload, createdAt: Date.now(), ...(autoPopup ? { autoPopup } : {}) }
@@ -224,6 +246,8 @@ class SecretaryWindowService {
     this.registerIpc()
     if (this.settings.enabled) {
       this.ensurePetWindow()
+      // 面板窗是挂件状态的唯一数据源：隐藏常驻创建，未打开过面板时挂件也能收到主窗口任务进度
+      this.ensurePanelWindow()
       this.registerHotkey()
     }
   }
@@ -278,6 +302,8 @@ class SecretaryWindowService {
     if (prev.enabled !== this.settings.enabled) {
       if (this.settings.enabled) {
         this.ensurePetWindow()
+        // 与 init 一致：面板窗隐藏常驻，挂件才有任务状态可展示
+        this.ensurePanelWindow()
         this.registerHotkey()
       } else {
         this.unregisterHotkey()
@@ -364,6 +390,85 @@ class SecretaryWindowService {
     }
   }
 
+  /** 贴边条（或展开后的灵动岛）在屏幕上的矩形 */
+  private dockBodyRect(bounds: Electron.Rectangle, expanded = this.dockExpanded): Electron.Rectangle {
+    if (!this.dockEdge) return this.petRect(bounds)
+    const body = dockBodyInWindow(this.dockEdge, bounds.width, bounds.height, expanded)
+    return {
+      x: bounds.x + Math.round(body.x),
+      y: bounds.y + Math.round(body.y),
+      width: body.width,
+      height: body.height,
+    }
+  }
+
+  /** 当前可交互区域：贴边时是贴边条热区，否则是挂件本体 */
+  private currentHitRect(bounds: Electron.Rectangle): Electron.Rectangle {
+    if (!this.dockEdge) return this.petRect(bounds)
+    const hit = dockHitRectInWindow(this.dockEdge, bounds.width, bounds.height, this.dockExpanded)
+    return {
+      x: bounds.x + Math.round(hit.x),
+      y: bounds.y + Math.round(hit.y),
+      width: hit.width,
+      height: hit.height,
+    }
+  }
+
+  /**
+   * 进入 / 更新贴边：窗口贴到屏幕边缘，贴边条落在边缘上。
+   * anchor 是贴边条沿边方向期望的中心（通常是拖动结束时光标处的挂件 / 灵动岛中心）。
+   */
+  private dockTo(edge: SecretaryDockEdge, anchor: { x: number; y: number }): void {
+    const win = this.petWin
+    if (!win || win.isDestroyed()) return
+    const { width, height } = this.petWindowSize()
+    const bounds = win.getBounds()
+    const area = screen.getDisplayMatching(bounds).workArea
+    const pos = dockWindowPosition(edge, area, width, height, anchor)
+    const prevEdge = this.dockEdge
+    this.dockEdge = edge
+    // 同一侧回贴时保留渲染端的展开状态（拖动结束后指针可能仍在灵动岛上）；换边 / 初次贴边则收起
+    if (prevEdge !== edge) this.dockExpanded = false
+    win.setPosition(pos.x, pos.y)
+    this.position = pos
+    this.updateSide(area, pos.x + width / 2)
+    this.notifyDockChanged()
+    this.persistPosition()
+    if (this.isPanelOpen()) this.placePanel()
+    logger.info(`Pet docked to ${edge}`)
+  }
+
+  /** 脱离贴边：挂件出现在灵动岛原来的中心位置 */
+  private undockPet(bounds: Electron.Rectangle): void {
+    const win = this.petWin
+    if (!win || win.isDestroyed()) return
+    const body = this.dockBodyRect(bounds, true)
+    const area = screen.getDisplayMatching(bounds).workArea
+    const size = this.settings.size
+    const left = clamp(
+      body.x + body.width / 2 - size / 2,
+      area.x + EDGE_MARGIN,
+      area.x + area.width - EDGE_MARGIN - size,
+    )
+    const top = clamp(
+      body.y + body.height / 2 - size / 2,
+      area.y + EDGE_MARGIN,
+      area.y + area.height - EDGE_MARGIN - size,
+    )
+    this.dockEdge = null
+    this.dockExpanded = false
+    this.updateSide(area, left + size / 2)
+    this.movePetTo(left, top)
+    this.notifyDockChanged()
+    this.persistPosition()
+    logger.info('Pet undocked')
+  }
+
+  private notifyDockChanged(): void {
+    if (!this.petWin || this.petWin.isDestroyed()) return
+    this.petWin.webContents.send(IPC_CHANNELS.SECRETARY_DOCK_CHANGED, this.dockEdge)
+  }
+
   /** 把挂件本体放到指定屏幕位置（反算窗口位置） */
   private movePetTo(petLeft: number, petTop: number): void {
     if (!this.petWin || this.petWin.isDestroyed()) return
@@ -385,6 +490,7 @@ class SecretaryWindowService {
     const cursor = screen.getCursorScreenPoint()
     const bounds = win.getBounds()
     this.dragOrigin = { cursorX: cursor.x, cursorY: cursor.y, winX: bounds.x, winY: bounds.y }
+    this.dragWasDocked = this.dockEdge
     // 拖动期间保持可交互：此时切回穿透会打断渲染端的 pointer capture，挂件卡在半路
     if (this.ignoreMouse) {
       this.ignoreMouse = false
@@ -421,10 +527,18 @@ class SecretaryWindowService {
   /** 位置落在哪块屏幕的工作区内（显示器被拔掉或挂件跑出屏幕时回退主屏） */
   private resolvePosition(): { x: number; y: number } {
     const fallback = this.defaultPosition()
-    if (!this.position) return fallback
     const { width, height } = this.petWindowSize()
-    const rect = { x: this.position.x, y: this.position.y, width, height }
+    const base = this.position || fallback
+    const rect = { x: base.x, y: base.y, width, height }
     const area = screen.getDisplayMatching(rect).workArea
+    if (this.dockEdge) {
+      // 贴边窗口位置由边缘 + 原窗口中心反算，显示器变化时也能贴回对应边缘
+      return dockWindowPosition(this.dockEdge, area, width, height, {
+        x: rect.x + width / 2,
+        y: rect.y + height / 2,
+      })
+    }
+    if (!this.position) return fallback
     // 用挂件本体判断是否还在屏内：窗口带 140px 透明留白，贴左边缘时窗口 x 会是负数
     const pet = this.petRect(rect)
     const visibleX = Math.min(pet.x + pet.width, area.x + area.width) - Math.max(pet.x, area.x)
@@ -481,7 +595,11 @@ class SecretaryWindowService {
     this.petReady = false
     this.petWin = win
     // 带上设置快照：挂件首帧就渲染用户选中的形象/尺寸/不透明度，避免先闪默认形象再切换
-    this.loadRoute(win, '/secretary/pet', { settings: JSON.stringify(this.getSettings()) })
+    // dock 一并带上：上次贴边的话首帧直接渲染贴边条，不会先闪一下挂件
+    this.loadRoute(win, '/secretary/pet', {
+      settings: JSON.stringify(this.getSettings()),
+      ...(this.dockEdge ? { dock: this.dockEdge } : {}),
+    })
     logger.info('Pet window created')
     return win
   }
@@ -554,11 +672,20 @@ class SecretaryWindowService {
       ? pet.getBounds()
       : { x: this.resolvePosition().x, y: this.resolvePosition().y, ...this.petWindowSize() }
     const area = screen.getDisplayMatching(petBounds).workArea
+    const width = this.panelWidth
+
+    // 贴边模式：面板贴在对应屏幕边缘，沿边对齐贴边条
+    if (this.dockEdge) {
+      const strip = this.dockBodyRect(petBounds, false)
+      const pos = panelPositionForDock(this.dockEdge, strip, area, width, this.panelHeight)
+      panel.setBounds({ x: pos.x, y: pos.y, width, height: this.panelHeight })
+      return
+    }
+
     // 以挂件本体为锚点：窗口比挂件大一圈，用窗口坐标会让面板偏离挂件
     const body = this.petRect(petBounds)
     const preferLeft = body.x + body.width / 2 > area.x + area.width / 2
 
-    const width = this.panelWidth
     let x = preferLeft ? body.x - width - 14 : body.x + body.width + 14
     if (x < area.x + 12 || x + width > area.x + area.width - 12) {
       x = preferLeft ? body.x + body.width + 14 : body.x - width - 14
@@ -577,6 +704,19 @@ class SecretaryWindowService {
     const { width, height } = this.petWindowSize()
     const bounds = this.petWin.getBounds()
     const area = screen.getDisplayMatching(bounds).workArea
+    if (this.dockEdge) {
+      // 贴边时窗口尺寸变化不影响贴边条，只需重新把贴边条钉回边缘（保持其原有的屏幕中心）
+      this.petWin.setBounds({ x: bounds.x, y: bounds.y, width, height })
+      const pos = dockWindowPosition(this.dockEdge, area, width, height, {
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
+      })
+      this.petWin.setPosition(pos.x, pos.y)
+      this.position = pos
+      this.persistPosition()
+      if (this.isPanelOpen()) this.placePanel()
+      return
+    }
     const oldPet = this.petRect(bounds)
     const size = this.settings.size
     // 缩放时保持挂件左上角不动（左右留白与顶部间距都是常量，挂件坐标不受尺寸影响），再夹回工作区
@@ -606,6 +746,7 @@ class SecretaryWindowService {
     this.petReady = false
     this.panelReady = false
     this.panelReadyToShow = false
+    this.dockExpanded = false
     this.pendingNotices = []
     this.pendingInteractions = []
   }
@@ -632,7 +773,7 @@ class SecretaryWindowService {
       if (!win || win.isDestroyed() || !win.isVisible()) return
       // 拖动中不切穿透：ignoreMouseEvents 会让渲染端丢掉 pointer capture
       if (this.dragOrigin) return
-      const body = this.petRect(win.getBounds())
+      const body = this.currentHitRect(win.getBounds())
       const p = screen.getCursorScreenPoint()
       const inside = p.x >= body.x && p.x <= body.x + body.width
         && p.y >= body.y && p.y <= body.y + body.height
@@ -659,6 +800,7 @@ class SecretaryWindowService {
       win.webContents.send(IPC_CHANNELS.SECRETARY_SETTINGS_CHANGED, this.getSettings())
     }
     this.notifySide()
+    this.notifyDockChanged()
   }
 
   /* ================= 快捷键 ================= */
@@ -719,6 +861,9 @@ class SecretaryWindowService {
         if (parsed?.side === 'left' || parsed?.side === 'right') {
           this.side = parsed.side
         }
+        if (isSecretaryDockEdge(parsed?.dock)) {
+          this.dockEdge = parsed.dock
+        }
       }
     } catch (err: any) {
       logger.warn('读取小秘书设置失败，使用默认值:', err?.message || err)
@@ -759,7 +904,7 @@ class SecretaryWindowService {
     try {
       DatabaseService.getInstance().getDb()
         .prepare('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
-        .run(POSITION_KEY, JSON.stringify({ ...this.position, side: this.side }))
+        .run(POSITION_KEY, JSON.stringify({ ...this.position, side: this.side, dock: this.dockEdge }))
     } catch (err: any) {
       logger.warn('保存挂件位置失败:', err?.message || err)
     }
@@ -773,6 +918,7 @@ class SecretaryWindowService {
       settings: this.getSettings(),
       hotkeyRegistered: !this.settings.hotkey || this.registeredHotkey === this.settings.hotkey,
       side: this.side,
+      dockEdge: this.dockEdge,
     }
   }
 
@@ -811,14 +957,40 @@ class SecretaryWindowService {
 
     ipcMain.on(IPC_CHANNELS.SECRETARY_DRAG_END, () => {
       const origin = this.dragOrigin
+      const wasDocked = this.dragWasDocked
       this.dragOrigin = null
+      this.dragWasDocked = null
       // 没有进行中的拖动（如窗口失焦时补发的结束）直接忽略
       if (!origin || !this.petWin || this.petWin.isDestroyed()) return
       const bounds = this.petWin.getBounds()
-      // 只按下没移动：不吸附、不落盘，避免点一下挂件就贴边
+      // 只按下没移动：不吸附、不落盘，避免点一下挂件就贴边 / 点一下贴边条就脱离
       if (bounds.x === origin.winX && bounds.y === origin.winY) return
       const area = screen.getDisplayMatching(bounds).workArea
+
+      // 原本处于贴边模式：拖回边缘附近继续贴边（可换边），拖离足够远则还原挂件
+      if (wasDocked) {
+        const body = this.dockBodyRect(bounds, true)
+        if (dockDistance(body, area, wasDocked) <= DOCK_RELEASE_DISTANCE) {
+          this.dockTo(wasDocked, { x: body.x + body.width / 2, y: body.y + body.height / 2 })
+          return
+        }
+        const other = nearestDockEdge(body, area, DOCK_ENTRY_DISTANCE)
+        if (other && other !== wasDocked) {
+          this.dockTo(other, { x: body.x + body.width / 2, y: body.y + body.height / 2 })
+          return
+        }
+        this.undockPet(bounds)
+        return
+      }
+
       const pet = this.petRect(bounds)
+
+      // 拖进屏幕边缘（越过或贴边几像素）即进入贴边模式；只是靠近则沿用吸附留白
+      const dockEdge = nearestDockEdge(pet, area, DOCK_ENTRY_DISTANCE)
+      if (dockEdge) {
+        this.dockTo(dockEdge, { x: pet.x + pet.width / 2, y: pet.y + pet.height / 2 })
+        return
+      }
 
       // 以「挂件本体」而不是窗口（含 140×110 透明留白）贴边，
       // 并且只在与屏幕边缘的距离小于 SNAP_DISTANCE 时吸附，中间区域保持自由摆放
@@ -844,6 +1016,12 @@ class SecretaryWindowService {
       this.updateSide(area, left + pet.width / 2)
       this.movePetTo(left, top)
       this.persistPosition()
+    })
+
+    // 贴边条展开 / 收起：主进程按展开后的灵动岛范围放行透明区域命中
+    ipcMain.on(IPC_CHANNELS.SECRETARY_SET_DOCK_EXPANDED, (event, expanded: boolean) => {
+      if (event.sender !== this.petWin?.webContents) return
+      this.dockExpanded = !!expanded
     })
 
     ipcMain.on(IPC_CHANNELS.SECRETARY_SET_PANEL_SIZE, (
@@ -903,6 +1081,8 @@ class SecretaryWindowService {
     ipcMain.on(IPC_CHANNELS.SECRETARY_WINDOW_READY, (event, kind: 'pet' | 'panel') => {
       if (kind === 'pet' && event.sender === this.petWin?.webContents) {
         this.petReady = true
+        // 渲染端可能错过建窗后的贴边变化：挂载完成时补一次当前状态
+        this.notifyDockChanged()
         const latest = this.pendingNotices[this.pendingNotices.length - 1]
         if (latest) this.sendTo(this.petWin, latest)
         return

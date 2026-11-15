@@ -1928,6 +1928,8 @@ export default {
     resizeHint: 'Drag edges to resize · double-click to reset',
     bubbleUnread: '{{n}} result(s) waiting',
     bubbleUnreadNotices: '{{n}} new notification(s)',
+    dockIdle: 'Secretary on standby',
+    dockSettingHint: 'Push the pet into a screen edge to dock it; drag the strip away from the edge to restore',
     noticeAck: 'Got it',
     noticeView: 'View',
     noProvider: 'No model available yet. Set up a model provider in Settings first.',
