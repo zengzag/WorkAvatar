@@ -4,7 +4,7 @@
 
 ### AI employees that do the work themselves, on your own machine.
 
-Create a digital employee: give it a role, a model and a tool set. It breaks the task down, calls tools, reads and writes files on your computer, runs commands, and hands you the result. Notes, calendar, voice recognition, automation, workflow templates, image generation and more are available as plugins and can be installed when you need them.
+Create a digital employee: give it a role, a model and a tool set. It breaks the task down, calls tools, reads and writes files on your computer, runs commands, and hands you the result. Notes, calendar, voice recognition, task templates (including automation), image generation and more are available as plugins and can be installed when you need them.
 
 [![Stars](https://img.shields.io/github/stars/zengzag/WorkAvatar?style=flat-square&color=yellow)](https://github.com/zengzag/WorkAvatar/stargazers)
 [![Release](https://img.shields.io/github/v/release/zengzag/WorkAvatar?style=flat-square)](https://github.com/zengzag/WorkAvatar/releases)
@@ -31,7 +31,7 @@ Create a digital employee: give it a role, a model and a tool set. It breaks the
 - **Commands run in an OS sandbox.** Reads are unrestricted; writes are limited to the task workspace and a private temp directory. A write outside those paths is denied by the kernel rather than guessed at by static analysis of the command text.
 - **The knowledge base is searchable right away.** No waiting on embeddings: keyword search works as soon as a folder is added, while vectors, paragraph summaries and knowledge cards are built in the background for the files you actually use.
 - **Employees are long-lived.** Role, tools and memory stay fixed, task artifacts stay in their own workspaces, and an employee can be exported and imported on another machine.
-- **Light and extensible.** Plugins are supported, with around ten optional ones bundled — notes, calendar, voice, automation, workflow templates, image generation and more (see [plugins](#plugins)) — and multi-step flows can be built as template tasks on a canvas.
+- **Light and extensible.** Plugins are supported, with around ten optional ones bundled — notes, calendar, voice, task templates (including automation), image generation and more (see [plugins](#plugins)) — and multi-step flows can be built as template tasks on a canvas.
 
 ---
 
@@ -75,8 +75,7 @@ The app ships with a set of optional plugins, imported, enabled or removed from 
 | **Notes** | Markdown notes stored as plain `.md` files. File tree, editor and outline in three panes, with multiple tabs and full-text search. |
 | **Calendar & To-dos** | Month / week / day views, recurring events, reminders and optional one-way Outlook sync. Employees can create and edit events on request. |
 | **Voice Recognition** | Offline recognition via sherpa-onnx, transcribing while recording and generating meeting minutes afterwards. |
-| **Automation** | Runs an employee task on a daily, working-day, weekly, monthly or yearly schedule, retries on failure and notifies you. |
-| **Task Templates** | Build multi-step workflows on a canvas with review, condition, loop, parallel and human nodes; a failing review sends the work back for another round. |
+| **Task Templates & Automation** | Build multi-step workflows on a canvas with review, condition, loop, parallel and human nodes; a failing review sends the work back for another round. The same plugin also runs employee tasks on a daily, working-day, weekly, monthly or yearly schedule, retrying on failure and notifying you. |
 | **Image Studio** | Slide, research and architecture visuals with purpose presets and prompt optimization, working with Volcengine Seedream, Qwen Image and OpenAI GPT Image. |
 | **Data Model** | Visual table / field / relationship modeling with DBML import and export. |
 | **Word Editor** | Import docx, rich-text editing, AI rewrite in chat and version snapshots, exporting to docx / PDF. |
