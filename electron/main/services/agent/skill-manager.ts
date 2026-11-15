@@ -5,10 +5,151 @@ import SkillRegistryService from '../skill-registry.service'
 interface DiscoveredSkill {
   name: string
   description: string
+  aliases: string[]
+  tags: string[]
   instructions: string
   /** 技能根目录（绝对路径），用于解析 SKILL.md 中的相对路径引用 */
   skillDir: string
   references: Map<string, string>
+}
+
+export interface SkillSearchResult {
+  name: string
+  description: string
+  score: number
+  reason: string
+}
+
+/** 检索参数：精确命中固定 1 分，其余按 BM25 + 查询覆盖率加权（参考 MiMo-Code skill_search） */
+const SEARCH_EXACT_SCORE = 1
+const SEARCH_BM25_K1 = 1.5
+const SEARCH_BM25_B = 0.75
+const SEARCH_BM25_IDF_SMOOTHING = 0.5
+const SEARCH_BM25_WEIGHT = 0.55
+const SEARCH_COVERAGE_WEIGHT = 0.35
+const SEARCH_SCORE_PRECISION = 4
+const SEARCH_MAX_RESULTS = 3
+const SEARCH_STEM_MIN_LENGTH = 3
+/** 首选技能达到该分数且领先次选足够多时，search_skills 直接激活，避免模型多走一轮 */
+const SKILL_AUTO_ACTIVATE_SCORE = 0.85
+const SEARCH_AUTO_ACTIVATE_MARGIN = 0.1
+
+// 查询结构词不参与打分，避免 action/input/output/audience 模板稀释领域词权重
+const SEARCH_STOP_WORDS = new Set([
+  'a', 'action', 'an', 'and', 'audience', 'for', 'from', 'input', 'of', 'output', 'the', 'to', 'with',
+])
+
+export interface SkillSearchCandidate {
+  name: string
+  description: string
+  aliases?: string[]
+  tags?: string[]
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLocaleLowerCase().trim()
+}
+
+/** 查询中明确提到技能名/别名（含中文子串）时视为精确命中 */
+function explicitlyMentions(query: string, value: string): boolean {
+  const normalizedQuery = normalizeSearchText(query)
+  const normalized = normalizeSearchText(value)
+  if (!normalized) return false
+  if (normalizedQuery === normalized) return true
+  if (/\p{Script=Han}/u.test(normalized)) return normalizedQuery.includes(normalized)
+  return new RegExp(
+    `(^|[^\\p{L}\\p{N}])${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`,
+    'u',
+  ).test(normalizedQuery)
+}
+
+/** 分词：英文按词（复数去 s），中文按 bigram，兼顾中英混合查询 */
+function tokenizeSearchText(value: string): string[] {
+  return normalizeSearchText(value)
+    .replace(/([\p{Script=Han}]+)/gu, ' $1 ')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token && !SEARCH_STOP_WORDS.has(token))
+    .flatMap((token) => {
+      if (!/^\p{Script=Han}+$/u.test(token)) {
+        return token.length > SEARCH_STEM_MIN_LENGTH && token.endsWith('s') && !token.endsWith('ss')
+          ? token.slice(0, -1)
+          : token
+      }
+      const chars = [...token]
+      return chars.length === 1 ? chars : chars.slice(0, -1).map((char, index) => char + chars[index + 1])
+    })
+}
+
+/**
+ * 在候选技能中检索：名称/别名精确命中优先，其余按名称、别名、标签与描述的 BM25 相关度排序。
+ * 纯函数，便于单测；调用方负责只传入当前可用（已启用）的技能。
+ */
+export function searchSkillCandidates(
+  query: string,
+  candidates: SkillSearchCandidate[],
+  limit = SEARCH_MAX_RESULTS,
+): SkillSearchResult[] {
+  if (candidates.length === 0 || !query.trim()) return []
+
+  const exact = candidates
+    .filter((candidate) => [candidate.name, ...(candidate.aliases ?? [])].some((value) => explicitlyMentions(query, value)))
+    .map((candidate) => ({
+      name: candidate.name,
+      description: candidate.description,
+      score: SEARCH_EXACT_SCORE,
+      reason: 'The query explicitly mentions this skill name or alias.',
+    }))
+  const exactNames = new Set(exact.map((result) => result.name))
+
+  const queryTokens = [...new Set(tokenizeSearchText(query))]
+  if (queryTokens.length === 0) return exact.slice(0, limit)
+
+  const documents = candidates.map((candidate) => tokenizeSearchText([
+    candidate.name,
+    ...(candidate.aliases ?? []),
+    ...(candidate.tags ?? []),
+    candidate.description,
+  ].join(' ')))
+  const averageLength = documents.reduce((sum, document) => sum + document.length, 0) / documents.length || 1
+  const scores = documents.map((document) => queryTokens.reduce((score, token) => {
+    const frequency = document.filter((word) => word === token).length
+    if (frequency === 0) return score
+    const documentFrequency = documents.filter((words) => words.includes(token)).length
+    const inverseDocumentFrequency = Math.log(
+      1 + (documents.length - documentFrequency + SEARCH_BM25_IDF_SMOOTHING) /
+        (documentFrequency + SEARCH_BM25_IDF_SMOOTHING),
+    )
+    return score + inverseDocumentFrequency * (
+      (frequency * (SEARCH_BM25_K1 + 1)) /
+      (frequency + SEARCH_BM25_K1 * (1 - SEARCH_BM25_B + SEARCH_BM25_B * (document.length / averageLength)))
+    )
+  }, 0))
+
+  const maximum = scores.reduce((max, score) => Math.max(max, score), 0)
+  if (maximum <= 0) return exact.slice(0, limit)
+
+  const bm25 = candidates
+    .map((candidate, index) => {
+      const matchedTerms = queryTokens.filter((token) => documents[index].includes(token))
+      return {
+        candidate,
+        score: scores[index],
+        coverage: matchedTerms.length / queryTokens.length,
+        matchedTerms,
+      }
+    })
+    .filter((item) => item.score > 0 && !exactNames.has(item.candidate.name))
+    .sort((a, b) => b.score - a.score || a.candidate.name.localeCompare(b.candidate.name))
+    .map((item) => ({
+      name: item.candidate.name,
+      description: item.candidate.description,
+      score: Number((
+        (item.score / maximum) * SEARCH_BM25_WEIGHT + item.coverage * SEARCH_COVERAGE_WEIGHT
+      ).toFixed(SEARCH_SCORE_PRECISION)),
+      reason: `Matched terms: ${item.matchedTerms.join(', ')}.`,
+    }))
+
+  return [...exact, ...bm25].slice(0, limit)
 }
 
 export class SkillManager {
@@ -43,6 +184,8 @@ export class SkillManager {
       this.discoveredSkills.set(skill.name, {
         name: skill.name,
         description: skill.description,
+        aliases: skill.manifest.aliases || [],
+        tags: skill.tags || [],
         instructions: skill.skillMdContent,
         skillDir: skill.installPath,
         references,
@@ -70,10 +213,39 @@ export class SkillManager {
     return `<skills>\n${parts.join('\n')}\n</skills>`
   }
 
+  getSkillNames(): string[] {
+    return [...this.discoveredSkills.keys()].sort((a, b) => a.localeCompare(b))
+  }
+
+  /** 按自然语言查询检索已发现技能（名称/别名精确命中优先，其余 BM25 排序） */
+  searchSkills(query: string, limit = SEARCH_MAX_RESULTS): SkillSearchResult[] {
+    return searchSkillCandidates(
+      query,
+      [...this.discoveredSkills.values()].map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        aliases: skill.aliases,
+        tags: skill.tags,
+      })),
+      limit,
+    )
+  }
+
+  /** 自动激活判定：首选分数足够高且明显领先次选，避免检索歧义时错误加载 */
+  shouldAutoActivate(results: SkillSearchResult[]): boolean {
+    if (results.length === 0 || results[0].score < SKILL_AUTO_ACTIVATE_SCORE) return false
+    if (results.length === 1) return true
+    return results[0].score - results[1].score >= SEARCH_AUTO_ACTIVATE_MARGIN
+  }
+
   activateSkill(name: string): string {
     const skill = this.discoveredSkills.get(name)
     if (!skill) {
-      throw new Error(`Skill "${name}" not found`)
+      const suggestions = this.searchSkills(name).map((result) => result.name)
+      const similar = suggestions.length > 0
+        ? ` Similar skills: ${suggestions.join(', ')}.`
+        : ` Available skills: ${this.getSkillNames().join(', ') || '(none)'}.`
+      throw new Error(`Skill "${name}" not found.${similar}`)
     }
 
     this.activeSkills.add(name)

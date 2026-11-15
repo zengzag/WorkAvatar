@@ -9,7 +9,7 @@
  */
 
 /** 系统提示词格式标记：用于识别并丢弃旧版本缓存的 conversations.system_prompt */
-export const PROMPT_FORMAT_MARKER = '<workavatar-prompt format="5"/>'
+export const PROMPT_FORMAT_MARKER = '<workavatar-prompt format="6"/>'
 
 const SHORT_INSTRUCTION_LIMIT = 100
 
@@ -150,7 +150,7 @@ export function buildCapabilitiesPrompt(params: {
     )
   }
   if (params.hasSkills) {
-    lines.push('- Skills: when a task matches one of the listed skills, call activate_skill to load its full instructions and follow them.')
+    lines.push('- Skills: when a task matches one of the listed skills, call activate_skill to load its full instructions and follow them. When no listed skill clearly matches, call search_skills with the task description before improvising.')
   }
   if (lines.length === 1) return undefined
   return lines.join('\n')

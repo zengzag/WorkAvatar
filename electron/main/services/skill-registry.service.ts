@@ -25,6 +25,7 @@ export interface ClaudeSkillManifest {
   compatibility?: string
   metadata?: Record<string, any>
   // 本项目扩展
+  aliases?: string[] // 检索别名（供 search_skills 精确命中，如中文名、旧名）
   tags?: string[]
   tools?: string[] // 旧字段，兼容保留（等同于 allowed-tools）
   allowedTools?: string[] // 空格/逗号分隔的工具白名单
@@ -380,6 +381,7 @@ class SkillRegistryService {
       license: '',
       compatibility: '',
       metadata: {},
+      aliases: [],
       tags: [],
       tools: [],
       allowedTools: [],
@@ -401,6 +403,7 @@ class SkillRegistryService {
       manifest.license = frontMatter.license ? String(frontMatter.license).trim() : ''
       manifest.compatibility = frontMatter.compatibility ? String(frontMatter.compatibility).trim() : ''
       manifest.metadata = (frontMatter.metadata && typeof frontMatter.metadata === 'object') ? frontMatter.metadata : {}
+      manifest.aliases = this.toStringArray(frontMatter.aliases)
       manifest.tags = this.toStringArray(frontMatter.tags)
       manifest.tools = tools
       manifest.allowedTools = allowedTools.length > 0 ? allowedTools : tools

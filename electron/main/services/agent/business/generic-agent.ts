@@ -2,6 +2,7 @@ import { BaseAgent } from '../core/base-agent'
 import type { AgentConfig, AgentRunOptions } from '../core/types'
 import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
+import type { SkillSearchResult } from '../skill-manager'
 import type { ToolDefinition, OpenAIToolDefinition } from '../tools/types'
 import { createListAvailableToolsTool, createInvokeToolTool } from '../tools/meta-tools'
 import { createTodoWriteTool, TodoStore, buildTodoReminderIfDue } from '../tools/todo.tool'
@@ -328,6 +329,55 @@ export class GenericAgent extends BaseAgent {
     }
     tools.push(activateSkill)
 
+    const searchSkills: ToolDefinition = {
+      id: 'search_skills',
+      name: 'search_skills',
+      title: '搜索技能',
+      description: 'Search the available skills by task description using exact name/alias matching plus keyword relevance. When one match is clearly best it is activated automatically and its full instructions are returned; otherwise ranked candidates are returned for you to choose with activate_skill. Use it when no listed skill clearly matches or you are unsure which skill applies.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Task description: the action, input, desired output and audience when those details are known',
+          },
+        },
+        required: ['query'],
+      },
+      handler: (args: any) => {
+        const query = String(args?.query ?? '').trim()
+        if (!query) {
+          return { success: false, error: 'query 不能为空' }
+        }
+        const results = this.skillManager.searchSkills(query)
+        if (results.length === 0) {
+          const names = this.skillManager.getSkillNames()
+          return {
+            success: true,
+            output: names.length === 0
+              ? 'No skills are enabled for this agent.'
+              : `No skill matched "${query}". Enabled skills: ${names.join(', ')}`,
+          }
+        }
+        const summary = this.formatSkillSearchResults(results)
+        if (this.skillManager.shouldAutoActivate(results)) {
+          const top = results[0]
+          const instructions = this.skillManager.activateSkill(top.name)
+          return {
+            success: true,
+            output: `${summary}\n\nActivated skill "${top.name}". Follow its instructions:\n\n${instructions}`,
+          }
+        }
+        return {
+          success: true,
+          output: `${summary}\n\nCall activate_skill with the exact name of the skill to load its instructions.`,
+        }
+      },
+      source: 'skill',
+      permission: 'safe',
+    }
+    tools.push(searchSkills)
+
     const readReference: ToolDefinition = {
       id: 'read_reference',
       name: 'read_reference',
@@ -361,6 +411,22 @@ export class GenericAgent extends BaseAgent {
     tools.push(readReference)
 
     return tools
+  }
+
+  private formatSkillSearchResults(results: SkillSearchResult[]): string {
+    const lines = [`Matched ${results.length} skill${results.length === 1 ? '' : 's'}:`]
+    results.forEach((result, index) => {
+      const description = result.description.length > 300
+        ? `${result.description.slice(0, 300)}…`
+        : result.description
+      lines.push(
+        '',
+        `${index + 1}. ${result.name} (score ${result.score.toFixed(3)})`,
+        `   ${description}`,
+        `   ${result.reason}`,
+      )
+    })
+    return lines.join('\n')
   }
 
   private registerSkillTools(): void {

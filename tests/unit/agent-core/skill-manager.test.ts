@@ -20,6 +20,8 @@ interface SkillRow {
   installPath: string
   is_enabled: boolean
   references: Array<{ name: string; content: string }>
+  tags?: string[]
+  manifest?: { aliases?: string[] }
 }
 
 const skill = (over: Partial<SkillRow> & { name: string }): SkillRow => ({
@@ -28,6 +30,8 @@ const skill = (over: Partial<SkillRow> & { name: string }): SkillRow => ({
   installPath: `/skills/${over.name}`,
   is_enabled: true,
   references: [],
+  tags: [],
+  manifest: {},
   ...over,
 })
 
@@ -162,6 +166,123 @@ describe('agent/skill-manager / activateSkill 与 activeSkills', () => {
     mgr.discoverSkills()
     mgr.activateSkill('a')
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Activated skill: a'))
+  })
+})
+
+describe('agent/skill-manager / searchSkills', () => {
+  const searchSetup = () => {
+    h.installed = [
+      skill({
+        name: 'business-review',
+        description: 'Analyze sales spreadsheets and generate business review presentations for executive management.',
+        tags: ['report'],
+      }),
+      skill({
+        name: 'spreadsheet-analysis',
+        description: 'Analyze sales data and spreadsheets for business metrics.',
+      }),
+      skill({
+        name: 'presentation-design',
+        description: 'Generate polished presentations for executive audiences.',
+      }),
+      skill({
+        name: 'sales-research',
+        description: 'Research sales accounts and customer opportunities.',
+      }),
+    ]
+    const mgr = new SkillManager()
+    mgr.discoverSkills()
+    return mgr
+  }
+
+  it('名称精确命中得分为 1 且排在相关度匹配之前', () => {
+    const mgr = searchSetup()
+    const results = mgr.searchSkills('business-review')
+    expect(results[0]).toMatchObject({ name: 'business-review', score: 1 })
+  })
+
+  it('别名（含中文）精确命中视为强匹配', () => {
+    h.installed = [
+      skill({
+        name: 'data-analytics',
+        description: 'Analyze product and business data.',
+        manifest: { aliases: ['数据分析'] },
+      }),
+      skill({ name: 'product-design', description: 'Design visual interfaces.' }),
+    ]
+    const mgr = new SkillManager()
+    mgr.discoverSkills()
+    expect(mgr.searchSkills('请使用数据分析技能检查销售指标')[0]).toMatchObject({
+      name: 'data-analytics',
+      score: 1,
+    })
+  })
+
+  it('按 BM25 排序描述相关度，最多返回 3 个结果', () => {
+    const mgr = searchSetup()
+    const results = mgr.searchSkills(
+      'analyze sales spreadsheet generate business review presentation executives',
+    )
+    expect(results.map((result) => result.name)).toEqual([
+      'business-review',
+      'spreadsheet-analysis',
+      'presentation-design',
+    ])
+    expect(results[0].score).toBeLessThan(1)
+  })
+
+  it('中文自然语言查询按 bigram 匹配技能描述', () => {
+    h.installed = [
+      skill({ name: 'data-analytics', description: '分析业务数据并生成指标洞察' }),
+      skill({ name: 'product-design', description: '设计视觉界面与交互' }),
+    ]
+    const mgr = new SkillManager()
+    mgr.discoverSkills()
+    const results = mgr.searchSkills('请分析一下这些业务数据')
+    expect(results[0]?.name).toBe('data-analytics')
+    expect(results[0].score).toBeLessThan(1)
+  })
+
+  it('无关查询与空查询返回空结果', () => {
+    const mgr = searchSetup()
+    expect(mgr.searchSkills('quantum chromodynamics')).toEqual([])
+    expect(mgr.searchSkills('   ')).toEqual([])
+  })
+
+  it('自动激活要求首选分数足够高且明显领先次选', () => {
+    const mgr = searchSetup()
+    expect(mgr.shouldAutoActivate([
+      { name: 'a', description: '', score: 0.9, reason: '' },
+      { name: 'b', description: '', score: 0.2, reason: '' },
+    ])).toBe(true)
+    expect(mgr.shouldAutoActivate([
+      { name: 'a', description: '', score: 0.9, reason: '' },
+      { name: 'b', description: '', score: 0.85, reason: '' },
+    ])).toBe(false)
+    expect(mgr.shouldAutoActivate([
+      { name: 'a', description: '', score: 0.7, reason: '' },
+    ])).toBe(false)
+    expect(mgr.shouldAutoActivate([])).toBe(false)
+  })
+
+  it('激活未命中时返回相似技能建议', () => {
+    h.installed = [
+      skill({ name: 'patent-disclosure', description: 'Draft patent disclosure documents.' }),
+      skill({ name: 'patent-search', description: 'Search prior art patents.' }),
+    ]
+    const mgr = new SkillManager()
+    mgr.discoverSkills()
+    expect(() => mgr.activateSkill('patent')).toThrow('Similar skills:')
+  })
+
+  it('getSkillNames 返回按名称排序的已发现技能', () => {
+    const mgr = searchSetup()
+    expect(mgr.getSkillNames()).toEqual([
+      'business-review',
+      'presentation-design',
+      'sales-research',
+      'spreadsheet-analysis',
+    ])
   })
 })
 
