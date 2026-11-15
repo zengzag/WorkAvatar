@@ -130,6 +130,7 @@ export type {
 } from './channels/notification'
 export type {
   AttachmentSaveResult,
+  AttachmentCopyImageResult,
 } from './channels/attachment'
 export type {
   ShellBgStatus,

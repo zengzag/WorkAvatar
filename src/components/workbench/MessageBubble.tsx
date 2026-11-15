@@ -33,6 +33,7 @@ import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-sha
 import GeneratedFilesBar from './GeneratedFilesBar'
 import SubTaskDrawer from './SubTaskDrawer'
 import EmployeeAvatar from '../common/EmployeeAvatar'
+import CopyImageButton from '../common/CopyImageButton'
 import type { MessageSegment } from './types'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 import type { Employee } from '../../types'
@@ -173,6 +174,7 @@ const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
   const { message: messageApi } = App.useApp()
   const [hovered, setHovered] = useState(false)
   const [revealHovered, setRevealHovered] = useState(false)
+  const [copyHovered, setCopyHovered] = useState(false)
   const name = useMemo(() => getBaseName(path), [path])
 
   const handleOpen = useCallback(async () => {
@@ -189,6 +191,32 @@ const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
     window.electronAPI?.kms?.openFileDir(path)
   }, [path])
 
+  const handleCopyPath = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(path)
+      messageApi.success(t('workbench.pathCopied'))
+    } catch {
+      messageApi.error(t('workbench.copyPathFailed'))
+    }
+  }, [path, messageApi, t])
+
+  /** 令牌内的操作图标：悬停整枚令牌时显示，避免常驻占位 */
+  const actionStyle = (active: boolean): React.CSSProperties => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 14,
+    height: 14,
+    flexShrink: 0,
+    borderRadius: 3,
+    cursor: 'pointer',
+    color: active ? token.colorPrimary : token.colorTextTertiary,
+    background: active ? token.colorPrimaryBgHover : 'transparent',
+    opacity: hovered ? 1 : 0,
+    transition: 'opacity 0.15s ease, color 0.15s ease, background 0.15s ease',
+  })
+
   return (
     <span
       role="button"
@@ -197,7 +225,7 @@ const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
       onClick={handleOpen}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpen() } }}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setRevealHovered(false) }}
+      onMouseLeave={() => { setHovered(false); setRevealHovered(false); setCopyHovered(false) }}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -222,24 +250,22 @@ const UserPathChip: React.FC<{ path: string }> = ({ path }) => {
       <span
         role="button"
         tabIndex={-1}
+        title={t('workbench.copyPath')}
+        onClick={handleCopyPath}
+        onMouseEnter={() => setCopyHovered(true)}
+        onMouseLeave={() => setCopyHovered(false)}
+        style={actionStyle(copyHovered)}
+      >
+        <CopyOutlined style={{ fontSize: 12 }} />
+      </span>
+      <span
+        role="button"
+        tabIndex={-1}
         title={t('workbench.openInExplorer')}
         onClick={handleReveal}
         onMouseEnter={() => setRevealHovered(true)}
         onMouseLeave={() => setRevealHovered(false)}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 14,
-          height: 14,
-          flexShrink: 0,
-          borderRadius: 3,
-          cursor: 'pointer',
-          color: revealHovered ? token.colorPrimary : token.colorTextTertiary,
-          background: revealHovered ? token.colorPrimaryBgHover : 'transparent',
-          opacity: hovered ? 1 : 0,
-          transition: 'opacity 0.15s ease, color 0.15s ease, background 0.15s ease',
-        }}
+        style={actionStyle(revealHovered)}
       >
         <FolderOpenOutlined style={{ fontSize: 12 }} />
       </span>
@@ -418,6 +444,12 @@ const MessageBubble: React.FC<{
     [msg.role, msg.content]
   )
 
+  /** 复制文本：用户消息把文件令牌还原为路径，避免复制结果混入 <path> 标记 */
+  const copyText = useMemo(
+    () => (msg.role === 'user' ? userContentParts.map(part => part.value).join('') : displayContent),
+    [msg.role, userContentParts, displayContent]
+  )
+
   // 本消息内包含的子任务（delegation 段），用于消息底部的子任务入口图标
   const delegationSegs = useMemo<MessageSegment[]>(() =>
     (displaySegments || []).filter(s => s.type === 'delegation')
@@ -535,20 +567,26 @@ const MessageBubble: React.FC<{
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     <Image.PreviewGroup items={msg.images}>
                       {msg.images.map((img, i) => (
-                        <Image
+                        <div
                           key={img}
-                          src={img}
-                          alt={`upload-${i}`}
-                          style={{
-                            maxWidth: 220,
-                            maxHeight: 160,
-                            borderRadius: 4,
-                            border: `1px solid ${token.colorBorderSecondary}`,
-                            objectFit: 'contain',
-                            background: token.colorBgLayout,
-                          }}
-                          preview={{}}
-                        />
+                          className="wa-image-thumb"
+                          style={{ border: `1px solid ${token.colorBorderSecondary}`, background: token.colorBgLayout }}
+                        >
+                          <Image
+                            src={img}
+                            alt={`upload-${i}`}
+                            style={{
+                              maxWidth: 220,
+                              maxHeight: 160,
+                              objectFit: 'contain',
+                              display: 'block',
+                            }}
+                            preview={{}}
+                          />
+                          <div className="wa-image-thumb-actions">
+                            <CopyImageButton src={img} dataTestId="message-image-copy" />
+                          </div>
+                        </div>
                       ))}
                     </Image.PreviewGroup>
                   </div>
@@ -557,10 +595,10 @@ const MessageBubble: React.FC<{
             )}
             {!msg.isStreaming && !isEditing && (
               <Space size={4} className="wa-msg-actions" style={{ marginTop: 4, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
-                {msg.content && (
+                {copyText && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     data-testid="message-copy"
-                    onClick={() => onCopy(msg.content)} />
+                    onClick={() => onCopy(copyText)} />
                 )}
                 {!hideMessageActions && (
                   <>
@@ -683,10 +721,10 @@ const MessageBubble: React.FC<{
                       style={{ padding: '0 2px', minWidth: 16, height: 16 }} />
                   </div>
                 )}
-                {displayContent && (
+                {copyText && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     data-testid="message-copy"
-                    onClick={() => onCopy(displayContent)} />
+                    onClick={() => onCopy(copyText)} />
                 )}
                 {displayContent && !displayIsError && messageActions
                   .filter(a => (a.target ?? 'assistant') === msg.role || a.target === 'all')

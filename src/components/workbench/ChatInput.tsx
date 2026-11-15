@@ -1,4 +1,4 @@
-import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
+import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip, App } from 'antd'
 import { SendOutlined, StopOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, ToolOutlined, UnlockOutlined, SafetyOutlined, MessageOutlined, BulbOutlined, BulbFilled, LoadingOutlined, ScissorOutlined, CopyOutlined, SnippetsOutlined, SelectOutlined, FolderOutlined, FolderOpenOutlined, DownOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
@@ -7,6 +7,7 @@ import { getDirName } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import EmployeeAvatar from '../common/EmployeeAvatar'
+import CopyImageButton from '../common/CopyImageButton'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -140,6 +141,43 @@ const extractContentFromEditor = (editor: HTMLElement): string => {
   }
   walk(editor.childNodes)
   return result
+}
+
+/**
+ * 读取编辑器选区文本：区间内的文件令牌输出绝对路径（而不是令牌里显示的文件名），
+ * 让 Ctrl+C / 右键复制的结果可以直接粘贴到终端或其他应用。
+ */
+export const extractSelectionText = (editor: HTMLElement): string => {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return ''
+  const range = sel.getRangeAt(0)
+  if (range.collapsed || !editor.contains(range.commonAncestorContainer)) return ''
+  const fragment = range.cloneContents()
+  let result = ''
+  const walk = (nodes: NodeListOf<ChildNode> | ArrayLike<ChildNode>) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+      if (node.nodeType === Node.TEXT_NODE) {
+        result += node.nodeValue || ''
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement
+        if (el.classList?.contains(FILE_TOKEN_CLASS)) {
+          result += el.getAttribute('data-path') || ''
+          continue
+        }
+        if (el.tagName === 'BR') {
+          result += '\n'
+          continue
+        }
+        if (el.tagName === 'DIV' || el.tagName === 'P') {
+          if (result && !result.endsWith('\n')) result += '\n'
+        }
+        walk(el.childNodes)
+      }
+    }
+  }
+  walk(fragment.childNodes)
+  return result.replace(ZERO_WIDTH_CHARS, '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 /**
@@ -385,6 +423,7 @@ const ChatInput: React.FC<{
 }> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, draftRestoreKey, availableSkills, centerMode, showEmployeeSelector, workspaceSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar, approvalSlot }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const { message: messageApi } = App.useApp()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -910,8 +949,18 @@ const ChatInput: React.FC<{
     }
   }, [onImagesChange, insertFileTokenAtCursor, insertPlainTextAtCursor])
 
-  /** 编辑器右键菜单：记录弹出位置、当前选区（供剪切/复制恢复）与选区是否存在 */
-  const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null)
+  /** 复制选区：文件令牌写绝对路径，避免 Ctrl+C 后只得到令牌显示名或被整段丢弃 */
+  const handleEditorCopy = useCallback((e: React.ClipboardEvent) => {
+    const editor = editorRef.current
+    if (!editor || !e.clipboardData) return
+    const text = extractSelectionText(editor)
+    if (!text) return
+    e.preventDefault()
+    e.clipboardData.setData('text/plain', text)
+  }, [])
+
+  /** 编辑器右键菜单：记录弹出位置、当前选区（供剪切/复制恢复）、选区是否存在，以及右键命中的文件令牌路径 */
+  const [editorContextMenu, setEditorContextMenu] = useState<{ x: number; y: number; hasSelection: boolean; tokenPath?: string } | null>(null)
   const editorMenuRef = useRef<HTMLDivElement>(null)
   const editorMenuRangeRef = useRef<Range | null>(null)
 
@@ -919,6 +968,7 @@ const ChatInput: React.FC<{
     const editor = editorRef.current
     if (!editor || isCompacting) return
     e.preventDefault()
+    const tokenEl = (e.target as HTMLElement | null)?.closest(`.${FILE_TOKEN_CLASS}`) as HTMLElement | null
     const sel = window.getSelection()
     let range: Range | null = null
     let hasSelection = false
@@ -930,7 +980,12 @@ const ChatInput: React.FC<{
       }
     }
     editorMenuRangeRef.current = range
-    setEditorContextMenu({ x: e.clientX, y: e.clientY, hasSelection })
+    setEditorContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      hasSelection,
+      tokenPath: tokenEl?.getAttribute('data-path') || undefined,
+    })
   }, [isCompacting])
 
   /** 恢复右键时的选区：点击菜单项会使编辑器失焦并丢失选区，剪切/复制前需还原 */
@@ -1035,7 +1090,33 @@ const ChatInput: React.FC<{
     }
   }, [onImagesChange, insertPlainTextAtCursor, restoreEditorSelection])
 
+  /** 文件令牌右键：复制绝对路径（令牌本身不可选中，不能依赖选区复制） */
+  const handleCopyTokenPath = useCallback(async () => {
+    const path = editorContextMenu?.tokenPath
+    setEditorContextMenu(null)
+    if (!path) return
+    try {
+      await navigator.clipboard.writeText(path)
+      messageApi.success(t('workbench.pathCopied'))
+    } catch {
+      messageApi.error(t('workbench.copyPathFailed'))
+    }
+  }, [editorContextMenu?.tokenPath, messageApi, t])
+
+  /** 文件令牌右键：在文件管理器中定位 */
+  const handleRevealToken = useCallback(() => {
+    const path = editorContextMenu?.tokenPath
+    setEditorContextMenu(null)
+    if (path) window.electronAPI?.kms?.openFileDir(path)
+  }, [editorContextMenu?.tokenPath])
+
   const editorContextMenuItems = useMemo(() => {
+    if (editorContextMenu?.tokenPath) {
+      return [
+        { key: 'copyPath', icon: <CopyOutlined />, label: t('workbench.copyPath'), disabled: false, onClick: handleCopyTokenPath },
+        { key: 'reveal', icon: <FolderOpenOutlined />, label: t('workbench.openInExplorer'), disabled: false, onClick: handleRevealToken },
+      ]
+    }
     const noSelection = !editorContextMenu?.hasSelection
     return [
       { key: 'cut', icon: <ScissorOutlined />, label: t('common.cut'), disabled: noSelection, onClick: handleMenuCut },
@@ -1043,7 +1124,7 @@ const ChatInput: React.FC<{
       { key: 'paste', icon: <SnippetsOutlined />, label: t('common.paste'), disabled: false, onClick: handleMenuPaste },
       { key: 'selectAll', icon: <SelectOutlined />, label: t('common.selectAll'), disabled: false, onClick: handleMenuSelectAll },
     ]
-  }, [editorContextMenu?.hasSelection, t, handleMenuCut, handleMenuCopy, handleMenuPaste, handleMenuSelectAll])
+  }, [editorContextMenu?.tokenPath, editorContextMenu?.hasSelection, t, handleCopyTokenPath, handleRevealToken, handleMenuCut, handleMenuCopy, handleMenuPaste, handleMenuSelectAll])
 
   /** 统一的文件选择（PaperClip 按钮）：同时支持图片与普通文件，按类型自动分流
    * - image/*：走原图片逻辑（FileReader→dataUrl→顶部缩略图→images 数组发消息）
@@ -1780,8 +1861,13 @@ const ChatInput: React.FC<{
       {attachedImages.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 6px', flexWrap: 'wrap' }}>
           {attachedImages.map(img => (
-            <div key={img.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--wa-glass-border)' }}>
+            <div key={img.id} className="wa-image-thumb" style={{ border: '1px solid var(--wa-glass-border)' }}>
               <img src={img.dataUrl} alt={img.name} style={{ width: 72, height: 72, objectFit: 'cover', display: 'block' }} />
+              <CopyImageButton
+                src={img.dataUrl}
+                dataTestId="chat-attached-image-copy"
+                style={{ position: 'absolute', right: 2, bottom: 2, zIndex: 2 }}
+              />
               <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 10 }} />}
                 onClick={() => removeImage(img.id)}
                 style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.5)', color: '#fff', borderRadius: 3, padding: 0, width: 16, height: 16, minWidth: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
@@ -2007,6 +2093,7 @@ const ChatInput: React.FC<{
             suppressContentEditableWarning
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onCopy={handleEditorCopy}
             onContextMenu={handleEditorContextMenu}
             onInput={emitDraftChange}
             spellCheck={false}

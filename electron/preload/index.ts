@@ -20,6 +20,7 @@ import type {
   ConversationCreateParams,
   ConversationSearchParams,
   AttachmentSaveResult,
+  AttachmentCopyImageResult,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
   StorageCategoryKey,
@@ -202,6 +203,9 @@ const electronAPI = {
     /** 批量把 base64 data URL 落盘为附件，返回 wa-attachment:// 引用（失败项为 null） */
     saveDataUrls: (dataUrls: string[]): Promise<AttachmentSaveResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.ATTACHMENT_SAVE_DATA_URLS, dataUrls),
+    /** 把对话图片（data URL 或 wa-attachment:// 引用）写入系统剪贴板 */
+    copyImage: (source: string): Promise<AttachmentCopyImageResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ATTACHMENT_COPY_IMAGE, source),
   },
 
   llm: {
