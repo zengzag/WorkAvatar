@@ -6,7 +6,8 @@ test.describe('插件：自动化任务', () => {
     await app.seed({ employee: { name: 'E2E 自动化助手' }, locale: 'en-US' })
     const { window } = app
 
-    await new AppShellPage(window).openPluginRoute('automation')
+    await new AppShellPage(window).openPluginRoute('workflow')
+    await window.getByText('Automation', { exact: true }).first().click()
     const newTask = window.getByRole('button', { name: /New Task/ }).first()
     await expect(newTask).toBeVisible({ timeout: 30_000 })
 
